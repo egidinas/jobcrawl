@@ -25,8 +25,13 @@ DEFAULT_LEVELS = [
      'pattern': r'\b(intern(ship)?|praktik\w*|werkstudent\w*|working student|thesis|abschlussarbeit|bachelorarbeit|masterarbeit|'
                 r'trainee|apprentice\w*|ausbildung|azubi|duales studium|dual student|student)\b'},
     {'code': 'lead', 'rank': 4, 'label': {'en': 'Lead & management', 'de': 'Leitung & Management'},
-     'pattern': r'\b(head of|director|vp|vice president|chief|cto|coo|ceo|manager|management|\w*leiter\w*|team ?lead\w*|'
-                r'lead|principal investigator|general manager|geschäftsführ\w*)\b'},
+     # "management" alone is a field ("Quality Management Engineer"), not a rank; -leiter words that are things (Halbleiter,
+     # Leiterplatte) and "lead" in lead-free / lead time are not leaders; German compounds (Projektmanager) are like "Project Manager"
+     'pattern': r'\b(head of|director|vp|vice president|chief|cto|coo|ceo|manager|\w+manager(?:in)?|'
+                r'(?!\w*(?:halb|supra|ab|blitz|strom|wärme|licht|isolier|über)leiter)(?!leiter(?:platt|bahn|techn|werkstoff|material))\w*leiter\w*|'
+                r'team ?lead\w*|'
+                r'lead(?![\s-]+(?:free|times?|generation|gen|qualification|scoring|nurturing|magnet\w*|conversion|sources?|capture|lists?|pipeline)\b)|'
+                r'principal investigator|general manager|geschäftsführ\w*)\b'},
     {'code': 'senior', 'rank': 3, 'label': {'en': 'Senior & principal', 'de': 'Senior & Principal'},
      'pattern': r'\b(senior|sr\.?|principal|staff|expert\w*|experte|architect|fellow)\b'},
     {'code': 'entry', 'rank': 1, 'label': {'en': 'Entry level', 'de': 'Berufseinstieg'},
