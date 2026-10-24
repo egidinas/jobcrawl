@@ -1,0 +1,39 @@
+{
+  "_comment": "Minimal example: three public job boards (Greenhouse, Lever) of software companies, roles in Germany only. Slugs are the board names in each company's public job board URL. Keys as in profiles/aerospace/companies.json; see profiles/schema.md.",
+  "title_filter": {
+    "positive": ["Software", "Developer", "Engineer", "Entwickler", "Ingenieur", "Programmer", "Data", "Machine Learning", "DevOps", "Backend", "Frontend", "Platform", "Site Reliability"],
+    "negative": ["Intern", "Working Student", "Werkstudent", "Praktikum", "Praktikant", "Trainee", "Sales", "Recruiter", "Account Executive", "Marketing", "Designer", "Accountant", "HR"],
+    "seniority_boost": ["Senior", "Staff", "Principal", "Lead", "Manager", "Head of"]
+  },
+  "location_filter": {
+    "allow_unknown": true,
+    "block_hard": [],
+    "allow": ["Germany", "Deutschland", "Berlin", "Munich", "München", "Hamburg", "Frankfurt", "Cologne", "Köln", "Remote - Germany", "Remote (Germany)"]
+  },
+  "tracked_companies": [
+    {
+      "name": "Stripe",
+      "careers_url": "https://stripe.com/jobs",
+      "provider": "greenhouse",
+      "slug": "stripe",
+      "enabled": true,
+      "interval_hours": 12
+    },
+    {
+      "name": "Celonis",
+      "careers_url": "https://www.celonis.com/careers/",
+      "provider": "greenhouse",
+      "slug": "celonis",
+      "enabled": true,
+      "interval_hours": 12
+    },
+    {
+      "name": "Palantir",
+      "careers_url": "https://www.palantir.com/careers/",
+      "provider": "lever",
+      "slug": "palantir",
+      "enabled": true,
+      "interval_hours": 12
+    }
+  ]
+}
