@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Match me</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<a class="skip" href="#main" data-de="Zum Inhalt springen">Skip to content</a>
+<header class="site-header" id="site-header"></header>
+<main id="main" class="wrap">
+  <h1 data-de="Passende Stellen für mich">Match me</h1>
+  <p class="lead" data-de="CV einfügen oder beschreiben, was Sie suchen. Die Stellen werden auf diesem Gerät sortiert; Ihr Text wird nirgends hochgeladen.">Paste your CV or describe what you want. Roles are ranked on this device; your text is never uploaded.</p>
+  <section id="match-panel" aria-label="Match me"></section>
+</main>
+<footer class="site-footer" id="site-footer"></footer>
+<script type="module">
+import { boot } from './assets/app.js';
+await boot('match');
+await import('./assets/match-panel.js');
+document.querySelector('#match-panel details').open = true;
+</script>
+</body>
+</html>

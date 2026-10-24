@@ -37,6 +37,8 @@ def web_config(profile):
         'personas': [{'id': p['id'], 'label': p['label'], 'regex': p['regex'], 'flags': p['flags']} for p in profile['personas']],
         'glossary': profile['glossary'],
         'statements_file': 'match/match-prefs.json',
+        'accent': profile['accent'],
+        'links': profile['links'],
     }
 
 
