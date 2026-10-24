@@ -47,9 +47,15 @@ def level_codes_of(profile):
     return [''] + [b['code'] for _, b in bands]
 
 
-def build(site, out, profile, log=print):
-    """Writes match-bm25.json and match-attrs.json into out (a match folder). Returns the number of roles."""
+def build(site, out, profile, log=print, text_from=None):
+    """Writes match-bm25.json and match-attrs.json into out (a match folder). Returns the number of roles.
+
+    text_from: a site folder whose descriptions (x) are the ones to index and to detect the language of, instead of site's own.
+    The demo uses it: the keyword index is built from the full descriptions while the published folder carries excerpts.
+    """
     index, desc = read_site(site)
+    if text_from:
+        desc = read_site(text_from)[1]
     SCOPES = scope_ids_of(profile); LEVELS = level_codes_of(profile)
     n = len(index); tf = []; df = collections.Counter(); lens = []
     for r in index:

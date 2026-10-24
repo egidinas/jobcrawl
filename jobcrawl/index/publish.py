@@ -15,6 +15,7 @@ import os
 import shutil
 
 from jobcrawl.index import match_index, neighbours, prefs
+from jobcrawl.site import read_site
 
 VECTOR_FILES = ('match-vec.bin', 'match-vec.json')
 COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json')
@@ -46,10 +47,21 @@ def has_vectors(vectors):
     return bool(vectors) and all(os.path.exists(os.path.join(vectors, f)) for f in VECTOR_FILES)
 
 
-def publish(site, profile, vectors=None, log=print):
-    """Writes SITE/match/ and SITE/config.json. Returns the files written, relative to SITE, sorted."""
+def publish(site, profile, vectors=None, log=print, text_from=None):
+    """Writes SITE/match/ and SITE/config.json. Returns the files written, relative to SITE, sorted.
+
+    text_from: a folder written by jobcrawl build with the full descriptions. When given, the keyword index and the statements read
+    their text from it, and SITE's own descriptions (which may be excerpts) are not used for text. Every role of SITE must be in it.
+    """
     if not os.path.exists(os.path.join(site, 'jobs-index.json')):
         raise PublishError(f'no jobs-index.json in {site} (run jobcrawl build first)')
+    if text_from:
+        if not os.path.exists(os.path.join(text_from, 'jobs-index.json')):
+            raise PublishError(f'--text-from: no jobs-index.json in {text_from} (run jobcrawl build first)')
+        ids = {r[0] for r in read_site(site)[0]}
+        missing = ids - set(read_site(text_from)[1])
+        if missing:
+            raise PublishError(f'--text-from {text_from} lacks {len(missing)} of the {len(ids)} roles of {site}')
     out = os.path.join(site, 'match')
     os.makedirs(out, exist_ok=True)
     written = []
@@ -60,11 +72,11 @@ def publish(site, profile, vectors=None, log=print):
                 shutil.copyfile(src, os.path.join(out, name)); written.append(name)
         neighbours.build(site, vectors, out, log)
         written += ['role-nb.bin', 'role-graph.json']
-        prefs.build(site, out, prefs.statements_of(profile), log)
+        prefs.build(site, out, prefs.statements_of(profile), log, text_from=text_from)
         written.append('match-prefs.json')
     else:
         log(f'no match-vec files in {vectors}: vectors, neighbours and statements are not published (keywords only)')
-    match_index.build(site, out, profile, log)
+    match_index.build(site, out, profile, log, text_from=text_from)
     written += ['match-bm25.json', 'match-attrs.json']
     with open(os.path.join(site, 'config.json'), 'w', encoding='utf-8') as fh:
         json.dump(web_config(profile), fh, ensure_ascii=False, indent=1)
