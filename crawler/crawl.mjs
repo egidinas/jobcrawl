@@ -13,6 +13,7 @@ import { isCrossListing, sameEmployer, canonCompany, isAggregatorRow, AGGREGATOR
 import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueNames, strictVerdict, probationCycle, newProbation,
   useRelevance, INDUSTRY_AGGREGATOR_PROVIDERS, INDUSTRY_VIA, PROBATION_VERDICT } from './relevance.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
+import { setUserAgent } from './useragent.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -40,6 +41,7 @@ let PROFILE;
 try { PROFILE = loadProfile(profileDirFromArgs(args)); } catch (e) { console.error(`crawl: ${e.message}`); process.exit(2); }
 if (!PROFILE) { console.error('crawl: no profile. Pass --profile <dir> (or set JOBCRAWL_PROFILE). See crawl.mjs --help.'); process.exit(2); }
 useRelevance(PROFILE.relevance);
+setUserAgent(PROFILE.userAgent);
 
 const CONFIG = pathResolve(opt('config') ?? PROFILE.companiesFile);   // --config <file>: a trimmed copy for tests
 if (!existsSync(CONFIG)) { console.error(`crawl: companies file not found: ${CONFIG} (profile key crawl.companies_file)`); process.exit(2); }

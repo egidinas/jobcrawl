@@ -9,6 +9,7 @@ COMMANDS = {
     "build": "write the board files (jobs-index, description shards, jobs.json) from a catalog",
     "embed": "embed the roles (and the companies, when the profile names a catalogue) into the vectors folder (needs the embed extra)",
     "publish": "build the match files (keyword index, prefs, neighbours) and config.json for the web app",
+    "neighbours": "build the neighbour lists into the vectors folder, so publish can copy them on a machine without numpy",
     "map": "build the atlas layout from the vectors (needs the map extra)",
 }
 
@@ -41,6 +42,9 @@ def build_parser():
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--text-from", metavar="DIR", help="build with the full descriptions of this site folder (its x), when SITE holds excerpts (demo)")
+        if name == "neighbours":
+            sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
+            sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors); role-nb.bin and role-graph.json go there")
         if name == "map":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder (map.*, scopes, labels_file)")
@@ -134,6 +138,20 @@ def cmd_publish(args):
     return 0
 
 
+def cmd_neighbours(args):
+    from jobcrawl.index import neighbours
+    if err := _check_site("neighbours", args.site):
+        return err
+    vectors = args.vectors or default_vectors(args.site)
+    try:
+        neighbours.build(args.site, vectors, vectors)
+    except ImportError as e:
+        return _usage_error("neighbours", f"{e}. The neighbours need numpy: pip install -r requirements-embed.txt")
+    except (ValueError, OSError) as e:
+        return _usage_error("neighbours", e)
+    return 0
+
+
 def cmd_map(args):
     from jobcrawl.map import atlas
     if err := _check_site("map", args.site):
@@ -161,7 +179,7 @@ def main(argv=None):
     if not args.command:
         parser.print_help()
         return 2
-    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "map": cmd_map}
+    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map}
     return handlers[args.command](args)
 
 

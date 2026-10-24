@@ -2,7 +2,7 @@
 // Two signals: keywords (BM25F over title x3 + description) and, when the model has been loaded, meaning (cosine on 256-number vectors).
 // They are combined by reciprocal rank fusion. Roles without a vector still take part through their keywords.
 // Mounted by match.html into #match-panel. Labels, personas, glossary and the scopes come from the data folder's config.json.
-import { loadConfig, dataUrl, pageUrl, roleLink, storageKey, L, LP, esc, isDe } from './app.js';
+import { loadConfig, dataUrl, pageUrl, roleLink, companyLink, defaultScope, modelCache, L, LP, esc, isDe } from './app.js';
 import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields } from './match.js';
 import * as PF from './profile.js';
 
@@ -17,7 +17,9 @@ const levelNames = (k, ix) => { const code = (ix || st.ix) ? (ix || st.ix).level
 const fieldNames = (id) => { const f = cfg.fields.find((x) => x.id === id); return f ? [f.label.en, f.label.de] : [id, id]; };
 const levelOpt = (k) => { const b = cfg.levels.find((x) => x.code === LEVEL_CODES[k]); return `<option value="${k}">${b ? L(b.label.en, b.label.de) : esc(LEVEL_CODES[k])}</option>`; };
 const levelOpts = LEVEL_CODES.slice(1).map((_, k) => levelOpt(k + 1)).join('');
-const scopeOpts = cfg.scopes.map((s, k) => `<option value="${k}"${k === 0 ? ' selected' : ''}>${L(s.label.en, s.label.de)}</option>`).join('');
+// a site with its own role pages (config role_url) links to them; otherwise the detail view of the job list
+const ROLE_LINK = cfg.role_url ? L('Full role page →', 'Ganze Stellenseite →') : L('Details in the job list →', 'Details in der Stellenliste →');
+const scopeOpts = cfg.scopes.map((s, k) => `<option value="${k}"${k === defaultScope() ? ' selected' : ''}>${L(s.label.en, s.label.de)}</option>`).join('');
 
 const style = document.createElement('style');
 style.textContent = `
@@ -126,7 +128,7 @@ function buildFields() {
   $('match-fields').innerHTML = st.ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="${st.fields.has(f)}">${L(...fieldNames(f))}</button>`).join('');
 }
 async function cacheReady() {
-  try { return await caches.has(storageKey('eg2-v1')); } catch (e) { return false; }
+  try { return await caches.has(modelCache()); } catch (e) { return false; }
 }
 
 async function ensureModel() {
@@ -134,7 +136,7 @@ async function ensureModel() {
   const { loadModel } = await import('./embed.js');
   const bar = $('match-bar'); bar.hidden = false;
   try {
-    st.model = await loadModel({ modelUrl: cfg.model_url, onProgress: (f, label) => {
+    st.model = await loadModel({ modelUrl: cfg.model_url, cacheName: modelCache(), onProgress: (f, label) => {
       bar.firstElementChild.style.width = (f * 100).toFixed(0) + '%';
       say(f < 0.97 ? L('Downloading the matching model (once): ', 'Lade das Abgleichmodell (einmalig): ') + (f * 100).toFixed(0) + ' %' : L('Starting the model…', 'Starte das Modell …'));
     } });
@@ -260,7 +262,7 @@ function aspectHtml(id) {
 function similarHtml(i) {
   if (i === undefined || i < 0 || !st.ix.nbOf) return '';
   const dups = st.ix.dupsOf(i), nb = st.ix.nbOf(i).slice(0, 6), link = (j) => `<a class="link" href="${roleLink(st.rows[j][0])}">${esc(st.rows[j][1])}</a> <span class="match-note">${esc(st.rows[j][2])}</span>`;
-  return (dups.length ? `<div class="match-note">${L(`Also listed ${dups.length} more time${dups.length > 1 ? 's' : ''}:`, `Noch ${dups.length}-mal ausgeschrieben:`)} ${dups.slice(0, 4).map((j) => `<a class="link" href="${esc(st.rows[j][3])}" target="_blank" rel="noopener">${esc(st.rows[j][2])}${st.ix.regions[st.ix.attrs[j][3]] ? ' · ' + esc(st.ix.regions[st.ix.attrs[j][3]]) : ''}</a>`).join(', ')}</div>` : '')
+  return (dups.length ? `<div class="match-note">${L(`Also listed ${dups.length} more time${dups.length > 1 ? 's' : ''}:`, `Noch ${dups.length}-mal ausgeschrieben:`)} ${dups.slice(0, 4).map((j) => `<a class="link" href="${roleLink(st.rows[j][0])}">${esc(st.rows[j][2])}${st.ix.regions[st.ix.attrs[j][3]] ? ' · ' + esc(st.ix.regions[st.ix.attrs[j][3]]) : ''}</a>`).join(', ')}</div>` : '')
     + (nb.length ? `<div class="similar"><span class="match-note">${L('Similar roles:', 'Ähnliche Stellen:')}</span><ul>${nb.map((x) => `<li>${link(x.i)}</li>`).join('')}</ul></div>` : '');
 }
 async function fillDetail(li) {
@@ -270,7 +272,7 @@ async function fillDetail(li) {
   const text = d && d.x ? d.x.replace(/\n{3,}/g, '\n\n').trim() : '';
   box.innerHTML = `<div class="facts">${facts.map((f) => `<span>${typeof f === 'string' && !f.startsWith('<') ? esc(f) : f}</span>`).join('')}</div>`
     + (text ? `<div class="txt" tabindex="0">${esc(text)}</div>` : `<p class="match-note">${L('No description was saved for this role; the title is all that was matched.', 'Für diese Stelle wurde keine Beschreibung gespeichert; abgeglichen wurde nur der Titel.')}</p>`)
-    + `<div class="links"><a class="link" href="${roleLink(id)}">${L('Details in the job list →', 'Details in der Stellenliste →')}</a><a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply on the employer site ↗', 'Beim Arbeitgeber bewerben ↗')}</a></div>`
+    + `<div class="links"><a class="link" href="${roleLink(id)}">${ROLE_LINK}</a>${d && companyLink(d.cs) ? `<a class="link" href="${companyLink(d.cs)}">${L('About ' + row[2] + ' →', 'Über ' + row[2] + ' →')}</a>` : ''}<a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply on the employer site ↗', 'Beim Arbeitgeber bewerben ↗')}</a></div>`
     + similarHtml(st.idIndex ? st.idIndex.get(id) : st.rows.findIndex((x) => x[0] === id))
     + `<div class="aspects">${aspectHtml(id)}</div>`;
 }

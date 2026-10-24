@@ -175,6 +175,8 @@ def _field(check, f, path):
            'keywords': check.strs(f.get('keywords', []), f'{path}.keywords'),
            'company_keywords': check.strs(f.get('company_keywords', []), f'{path}.company_keywords'),
            'pillar': check.boolean(f.get('pillar', False), f'{path}.pillar')}
+    # the text the board writes into a role's tags (tg) and the web app shows the label for: the id, unless the board uses names
+    out['tag'] = check.text(f['tag'], f'{path}.tag') if f.get('tag') is not None else out['id']
     for i, k in enumerate(out['keywords']):
         if k.strip() in ('', 'word:'):
             check.fail(f'{path}.keywords[{i}]', 'empty keyword')
@@ -214,6 +216,33 @@ def _links(check, v, path):
         if not re.match(r'^https?://\S+$', url):
             check.fail(f'{ip}.url', f'{url!r} is not an http or https link')
         out['reference'].append({'label': label, 'url': url})
+    return out
+
+
+WEB_STORAGE_KEYS = ('prefix', 'lang', 'model_cache', 'profile_kind', 'profile_file')
+WEB_TEXT_KEYS = ('role_url', 'company_url', 'company_texts', 'default_scope', 'model_url')
+
+
+def _web(check, v, path, scope_ids):
+    """The web app's site settings (config.json): link templates, default scope, model folder, browser storage names. All optional."""
+    check.obj(v, path)
+    unknown = set(v) - set(WEB_TEXT_KEYS) - {'storage'}
+    if unknown:
+        check.fail(path, f'unknown key {sorted(unknown)[0]!r} (use {", ".join(WEB_TEXT_KEYS + ("storage",))})')
+    out = {k: check.text(v[k], f'{path}.{k}') for k in WEB_TEXT_KEYS if v.get(k) is not None}
+    if 'role_url' in out and '{id}' not in out['role_url']:
+        check.fail(f'{path}.role_url', 'needs the placeholder {id}, e.g. "job.html?id={id}"')
+    if 'company_url' in out and '{slug}' not in out['company_url']:
+        check.fail(f'{path}.company_url', 'needs the placeholder {slug}, e.g. "company-{slug}.html"')
+    if 'default_scope' in out and out['default_scope'] not in scope_ids:
+        check.fail(f'{path}.default_scope', f'{out["default_scope"]!r} is not one of the scopes ({", ".join(scope_ids)})')
+    st = check.obj(v.get('storage', {}), f'{path}.storage')
+    unknown = set(st) - set(WEB_STORAGE_KEYS)
+    if unknown:
+        check.fail(f'{path}.storage', f'unknown key {sorted(unknown)[0]!r} (use {", ".join(WEB_STORAGE_KEYS)})')
+    storage = {k: check.text(st[k], f'{path}.storage.{k}') for k in WEB_STORAGE_KEYS if st.get(k) is not None}
+    if storage:
+        out['storage'] = storage
     return out
 
 
@@ -260,6 +289,7 @@ def _validate(raw, file):
     if sum(1 for b in levels if b['pattern'] is None) != 1:
         c.fail('levels', 'needs exactly one band with "pattern": null (the default band)')
     out['levels'] = levels
+    out['web'] = _web(c, p.get('web', {}), 'web', [x['id'] for x in scopes])
 
     stm = []
     for i, s in enumerate(c.lst(p.get('statements', []), 'statements')):

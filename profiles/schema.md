@@ -20,12 +20,36 @@ everything else. `profile.py` fills every default below and rejects a wrong valu
 | `accent` | CSS hex colour (`#rgb` or `#rrggbb`) | none | web config | accent colour of the web app (buttons, links, highlights); without it the app's built-in colour is used |
 | `links` | object `{"reference": [{"label", "url"}]}` | `{"reference": []}` | web config | links shown in the web app's footer, only when there are any; `url` must be http or https. Use them for sites that show the same data or are the reference implementation of the profile |
 
+## `web`: site settings of the web app (all optional, copied into `config.json`)
+
+Defaults fit the bundled pages (`web/`). A site that hosts the modules in its own pages sets what differs.
+
+| key | type | default | effect |
+|---|---|---|---|
+| `web.role_url` | string with `{id}` | `index.html#{id}` | link to a role's detail page, e.g. `job.html?id={id}`. With it, the cards say "Full role page" and near-duplicates link there too |
+| `web.company_url` | string with `{slug}` | none | link to an employer's page, e.g. `company-{slug}.html`; without it no company links are shown |
+| `web.company_texts` | file in the data folder | none | `{slug: [text, ...]}`: the texts the Atlas shows on company cards |
+| `web.default_scope` | a scope id | the first scope | the scope Match me, the Atlas and the job list start with |
+| `web.model_url` | path | `models/eg2/` | the model folder, relative to the web root (the folder above `assets/`) |
+| `web.storage.prefix` | string | `jobcrawl` | the visitor's data is kept in the browser as `<prefix>-ratings`, `-prefs`, `-cv`, `-persona`, `-explored`, `-settings` |
+| `web.storage.lang` | string | `<prefix>-lang` | where the language choice is kept (share it with the site's own pages) |
+| `web.storage.model_cache` | string | `<prefix>-eg2-v1` | name of the browser cache that keeps the model files |
+| `web.storage.profile_kind` | string | `jobcrawl-profile` | the `kind` of a saved profile file; only files of this kind are loaded |
+| `web.storage.profile_file` | string | `jobcrawl-profile.json` | file name offered when the visitor saves the profile |
+
+Keep `storage` stable once a site is public: changing a name makes visitors' saved ratings invisible to the app.
+
+The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobcrawl-data" content="<folder>">` in the page, else
+`data/`. A site that serves `config.json`, `jobs-*.json` and `match/` from its root sets the meta tag to `./`.
+
 ## `crawl`
 
 | key | type | default | read by | meaning |
 |---|---|---|---|---|
 | `crawl.companies_file` | string | `companies.json` | crawler | the company list: `tracked_companies` with the ATS boards to poll, plus the filters below when the profile does not set them |
 | `crawl.catalogue_file` | string | none | crawler, discover | optional employer catalogue (names and aliases, `companies` list). Its names count as protected employers (never pruned by probation). Not needed for a profile without one |
+| `crawl.user_agent` | string | `Mozilla/5.0 (compatible; jobcrawl; +https://github.com/egidinas/jobcrawl)` | crawler, discover, ats-resolve, board-labels | user agent of every request. Name your crawler and give a URL where site owners can read what it does |
+| `crawl.review_dir` | path | the data folder | ats-resolve | where the review lists (`ats_resolve_<label>.csv/.json`) are written, e.g. next to the companies file when they are kept in version control |
 | `crawl.relevance.keywords` | list of strings | `[]` | relevance gate, probation | a role is relevant when its title or department matches one of these (see syntax below). With an empty list nothing is relevant |
 | `crawl.relevance.negative` | list of strings | `[]` | relevance gate | titles that match a keyword by accident (`search engine`, `flight attendant`) are never relevant |
 | `crawl.relevance.ssic_deeptech` | list of strings | `[]` | Singapore-style strict gate | SSIC industry code prefixes (Singapore Standard Industrial Classification) that count as the profile's sector. Only used by the MyCareersFuture provider |
@@ -106,7 +130,8 @@ Field tags (`tg`). Read by `classify/fields.py`; the web app shows the labels.
 
 | key | type | default | meaning |
 |---|---|---|---|
-| `fields[].id` | id | **required** | written into `tg` |
+| `fields[].id` | id | **required** | the field's name in the profile |
+| `fields[].tag` | string | the id | what the board writes into a role's `tg` and the web app looks the label up by. Set it when an existing board writes names (e.g. `"AIT & Testing"`) instead of ids |
 | `fields[].label` | label | **required** | shown in the web app |
 | `fields[].keywords` | list of strings | `[]` | matched on the title, the description and the employer (see below). `word:` entries match whole words |
 | `fields[].company_keywords` | list of strings | `[]` | plain substrings of the employer name (a field tagged from its employers) |
@@ -206,4 +231,5 @@ Embedding recipe (`embed/roles.py`, `embed/embedder.py`, `embed/companies.py`).
 | `embed` | `embed/` and `scripts/fetch_model.py` |
 | `companies_catalogue` | `embed/companies.py`, `map/atlas.py` |
 | `accent`, `links` | `index/publish.py` (into `config.json`), web app footer and colour |
+| `web.*` | `index/publish.py` (into `config.json`), `web/assets/app.js` |
 | `crawl`, `data_dir`, `name` | the crawler (`crawler/*.mjs`) |

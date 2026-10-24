@@ -2,7 +2,7 @@
 // and load again. Nothing here is sent anywhere. Also: starting personas, which fade as the visitor marks and explores.
 // Storage keys are `<storage_prefix>-<name>` (config.json; default "jobcrawl").
 
-import { storageKey } from './app.js';
+import { storageKey, profileKind, profileFileName } from './app.js';
 
 const NAMES = { ratings: 'ratings', prefs: 'prefs', cv: 'cv', persona: 'persona', explored: 'explored', settings: 'settings' };
 /** The full localStorage key of each name: {ratings: "jobcrawl-ratings", ...}. Call after loadConfig. */
@@ -47,19 +47,18 @@ export function forgetAll() { for (const key of Object.values(keys())) { try { l
 export function bumpExplored() { setJ(keys().explored, getJ(keys().explored, 0) + 1); }
 
 // ---- save and load: one JSON file with everything above (the CV only as its numbers, and only if the visitor ticks it)
-export const PROFILE_KIND = 'jobcrawl-profile';
 export function profileJSON(includeCv) {
-  const o = { kind: PROFILE_KIND, version: 1, saved: new Date().toISOString() };
+  const o = { kind: profileKind(), version: 1, saved: new Date().toISOString() };
   for (const [k, key] of Object.entries(keys())) { if (k === 'cv' && !includeCv) continue; const v = getJ(key, null); if (v !== null) o[k] = v; }
   return JSON.stringify(o);
 }
 export function saveProfileFile(includeCv) {
   const blob = new Blob([profileJSON(includeCv)], { type: 'application/json' }), a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'jobcrawl-profile.json'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  a.href = URL.createObjectURL(blob); a.download = profileFileName(); document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
 export async function loadProfileFile(file) {
   const o = JSON.parse(await file.text());
-  if (o.kind !== PROFILE_KIND) throw new Error('This is not a saved jobcrawl profile.');
+  if (o.kind !== profileKind()) throw new Error('This is not a saved Match me profile.');
   for (const [k, key] of Object.entries(keys())) { if (o[k] !== undefined) setJ(key, o[k]); }
   return o;
 }

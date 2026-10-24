@@ -58,6 +58,10 @@ and 3 the site works on keywords alone, and there is no atlas.
 Dependencies: `requirements-embed.txt` and `requirements-map.txt` for the two optional steps. The crawler, `jobcrawl build`,
 `jobcrawl publish` without vectors, and the web app need nothing beyond Node 22 and the Python standard library.
 
+Publishing on a small machine (a router, a static host's build step) without numpy: build the neighbour lists where the vectors are
+made (`python3 -m jobcrawl neighbours --site data/site`, written into the vectors folder); publish then copies them and needs only
+the standard library.
+
 ## Writing a profile
 
 A profile is a folder with a `profile.json` and a `companies.json` (the employers to poll). Start from `profiles/minimal`, which

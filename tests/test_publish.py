@@ -164,6 +164,47 @@ class PublishFixture(unittest.TestCase):
         self.assertIsNone(cfg['accent'])
         self.assertEqual(cfg['links'], {'reference': []})
 
+    @need_numpy
+    def test_prebuilt_neighbours_are_copied_not_rebuilt(self):
+        site = self.fresh_site('prebuilt-nb')
+        vectors = os.path.join(self.tmp, 'vec-prebuilt')
+        with open(os.path.join(site, 'jobs-index.json'), encoding='utf-8') as fh:
+            rows = json.load(fh)
+        write_match_vectors(vectors, [(r[0], 'x') for r in rows], dim=16)
+        with open(os.path.join(vectors, 'role-nb.bin'), 'wb') as fh:
+            fh.write(b'prebuilt')
+        with open(os.path.join(vectors, 'role-graph.json'), 'w', encoding='utf-8') as fh:
+            fh.write('{"k": 10}')
+        with mock.patch('jobcrawl.index.neighbours.build', side_effect=AssertionError('neighbours rebuilt')):
+            files = publish.publish(site, self.profile, vectors, log=silent)
+        self.assertIn(os.path.join('match', 'role-nb.bin'), files)
+        with open(os.path.join(site, 'match', 'role-nb.bin'), 'rb') as fh:
+            self.assertEqual(fh.read(), b'prebuilt')
+
+    def test_web_settings_and_field_tags_reach_the_config(self):
+        raw = {'name': 'site', 'languages': ['en', 'de'],
+               'scopes': [{'id': 'city', 'label': {'en': 'City'}, 'match': {'country': 'DE'}}, {'id': 'world', 'label': {'en': 'World'}, 'match': {'any': True}}],
+               'fields': [{'id': 'ait', 'tag': 'AIT & Testing', 'label': {'en': 'AIT & Testing', 'de': 'AIT & Test'}}],
+               'web': {'role_url': 'job.html?id={id}', 'company_url': 'company-{slug}.html', 'company_texts': 'jobs-co.json', 'default_scope': 'world',
+                       'model_url': 'assets/models/eg2/', 'storage': {'prefix': 'site-match', 'lang': 'site-lang', 'model_cache': 'site-eg2-v1',
+                                                                     'profile_kind': 'site-match-profile', 'profile_file': 'my-profile.json'}}}
+        profile = profile_from_dict(raw)
+        site = self.fresh_site('web-settings')
+        publish.publish(site, profile, None, log=silent)
+        with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
+            cfg = json.load(fh)
+        for k, v in raw['web'].items():
+            self.assertEqual(cfg[k], v, k)
+        self.assertEqual(cfg['fields'], [{'id': 'AIT & Testing', 'label': {'en': 'AIT & Testing', 'de': 'AIT & Test'}}])
+
+    def test_web_settings_are_checked(self):
+        scopes = [{'id': 'world', 'label': {'en': 'World'}, 'match': {'any': True}}]
+        for web, key in [({'role_url': 'job.html'}, 'web.role_url'), ({'company_url': 'c.html'}, 'web.company_url'),
+                         ({'default_scope': 'moon'}, 'web.default_scope'), ({'colour': 'x'}, 'web'), ({'storage': {'cookie': 'x'}}, 'web.storage'),
+                         ({'storage': {'prefix': 3}}, 'web.storage.prefix')]:
+            with self.assertRaisesRegex(ProfileError, re.escape(key)):
+                profile_from_dict({'name': 'bad', 'scopes': scopes, 'web': web})
+
     def test_bad_links_and_accent_name_the_key(self):
         for raw, key in [({'accent': 'blue'}, 'accent'), ({'links': {'reference': [{'label': 'x', 'url': 'ftp://x'}]}}, 'links.reference[0].url'),
                          ({'links': {'reference': [{'url': 'https://x'}]}}, 'links.reference[0]'), ({'links': {'site': []}}, 'links')]:

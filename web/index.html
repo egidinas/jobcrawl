@@ -35,7 +35,7 @@
 <footer class="site-footer" id="site-footer"></footer>
 
 <script type="module">
-import { boot, dataUrl, pageUrl, roleLink, L, esc, pick, labelText } from './assets/app.js';
+import { boot, dataUrl, pageUrl, roleLink, defaultScope, L, esc, pick, labelText } from './assets/app.js';
 import { loadIndex, bm25 } from './assets/match.js';
 
 const cfg = await boot('index');
@@ -57,6 +57,7 @@ async function start() {
   }
   const ix = st.ix;
   $('f-scope').innerHTML = cfg.scopes.map((s, k) => `<option value="${k}">${esc(pick(s.label.en, s.label.de))}</option>`).join('');
+  st.scope = defaultScope(); $('f-scope').value = String(st.scope);
   $('f-field').innerHTML = `<option value="">${esc(pick('All fields', 'Alle Fachgebiete'))}</option>` + ix.fields.map((f) => `<option value="${esc(f)}">${esc(fieldName(f))}</option>`).join('');
   $('f-level').innerHTML = `<option value="0">${esc(pick('All levels', 'Alle Level'))}</option>` + ix.levels.map((code, k) => (k ? `<option value="${k}">${esc(levelName(code))}</option>` : '')).join('');
   run();
