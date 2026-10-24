@@ -40,6 +40,7 @@ def build_parser():
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
+            sp.add_argument("--text-from", metavar="DIR", help="build with the full descriptions of this site folder (its x), when SITE holds excerpts (demo)")
         if name == "map":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder (map.*, scopes, labels_file)")
@@ -122,7 +123,7 @@ def cmd_publish(args):
         return _usage_error("publish", e)
     vectors = args.vectors or default_vectors(args.site)
     try:
-        files = publish.publish(args.site, profile, vectors)
+        files = publish.publish(args.site, profile, vectors, text_from=args.text_from)
     except ImportError as e:
         return _usage_error("publish", f"{e}. Publishing with vectors needs numpy: pip install -r requirements-embed.txt")
     except (publish.PublishError, ValueError, OSError) as e:

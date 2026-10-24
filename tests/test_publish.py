@@ -116,7 +116,41 @@ class PublishFixture(unittest.TestCase):
         self.assertEqual(cfg['levels'][0]['code'], 'student')
         self.assertEqual(cfg['glossary'][0], ['test', 'prüfung'])
         self.assertEqual(cfg['accent'], '#2563eb')
-        self.assertEqual([x['url'] for x in cfg['links']['reference']], ['https://madenetwork.de/jobs.html', 'https://jobs.jmeyer.space'])
+        self.assertEqual([x['url'] for x in cfg['links']['reference']], [x['url'] for x in self.profile['links']['reference']])
+
+    def test_text_from_indexes_the_full_text_and_publishes_the_excerpts(self):
+        # the demo's rule: the keyword index reads the full descriptions, the published site carries excerpts
+        full = self.fresh_site('full-text')
+        cut = self.fresh_site('excerpt-text')
+        for name in os.listdir(cut):
+            if re.match(r'^jobs-desc-[0-9a-f]{2}\.json$', name):
+                path = os.path.join(cut, name)
+                with open(path, encoding='utf-8') as fh:
+                    shard = json.load(fh)
+                for entry in shard.values():
+                    entry['x'] = entry['x'][:10]
+                with open(path, 'w', encoding='utf-8') as fh:
+                    json.dump(shard, fh)
+        from jobcrawl.site import read_site
+        ids = [r[0] for r in read_site(full)[0]][:2]
+        for rid in ids:          # the term sits in two roles of the full text only
+            name = [n for n in os.listdir(full) if re.match(r'^jobs-desc-[0-9a-f]{2}\.json$', n) and rid[:2] == n[10:12]][0]
+            path = os.path.join(full, name)
+            with open(path, encoding='utf-8') as fh:
+                shard = json.load(fh)
+            shard[rid]['x'] = shard[rid]['x'] + ' zyxquartz'
+            with open(path, 'w', encoding='utf-8') as fh:
+                json.dump(shard, fh)
+        publish.publish(cut, self.profile, None, silent, text_from=full)
+        with open(os.path.join(cut, 'match', 'match-bm25.json'), encoding='utf-8') as fh:
+            bm = json.load(fh)
+        self.assertEqual({bm['ids'][k] for k in bm['post']['zyxquartz'][::2]}, set(ids))
+        for name in os.listdir(cut):
+            if re.match(r'^jobs-desc-[0-9a-f]{2}\.json$', name):
+                with open(os.path.join(cut, name), encoding='utf-8') as fh:
+                    self.assertTrue(all(len(e['x']) <= 10 for e in json.load(fh).values()))
+        with self.assertRaises(publish.PublishError):
+            publish.publish(cut, self.profile, None, silent, text_from=os.path.join(self.tmp, 'no-such-folder'))
 
     def test_links_and_accent_default_to_nothing(self):
         raw = {'name': 'plain', 'languages': ['en'], 'levels': [{'code': 'mid', 'rank': 0, 'label': {'en': 'Mid'}, 'pattern': None}]}

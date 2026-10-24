@@ -45,8 +45,9 @@ def auc(pos, neg):
     return (rank_sum - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)) if pos and neg else 0.5
 
 
-def build(site, out, statements, log=print):
-    """Writes match-prefs.json into out (needs match-vec.json and match-vec.bin there). Returns the statements published."""
+def build(site, out, statements, log=print, text_from=None):
+    """Writes match-prefs.json into out (needs match-vec.json and match-vec.bin there). Returns the statements published.
+    text_from: a site folder whose descriptions the statements are read from (see match_index.build)."""
     with open(os.path.join(out, 'match-vec.json'), encoding='utf-8') as fh:
         vj = json.load(fh)
     dim = vj['dim']
@@ -55,6 +56,8 @@ def build(site, out, statements, log=print):
         q.frombytes(fh.read())
     row = {rid: k for k, rid in enumerate(vj['ids'])}
     index, desc = read_site(site)
+    if text_from:
+        desc = read_site(text_from)[1]
     roles = []
     for r in index:
         if r[0] not in row:

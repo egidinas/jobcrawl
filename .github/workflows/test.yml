@@ -1,0 +1,35 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # no network in the tests: they use the fixtures under crawler/tests and tests/
+      - name: Crawler tests (Node)
+        run: node --test 'crawler/tests/*.test.mjs'
+
+      - name: Pipeline tests (Python)
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy
+          python -m unittest discover tests

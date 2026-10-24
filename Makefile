@@ -5,24 +5,32 @@ DATA ?= data
 SITE ?= $(DATA)/site
 PORT ?= 8000
 MODELS ?=
+MAP_PYTHON ?= $(PYTHON)
 
-.PHONY: test crawl build map serve demo
+.PHONY: test crawl build embed publish map serve demo
 
 test:
 	node --test 'crawler/tests/*.test.mjs'
+	$(PYTHON) -m unittest discover tests
 
 crawl:
-	node crawler/run.mjs --profile $(PROFILE)
+	node crawler/run.mjs --profile $(PROFILE) --data $(DATA)
 
 build:
 	$(PYTHON) -m jobcrawl build --profile $(PROFILE) --catalog $(DATA)/catalog.json --out $(SITE)
 
+embed:
+	$(PYTHON) -m jobcrawl embed --site $(SITE) --model-dir models/eg2 --profile $(PROFILE)
+
+publish:
+	$(PYTHON) -m jobcrawl publish --site $(SITE) --profile $(PROFILE)
+
 map:
-	$(PYTHON) -m jobcrawl map --profile $(PROFILE)
+	$(MAP_PYTHON) -m jobcrawl map --site $(SITE) --profile $(PROFILE)
+	$(PYTHON) -m jobcrawl publish --site $(SITE) --profile $(PROFILE)
 
 serve:
 	$(PYTHON) scripts/serve.py --data $(SITE) $(if $(MODELS),--models $(MODELS)) --port $(PORT)
 
 demo:
-	@echo "demo: the demo data and web app arrive in phases 4 and 5 (python scripts/serve.py --data demo/site)" >&2
-	@exit 2
+	$(PYTHON) scripts/serve.py --data demo/site --port $(PORT)
