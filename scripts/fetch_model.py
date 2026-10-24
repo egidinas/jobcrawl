@@ -19,7 +19,7 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 DEFAULT_REPO = 'onnx-community/embeddinggemma-2-ONNX'
-FILES = ['onnx/model_q4.onnx', 'onnx/model_q4.onnx_data', 'tokenizer.json']
+FILES = ['onnx/model_q4.onnx', 'onnx/model_q4.onnx_data', 'tokenizer.json', 'tokenizer_config.json']  # the browser tokenizer needs the config too
 CHUNK = 1 << 20
 
 
