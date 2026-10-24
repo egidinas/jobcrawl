@@ -1,0 +1,1204 @@
+{
+  "name": "aerospace",
+  "title": "Aerospace and deep tech (reference profile)",
+  "tagline": "Public aerospace, space, defence and photonics roles from European employers.",
+  "languages": [
+    "en",
+    "de"
+  ],
+  "data_dir": "data",
+  "crawl": {
+    "companies_file": "companies.json",
+    "relevance": {
+      "keywords": [
+        "word:space",
+        "spacecraft",
+        "satellit",
+        "orbital",
+        "word:orbit",
+        "word:launch",
+        "launcher",
+        "launch vehicle",
+        "rocket",
+        "aerospace",
+        "aeronaut",
+        "aviation",
+        "avionic",
+        "word:flight",
+        "aircraft",
+        "airframe",
+        "word:aero",
+        "payload",
+        "ground segment",
+        "earth observation",
+        "word:eo",
+        "defence",
+        "defense",
+        "military",
+        "missile",
+        "munition",
+        "word:c4isr",
+        "naval",
+        "ballistic",
+        "propuls",
+        "thruster",
+        "word:engine",
+        "word:engines",
+        "word:gnc",
+        "word:aocs",
+        "guidance",
+        "navigation",
+        "autonomy",
+        "autonomous",
+        "word:uas",
+        "word:uav",
+        "word:rpas",
+        "drone",
+        "unmanned",
+        "radar",
+        "word:rf",
+        "microwave",
+        "antenna",
+        "photonic",
+        "optic",
+        "laser",
+        "lidar",
+        "infrared",
+        "electro-optic",
+        "quantum",
+        "fusion",
+        "cryogenic",
+        "cryo",
+        "vacuum",
+        "thermal",
+        "semiconductor",
+        "word:asic",
+        "wafer",
+        "cleanroom",
+        "clean room",
+        "mems",
+        "word:structures",
+        "structural analysis",
+        "composite",
+        "word:ait",
+        "word:aiv",
+        "word:ait/aiv",
+        "systems integration",
+        "system integration",
+        "integration engineer",
+        "integration and test",
+        "integration & test",
+        "qualification",
+        "word:ecss",
+        "do-178",
+        "do178",
+        "do-254",
+        "do254",
+        "robotic",
+        "embedded",
+        "word:fpga",
+        "firmware",
+        "mechatronic",
+        "hardware engineer",
+        "systems engineer",
+        "system engineer",
+        "test engineer",
+        "manufacturing engineer",
+        "production engineer",
+        "luftfahrt",
+        "raumfahrt",
+        "satellit",
+        "antrieb",
+        "triebwerk",
+        "regelung",
+        "fertigung",
+        "pruf",
+        "flugzeug",
+        "rakete",
+        "wehrtechnik",
+        "verteidigung",
+        "bundeswehr",
+        "systemingenieur",
+        "reinraum",
+        "avionik",
+        "word:gnc"
+      ],
+      "negative": [
+        "search engine",
+        "red hat",
+        "satellite lab",
+        "flight attendant",
+        "cabin crew",
+        "cabin attendant",
+        "air stewardess",
+        "word:space planner",
+        "aesthetic",
+        "optometrist",
+        "optician"
+      ],
+      "ssic_deeptech": [
+        "303",
+        "304",
+        "3316",
+        "261",
+        "262",
+        "263",
+        "265",
+        "266",
+        "267",
+        "2827",
+        "613",
+        "721",
+        "8422"
+      ]
+    }
+  },
+  "scopes": [
+    {
+      "id": "bavaria",
+      "label": {
+        "en": "Bavaria",
+        "de": "Bayern"
+      },
+      "match": {
+        "country": "DE",
+        "admin1": "Bavaria"
+      }
+    },
+    {
+      "id": "germany",
+      "label": {
+        "en": "Germany",
+        "de": "Deutschland"
+      },
+      "match": {
+        "country": "DE"
+      }
+    },
+    {
+      "id": "europe",
+      "label": {
+        "en": "Europe",
+        "de": "Europa"
+      },
+      "match": {
+        "continent": "EU"
+      }
+    },
+    {
+      "id": "worldwide",
+      "label": {
+        "en": "Worldwide",
+        "de": "Weltweit"
+      },
+      "match": {
+        "any": true
+      }
+    }
+  ],
+  "fields": [
+    {
+      "id": "space",
+      "label": {
+        "en": "Space",
+        "de": "Raumfahrt"
+      },
+      "pillar": true,
+      "keywords": [
+        "word:aerospace",
+        "word:spacecraft",
+        "word:satellite",
+        "word:orbital",
+        "word:launcher",
+        "word:launch vehicle",
+        "word:rocket",
+        "word:payload",
+        "word:cubesat",
+        "word:constellation",
+        "word:ground segment",
+        "word:interplanetary",
+        "word:space industry",
+        "word:space system",
+        "word:space systems",
+        "word:space segment",
+        "word:space mission",
+        "word:space agency",
+        "word:space technology",
+        "word:space sector"
+      ],
+      "company_keywords": [
+        "space",
+        "rocket",
+        "satellite",
+        "exploration",
+        "orbit",
+        "astro",
+        "planet",
+        "constellr",
+        "dcubed",
+        "ohb",
+        "beyond gravity",
+        "spire",
+        "astrobotic",
+        "firefly"
+      ]
+    },
+    {
+      "id": "defense",
+      "label": {
+        "en": "Defense",
+        "de": "Verteidigung"
+      },
+      "pillar": true,
+      "keywords": [
+        "word:defence",
+        "word:defense",
+        "word:military",
+        "word:tactical",
+        "word:nato",
+        "word:uav",
+        "word:drone",
+        "word:electronic warfare",
+        "word:surveillance",
+        "word:reconnaissance"
+      ],
+      "company_keywords": [
+        "defen",
+        "stark",
+        "alpine eagle",
+        "helsing",
+        "arx robotics",
+        "diehl",
+        "hensoldt",
+        "mbda"
+      ]
+    },
+    {
+      "id": "deep_tech",
+      "label": {
+        "en": "Deep Tech",
+        "de": "Deep Tech"
+      },
+      "pillar": true,
+      "keywords": [
+        "word:deep tech",
+        "word:quantum",
+        "word:fusion",
+        "word:neutral atom",
+        "word:photonics",
+        "word:laser comms",
+        "word:superconducting",
+        "word:plasma"
+      ],
+      "company_keywords": [
+        "planqc",
+        "proxima fusion",
+        "quantum",
+        "attocube",
+        "menlo",
+        "cailabs"
+      ]
+    },
+    {
+      "id": "propulsion",
+      "label": {
+        "en": "Propulsion",
+        "de": "Antrieb"
+      },
+      "keywords": [
+        "word:propulsion",
+        "word:thruster",
+        "word:rocket engine",
+        "word:rocket motor",
+        "word:turbopump",
+        "word:injector",
+        "word:cryo",
+        "word:cryogenic",
+        "word:combustion"
+      ]
+    },
+    {
+      "id": "avionics_gnc",
+      "label": {
+        "en": "Avionics & GNC",
+        "de": "Avionik & GNC"
+      },
+      "keywords": [
+        "word:avionics",
+        "word:gnc",
+        "word:aocs",
+        "word:guidance",
+        "word:navigation",
+        "word:attitude control",
+        "word:flight control"
+      ]
+    },
+    {
+      "id": "robotics",
+      "label": {
+        "en": "Robotics",
+        "de": "Robotik"
+      },
+      "keywords": [
+        "word:robot",
+        "word:robotic",
+        "word:robotics",
+        "word:mechatronic",
+        "word:mechatronics",
+        "word:autonomous",
+        "word:manipulator"
+      ]
+    },
+    {
+      "id": "optics_laser",
+      "label": {
+        "en": "Optics & Laser",
+        "de": "Optik & Laser"
+      },
+      "keywords": [
+        "word:optic",
+        "word:optics",
+        "word:optical",
+        "word:laser",
+        "word:photonics",
+        "word:spectrometer",
+        "word:detector",
+        "word:lidar"
+      ]
+    },
+    {
+      "id": "rf_comms",
+      "label": {
+        "en": "RF & Comms",
+        "de": "HF & Comms"
+      },
+      "keywords": [
+        "word:rf",
+        "word:microwave",
+        "word:antenna",
+        "word:phased array",
+        "word:telecom",
+        "word:transceiver",
+        "word:ground station",
+        "word:radar"
+      ]
+    },
+    {
+      "id": "embedded_fpga",
+      "label": {
+        "en": "Embedded & FPGA",
+        "de": "Embedded & FPGA"
+      },
+      "keywords": [
+        "word:embedded",
+        "word:firmware",
+        "word:fpga",
+        "word:asic",
+        "word:rtos",
+        "word:microcontroller",
+        "word:pcb",
+        "word:electronics"
+      ]
+    },
+    {
+      "id": "thermal_tvac",
+      "label": {
+        "en": "Thermal & TVAC",
+        "de": "Thermal & TVAC"
+      },
+      "keywords": [
+        "word:thermal",
+        "word:tvac",
+        "word:heat transfer",
+        "word:vacuum",
+        "word:cooling"
+      ]
+    },
+    {
+      "id": "structures_cad",
+      "label": {
+        "en": "Structures & CAD",
+        "de": "Struktur & CAD"
+      },
+      "keywords": [
+        "word:structure",
+        "word:structures",
+        "word:structural",
+        "word:mechanic",
+        "word:mechanics",
+        "word:mechanical",
+        "word:cad",
+        "word:composite",
+        "word:fem",
+        "word:stress"
+      ]
+    },
+    {
+      "id": "ait_testing",
+      "label": {
+        "en": "AIT & Testing",
+        "de": "AIT & Test"
+      },
+      "keywords": [
+        "word:ait",
+        "word:integration",
+        "word:testing",
+        "word:test engineer",
+        "word:harness",
+        "word:verification",
+        "word:validation",
+        "word:hil"
+      ]
+    },
+    {
+      "id": "software_ai",
+      "label": {
+        "en": "Software & AI",
+        "de": "Software & KI"
+      },
+      "keywords": [
+        "word:software",
+        "word:c++",
+        "word:python",
+        "word:machine learning",
+        "word:artificial intelligence",
+        "word:cloud",
+        "word:backend"
+      ]
+    },
+    {
+      "id": "manufacturing",
+      "label": {
+        "en": "Manufacturing",
+        "de": "Fertigung"
+      },
+      "keywords": [
+        "word:manufacturing",
+        "word:machining",
+        "word:cnc",
+        "word:production",
+        "word:assembly",
+        "word:fertigung"
+      ]
+    }
+  ],
+  "levels": [
+    {
+      "code": "student",
+      "rank": 0,
+      "label": {
+        "en": "Student & intern",
+        "de": "Student & Praktikum"
+      },
+      "pattern": "\\b(intern(ship)?|praktik\\w*|werkstudent\\w*|working student|thesis|abschlussarbeit|bachelorarbeit|masterarbeit|trainee|apprentice\\w*|ausbildung|azubi|duales studium|dual student|student)\\b"
+    },
+    {
+      "code": "lead",
+      "rank": 4,
+      "label": {
+        "en": "Lead & management",
+        "de": "Leitung & Management"
+      },
+      "pattern": "\\b(head of|director|vp|vice president|chief|cto|coo|ceo|manager|\\w+manager(?:in)?|(?!\\w*(?:halb|supra|ab|blitz|strom|wärme|licht|isolier|über)leiter)(?!leiter(?:platt|bahn|techn|werkstoff|material))\\w*leiter\\w*|team ?lead\\w*|lead(?![\\s-]+(?:free|times?|generation|gen|qualification|scoring|nurturing|magnet\\w*|conversion|sources?|capture|lists?|pipeline)\\b)|principal investigator|general manager|geschäftsführ\\w*)\\b"
+    },
+    {
+      "code": "senior",
+      "rank": 3,
+      "label": {
+        "en": "Senior & principal",
+        "de": "Senior & Principal"
+      },
+      "pattern": "\\b(senior|sr\\.?|principal|staff|expert\\w*|experte|architect|fellow)\\b"
+    },
+    {
+      "code": "entry",
+      "rank": 1,
+      "label": {
+        "en": "Entry level",
+        "de": "Berufseinstieg"
+      },
+      "pattern": "\\b(junior|jr\\.?|graduate|entry[- ]level|berufseinsteiger\\w*|absolvent\\w*|early career|associate)\\b"
+    },
+    {
+      "code": "mid",
+      "rank": 2,
+      "label": {
+        "en": "Engineer & specialist",
+        "de": "Ingenieur & Fachkraft"
+      },
+      "pattern": null
+    }
+  ],
+  "statements": [
+    {
+      "id": "autonomy",
+      "a": {
+        "en": "Independent work, own decisions",
+        "de": "Selbstständiges Arbeiten, eigene Entscheidungen"
+      },
+      "b": {
+        "en": "Clear guidelines and processes",
+        "de": "Klare Vorgaben und Prozesse"
+      },
+      "a_regex": "independent(ly)?|work independently|ownership|self-driven|self-starter|greenfield|from scratch|eigenverantwortlich\\w*|selbstständig\\w*|selbständig\\w*|entrepreneur\\w*|ambiguity",
+      "b_regex": "procedures?|complian\\w*|regulat\\w*|audits?|certification|quality management|work instructions?|richtlinien|vorgaben|verfahrensanweisung\\w*|normen|iso 9001|en 9100|as9100"
+    },
+    {
+      "id": "handson",
+      "a": {
+        "en": "Hands-on: lab, hardware, integration",
+        "de": "Praktisch: Labor, Hardware, Integration"
+      },
+      "b": {
+        "en": "Desk work: analysis, models, software",
+        "de": "Am Schreibtisch: Analyse, Modelle, Software"
+      },
+      "a_regex": "hands-on|laborator\\w*|lab\\b|cleanroom|reinraum|assembly|integration and test|test bench|prüfstand|soldering|werkstatt|workshop|montage|harness",
+      "b_regex": "simulation\\w*|modell?ing|analys[ie]s|algorithm\\w*|software development|data science|machine learning|python|statistic\\w*|numerical|cfd|fem\\b"
+    },
+    {
+      "id": "research",
+      "a": {
+        "en": "New things: research, prototypes",
+        "de": "Neues: Forschung, Prototypen"
+      },
+      "b": {
+        "en": "Delivery: production, operations",
+        "de": "Umsetzung: Produktion, Betrieb"
+      },
+      "a_regex": "research|phd|prototyp\\w*|forschung\\w*|state-of-the-art|publications?|proof of concept|feasibility|experiment\\w*|scientific",
+      "b_regex": "series production|serienfertigung|production line|manufacturing operations|operations|maintenance|wartung|instandhaltung|shift|schicht\\w*|ramp-up|yield"
+    },
+    {
+      "id": "customer",
+      "a": {
+        "en": "With customers and partners",
+        "de": "Mit Kunden und Partnern"
+      },
+      "b": {
+        "en": "Inside the technical team",
+        "de": "Im technischen Team"
+      },
+      "a_regex": "customers?\\b|client\\w*|kunden\\w*|stakeholder\\w*|presentations?|sales|business development|vertrieb|proposal\\w*|negotiat\\w*",
+      "b_regex": "firmware|schematic\\w*|pcb|fpga|code reviews?|unit tests?|cad\\b|catia|nx\\b|solidworks|matlab|verilog|vhdl"
+    },
+    {
+      "id": "defence",
+      "a": {
+        "en": "Defence and security",
+        "de": "Verteidigung und Sicherheit"
+      },
+      "b": {
+        "en": "Civil, commercial and science",
+        "de": "Zivil, kommerziell und Wissenschaft"
+      },
+      "a_regex": "defen[cs]e|military|militär\\w*|bundeswehr|security clearance|sicherheitsüberprüfung|nato|armed forces|weapon\\w*|rüstung",
+      "b_regex": "earth observation|scientific|science mission|commercial customers|telecommunication\\w*|climate|civil aviation|consumer"
+    }
+  ],
+  "personas": [
+    {
+      "id": "ait",
+      "label": {
+        "en": "Test, integration and verification",
+        "de": "Test, Integration und Verifikation"
+      },
+      "regex": "\\b(test|testing|ait|aiv|integration|verification|validation|prüf\\w*)\\b",
+      "flags": "i"
+    },
+    {
+      "id": "systems",
+      "label": {
+        "en": "Systems engineering",
+        "de": "Systems Engineering"
+      },
+      "regex": "\\bsystems? (engineer|engineering|architect)|systemingenieur",
+      "flags": "i"
+    },
+    {
+      "id": "mech",
+      "label": {
+        "en": "Mechanical, thermal and propulsion",
+        "de": "Mechanik, Thermal und Antrieb"
+      },
+      "regex": "\\b(mechanical|mechanism|structur\\w*|thermal|propulsion|konstrukt\\w*|mechanik\\w*)",
+      "flags": "i"
+    },
+    {
+      "id": "electronics",
+      "label": {
+        "en": "Electronics, embedded and RF",
+        "de": "Elektronik, Embedded und HF"
+      },
+      "regex": "\\b(electronic\\w*|electrical|embedded|fpga|firmware|pcb|rf|antenna|elektronik\\w*)",
+      "flags": "i"
+    },
+    {
+      "id": "software",
+      "label": {
+        "en": "Software, data and AI",
+        "de": "Software, Daten und KI"
+      },
+      "regex": "\\b(software|developer|data scien\\w*|machine learning|ml|ai|backend|frontend|cloud|devops)\\b",
+      "flags": "i"
+    },
+    {
+      "id": "optics",
+      "label": {
+        "en": "Optics, photonics and lasers",
+        "de": "Optik, Photonik und Laser"
+      },
+      "regex": "\\b(optic\\w*|photonic\\w*|laser\\w*)",
+      "flags": "i"
+    },
+    {
+      "id": "manufacturing",
+      "label": {
+        "en": "Manufacturing and quality",
+        "de": "Fertigung und Qualität"
+      },
+      "regex": "\\b(manufactur\\w*|production|quality|assembly|fertigung|produktion|qualität\\w*)",
+      "flags": "i"
+    },
+    {
+      "id": "ops",
+      "label": {
+        "en": "Operations: missions, satellites, flight",
+        "de": "Betrieb: Missionen, Satelliten, Flug"
+      },
+      "regex": "\\b(mission|operations|operator|ground segment|flight ops|spacecraft operations)\\b",
+      "flags": "i"
+    },
+    {
+      "id": "programme",
+      "label": {
+        "en": "Programme and project management",
+        "de": "Programm- und Projektmanagement"
+      },
+      "regex": "\\b(program\\w*|project manager|projektleiter\\w*|pmo)\\b",
+      "flags": "i"
+    },
+    {
+      "id": "business",
+      "label": {
+        "en": "Business, sales and partnerships",
+        "de": "Business, Vertrieb und Partnerschaften"
+      },
+      "regex": "\\b(business development|sales|account|partnership\\w*|vertrieb)\\b",
+      "flags": "i"
+    },
+    {
+      "id": "research",
+      "label": {
+        "en": "Research and science",
+        "de": "Forschung und Wissenschaft"
+      },
+      "regex": "\\b(scientist|research\\w*|phd|postdoc|forsch\\w*)\\b",
+      "flags": "i"
+    },
+    {
+      "id": "robotics",
+      "label": {
+        "en": "Robotics and autonomy",
+        "de": "Robotik und Autonomie"
+      },
+      "regex": "\\b(robot\\w*|autonom\\w*|perception|gnc)\\b",
+      "flags": "i"
+    }
+  ],
+  "glossary": [
+    [
+      "test",
+      "prüfung"
+    ],
+    [
+      "testing",
+      "prüfung"
+    ],
+    [
+      "tester",
+      "prüfer"
+    ],
+    [
+      "verification",
+      "verifikation"
+    ],
+    [
+      "validation",
+      "validierung"
+    ],
+    [
+      "integration",
+      "integration"
+    ],
+    [
+      "qualification",
+      "qualifizierung"
+    ],
+    [
+      "manufacturing",
+      "fertigung"
+    ],
+    [
+      "production",
+      "produktion"
+    ],
+    [
+      "assembly",
+      "montage"
+    ],
+    [
+      "quality",
+      "qualität"
+    ],
+    [
+      "inspection",
+      "prüfung"
+    ],
+    [
+      "supplier",
+      "lieferant"
+    ],
+    [
+      "procurement",
+      "einkauf"
+    ],
+    [
+      "purchasing",
+      "einkauf"
+    ],
+    [
+      "supply",
+      "beschaffung"
+    ],
+    [
+      "logistics",
+      "logistik"
+    ],
+    [
+      "maintenance",
+      "instandhaltung"
+    ],
+    [
+      "repair",
+      "reparatur"
+    ],
+    [
+      "engineer",
+      "ingenieur"
+    ],
+    [
+      "engineering",
+      "entwicklung"
+    ],
+    [
+      "developer",
+      "entwickler"
+    ],
+    [
+      "development",
+      "entwicklung"
+    ],
+    [
+      "design",
+      "konstruktion"
+    ],
+    [
+      "mechanical",
+      "mechanik"
+    ],
+    [
+      "mechanics",
+      "mechanik"
+    ],
+    [
+      "electrical",
+      "elektrotechnik"
+    ],
+    [
+      "electronics",
+      "elektronik"
+    ],
+    [
+      "electronic",
+      "elektronisch"
+    ],
+    [
+      "embedded",
+      "embedded"
+    ],
+    [
+      "software",
+      "software"
+    ],
+    [
+      "hardware",
+      "hardware"
+    ],
+    [
+      "firmware",
+      "firmware"
+    ],
+    [
+      "systems",
+      "systeme"
+    ],
+    [
+      "system",
+      "system"
+    ],
+    [
+      "requirements",
+      "anforderungen"
+    ],
+    [
+      "safety",
+      "sicherheit"
+    ],
+    [
+      "security",
+      "sicherheit"
+    ],
+    [
+      "reliability",
+      "zuverlässigkeit"
+    ],
+    [
+      "thermal",
+      "thermisch"
+    ],
+    [
+      "vacuum",
+      "vakuum"
+    ],
+    [
+      "vibration",
+      "vibration"
+    ],
+    [
+      "structures",
+      "strukturen"
+    ],
+    [
+      "structural",
+      "strukturell"
+    ],
+    [
+      "propulsion",
+      "antrieb"
+    ],
+    [
+      "satellite",
+      "satellit"
+    ],
+    [
+      "satellites",
+      "satelliten"
+    ],
+    [
+      "spacecraft",
+      "raumfahrzeug"
+    ],
+    [
+      "space",
+      "raumfahrt"
+    ],
+    [
+      "aerospace",
+      "luftfahrt"
+    ],
+    [
+      "aviation",
+      "luftfahrt"
+    ],
+    [
+      "aircraft",
+      "flugzeug"
+    ],
+    [
+      "defence",
+      "verteidigung"
+    ],
+    [
+      "defense",
+      "verteidigung"
+    ],
+    [
+      "radar",
+      "radar"
+    ],
+    [
+      "antenna",
+      "antenne"
+    ],
+    [
+      "optics",
+      "optik"
+    ],
+    [
+      "optical",
+      "optisch"
+    ],
+    [
+      "laser",
+      "laser"
+    ],
+    [
+      "photonics",
+      "photonik"
+    ],
+    [
+      "project",
+      "projekt"
+    ],
+    [
+      "projects",
+      "projekte"
+    ],
+    [
+      "program",
+      "programm"
+    ],
+    [
+      "programme",
+      "programm"
+    ],
+    [
+      "manager",
+      "leiter"
+    ],
+    [
+      "management",
+      "management"
+    ],
+    [
+      "lead",
+      "leitung"
+    ],
+    [
+      "head",
+      "leiter"
+    ],
+    [
+      "team",
+      "team"
+    ],
+    [
+      "customer",
+      "kunde"
+    ],
+    [
+      "customers",
+      "kunden"
+    ],
+    [
+      "sales",
+      "vertrieb"
+    ],
+    [
+      "business",
+      "geschäft"
+    ],
+    [
+      "contract",
+      "vertrag"
+    ],
+    [
+      "finance",
+      "finanzen"
+    ],
+    [
+      "controlling",
+      "controlling"
+    ],
+    [
+      "operations",
+      "betrieb"
+    ],
+    [
+      "operator",
+      "bediener"
+    ],
+    [
+      "technician",
+      "techniker"
+    ],
+    [
+      "mechanic",
+      "mechaniker"
+    ],
+    [
+      "welding",
+      "schweißen"
+    ],
+    [
+      "machining",
+      "zerspanung"
+    ],
+    [
+      "cnc",
+      "cnc"
+    ],
+    [
+      "composite",
+      "verbundwerkstoff"
+    ],
+    [
+      "materials",
+      "werkstoffe"
+    ],
+    [
+      "chemistry",
+      "chemie"
+    ],
+    [
+      "physics",
+      "physik"
+    ],
+    [
+      "research",
+      "forschung"
+    ],
+    [
+      "scientist",
+      "wissenschaftler"
+    ],
+    [
+      "simulation",
+      "simulation"
+    ],
+    [
+      "analysis",
+      "analyse"
+    ],
+    [
+      "calculation",
+      "berechnung"
+    ],
+    [
+      "drawings",
+      "zeichnungen"
+    ],
+    [
+      "documentation",
+      "dokumentation"
+    ],
+    [
+      "planning",
+      "planung"
+    ],
+    [
+      "planner",
+      "planer"
+    ],
+    [
+      "scheduling",
+      "terminplanung"
+    ],
+    [
+      "cost",
+      "kosten"
+    ],
+    [
+      "budget",
+      "budget"
+    ],
+    [
+      "training",
+      "schulung"
+    ],
+    [
+      "intern",
+      "praktikant"
+    ],
+    [
+      "internship",
+      "praktikum"
+    ],
+    [
+      "student",
+      "student"
+    ],
+    [
+      "graduate",
+      "absolvent"
+    ],
+    [
+      "apprentice",
+      "auszubildender"
+    ],
+    [
+      "apprenticeship",
+      "ausbildung"
+    ],
+    [
+      "certification",
+      "zertifizierung"
+    ],
+    [
+      "standards",
+      "normen"
+    ],
+    [
+      "compliance",
+      "konformität"
+    ],
+    [
+      "audit",
+      "audit"
+    ],
+    [
+      "risk",
+      "risiko"
+    ],
+    [
+      "automation",
+      "automatisierung"
+    ],
+    [
+      "robotics",
+      "robotik"
+    ],
+    [
+      "control",
+      "regelung"
+    ],
+    [
+      "controls",
+      "steuerung"
+    ]
+  ],
+  "map": {
+    "k": 15,
+    "layout_k": 45,
+    "min_dist": 0.25,
+    "even": 0.7,
+    "reps": 3,
+    "signature": 0.8,
+    "min_scope": 600,
+    "labels_file": "labels.json",
+    "resolution": [
+      1.6,
+      5.0
+    ]
+  },
+  "embed": {
+    "model_repo": "onnx-community/embeddinggemma-2-ONNX",
+    "prompt": "search-query",
+    "max_tokens": 256,
+    "text_chars": 700
+  },
+  "accent": "#2563eb",
+  "links": {
+    "reference": [
+      {
+        "label": "madenetwork.de — board, Match me, Atlas",
+        "url": "https://madenetwork.de/jobs.html"
+      },
+      {
+        "label": "jobs.jmeyer.space",
+        "url": "https://jobs.jmeyer.space"
+      }
+    ]
+  }
+}
