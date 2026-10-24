@@ -34,7 +34,9 @@ def build(site, vectors, out, log=print):
     V /= np.maximum(np.linalg.norm(V, axis=1, keepdims=True), 1e-9)
     index, desc = read_site(site)
     rows = {r[0]: r for r in index}
-    # a vector whose role is not on this board is its own employer with no title words: it never joins a duplicate group
+    # a vector whose role is no longer on this board (closed since it was embedded) is nobody's neighbour, joins no duplicate group
+    # and gets no neighbours: the page could not show it
+    on = np.array([i in rows for i in ids])
     emp = [rows[i][2] if i in rows else '?' + i for i in ids]; slug = [rows[i][4] if i in rows else '' for i in ids]
     tw = [title_words(rows[i][1]) if i in rows else set() for i in ids]
     parent = list(range(n))
@@ -48,9 +50,13 @@ def build(site, vectors, out, log=print):
         S = V[s:s + 1024] @ V.T
         for r in range(S.shape[0]):
             S[r, s + r] = -9
+        S[:, ~on] = -9
         top = np.argsort(-S, 1)[:, :40]
         for r in range(S.shape[0]):
-            i = s + r; cand.append([(int(j), float(S[r, j])) for j in top[r]])
+            i = s + r
+            if not on[i]:
+                cand.append([]); continue
+            cand.append([(int(j), float(S[r, j])) for j in top[r] if on[j]])
             for j, c in cand[-1]:
                 if c < SAME_EMPLOYER_COS:
                     break
