@@ -1,15 +1,19 @@
 // Shared by the three pages (index.html, match.html, atlas.html): where the data folder is, config.json (read once),
 // the language, the storage keys, the header and the footer. Plain browser modules, no build step.
 // Every URL is relative to this file or to the page, so the web folder works under any base path.
-// The data folder is ?data=<folder> (default data/); it holds the files `jobcrawl publish` wrote (config.json, jobs-*.json, match/).
+// The data folder is ?data=<folder>, else <meta name="jobcrawl-data" content="<folder>"> in the page (a site that serves the data
+// from its own root), else data/. It holds the files `jobcrawl publish` wrote (config.json, jobs-*.json, match/).
+// Site-specific behaviour comes from config.json: link templates (role_url, company_url), the default scope, and the names under
+// which the browser keeps the visitor's data (storage). Every key is optional; profiles/schema.md lists them under `web`.
 
 const PARAMS = new URL(location.href).searchParams;
 const DEFAULT_PREFIX = 'jobcrawl';
 const PAGE_NAMES = { index: { en: 'Jobs', de: 'Stellen' }, match: { en: 'Match me', de: 'Passende Stellen' }, atlas: { en: 'Atlas', de: 'Atlas' } };
 const NAV = [['index', 'index.html', 'Jobs', 'Stellen'], ['match', 'match.html', 'Match me', 'Passende Stellen'], ['atlas', 'atlas.html', 'Atlas', 'Atlas']];
 
+const META_DATA = (() => { try { return document.querySelector('meta[name="jobcrawl-data"]')?.content || null; } catch (e) { return null; } })();
 export const DATA_BASE = (() => {
-  const u = new URL(PARAMS.get('data') || 'data/', location.href);
+  const u = new URL(PARAMS.get('data') || META_DATA || 'data/', location.href);
   if (!u.pathname.endsWith('/')) u.pathname += '/';
   return u.href;
 })();
@@ -17,29 +21,41 @@ export const DATA_BASE = (() => {
 export const dataUrl = (path = '') => new URL(path, DATA_BASE).href;
 /** A page of the web app, carrying the data folder along. */
 export const pageUrl = (file) => { const d = PARAMS.get('data'); return d ? `${file}?data=${encodeURIComponent(d)}` : file; };
-/** The detail view of one role: the index page with the role's id as its hash. */
-export const roleLink = (id) => `${pageUrl('index.html')}#${encodeURIComponent(id)}`;
+const fill = (tpl, key, v) => tpl.split(`{${key}}`).join(encodeURIComponent(v));
+/** The detail view of one role: config role_url ("job.html?id={id}"), else the index page with the role's id as its hash. */
+export const roleLink = (id) => (cfg && cfg.role_url ? fill(cfg.role_url, 'id', id) : `${pageUrl('index.html')}#${encodeURIComponent(id)}`);
+/** The page of an employer (config company_url, e.g. "company-{slug}.html"), or null when the site has none. */
+export const companyLink = (slug) => (cfg && cfg.company_url && slug ? fill(cfg.company_url, 'slug', slug) : null);
+/** Index (in config scopes) of the scope a page starts with: config default_scope (an id), else the first. */
+export const defaultScope = () => { const k = cfg && cfg.default_scope ? cfg.scopes.findIndex((s) => s.id === cfg.default_scope) : -1; return k < 0 ? 0 : k; };
 
-let cfg = null, cfgPromise = null, prefix = DEFAULT_PREFIX;
+let cfg = null, cfgPromise = null, prefix = DEFAULT_PREFIX, store = {};
 /** config.json of the data folder, fetched once. Rejects with a message that names the folder when it is missing. */
 export function loadConfig() {
   if (!cfgPromise) {
     cfgPromise = fetch(dataUrl('config.json')).then((r) => {
       if (!r.ok) throw new Error(`config.json not found in ${DATA_BASE} (HTTP ${r.status}). Run jobcrawl publish, or open this page with ?data=<folder>.`);
       return r.json();
-    }).then((c) => { cfg = c; prefix = c.storage_prefix || DEFAULT_PREFIX; return c; });
+    }).then((c) => { cfg = c; store = c.storage || {}; prefix = store.prefix || c.storage_prefix || DEFAULT_PREFIX; return c; });
   }
   return cfgPromise;
 }
 /** The loaded config (after loadConfig). */
 export const config = () => cfg;
-/** localStorage key for this site: `<storage_prefix>-<name>`. */
+/** localStorage key for this site: `<storage.prefix>-<name>`. */
 export const storageKey = (name) => `${prefix}-${name}`;
+/** Where the language choice is kept (storage.lang, else <prefix>-lang); a site may share it with its own pages. */
+const langKey = () => store.lang || storageKey('lang');
+/** Name of the browser cache that keeps the model files (storage.model_cache, else <prefix>-eg2-v1). */
+export const modelCache = () => store.model_cache || storageKey('eg2-v1');
+/** The "kind" a saved profile file carries (storage.profile_kind, else jobcrawl-profile), and its file name. */
+export const profileKind = () => store.profile_kind || 'jobcrawl-profile';
+export const profileFileName = () => store.profile_file || 'jobcrawl-profile.json';
 
 /** The language in use: the stored choice when the config offers it, else English, else the first language offered. */
 export function curLang() {
   const langs = cfg ? cfg.languages : ['en'];
-  let v = null; try { v = localStorage.getItem(storageKey('lang')); } catch (e) { /* default below */ }
+  let v = null; try { v = localStorage.getItem(langKey()); } catch (e) { /* default below */ }
   if (langs.includes(v)) return v;
   return langs.includes('en') ? 'en' : langs[0];
 }
@@ -56,7 +72,7 @@ export const LP = (en, de) => `placeholder="${esc(pick(en, de))}" data-en-placeh
 
 /** Stores the language and reloads the page, so every view is rendered in it. */
 export function setLang(v) {
-  try { localStorage.setItem(storageKey('lang'), v); } catch (e) { /* kept for this page only */ }
+  try { localStorage.setItem(langKey(), v); } catch (e) { /* kept for this page only */ }
   location.reload();
 }
 

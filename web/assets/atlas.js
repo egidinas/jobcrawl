@@ -3,7 +3,7 @@
 // and placed on the plane by relaxing that network (UMAP). Labels name each group by its distinctive title words, fields
 // and the statements it leans to. Roles newer than the layout are placed at the mean position of their nearest mapped roles.
 // Nothing is uploaded; no model download unless a CV is read.
-import { loadConfig, dataUrl, roleLink, storageKey, L, esc, isDe, pick } from './app.js';
+import { loadConfig, dataUrl, roleLink, companyLink, defaultScope, modelCache, L, esc, isDe, pick } from './app.js';
 import { makeIndex, tasteScores, tasteWeight } from './match.js';
 import * as PF from './profile.js';
 const cfg = await loadConfig();
@@ -11,7 +11,7 @@ PF.setPersonas(cfg.personas);
 const K = PF.keys();
 const mount = document.getElementById('atlas-mount'); if (!mount) throw new Error('no #atlas-mount');
 // the scopes of config.json, in order: a role's scope bits (match-attrs.json) follow this order
-const scopeOpts = cfg.scopes.map((x, k) => `<option value="${k}"${k === 0 ? ' selected' : ''}>${L(x.label.en, x.label.de)}</option>`).join('');
+const scopeOpts = cfg.scopes.map((x, k) => `<option value="${k}"${k === defaultScope() ? ' selected' : ''}>${L(x.label.en, x.label.de)}</option>`).join('');
 const fieldLabel = (id) => { const f = (cfg.fields || []).find((x) => x.id === id); return f ? pick(f.label.en, f.label.de) : id; };
 const ANY = (() => { const k = cfg.scopes.findIndex((x) => x.match && x.match.any); return k < 0 ? cfg.scopes.length - 1 : k; })();   // the scope with every role: the whole-map layout
 const loadRatings = () => { try { return JSON.parse(localStorage.getItem(K.ratings) || '{}'); } catch (e) { return {}; } };
@@ -81,6 +81,8 @@ const X = new Float32Array(have.length * D);
 have.forEach((i, k) => { let n = 0; for (let d = 0; d < D; d++) { const x = ix.vec[ix.vrow[i] * D + d]; X[k * D + d] = x; n += x * x; } n = Math.sqrt(n) || 1; for (let d = 0; d < D; d++) X[k * D + d] /= n; });
 
 // ---- layers from the network layout
+// optional company texts for the cards: config company_texts, a file in the data folder ({slug: [text, ...]})
+const coRows = cfg.company_texts ? await fetch(dataUrl(cfg.company_texts)).then((r) => r.json()).catch(() => ({})) : {};
 const CVEC = await Promise.all([fetch(dataUrl('match/company-vec.json')).then((r) => r.json()), fetch(dataUrl('match/company-vec.bin')).then((r) => r.arrayBuffer())]).then(([j, b]) => ({ slugs: j.slugs, vec: new Int8Array(b) })).catch(() => null);
 const LAY = await fetch(dataUrl('match/atlas-layout.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 if (!LAY) { $('atlas-status').innerHTML = L('The map layout is not published yet.', 'Das Kartenlayout ist noch nicht veröffentlicht.'); throw new Error('no atlas-layout.json'); }
@@ -119,7 +121,7 @@ function roleMapFor(scope) {
     if (R) { if (!roleMaps.has(name)) roleMaps.set(name, roleLayer(R, s0)); return roleMaps.get(name); } }
   return roleLayer();
 }
-const layers = { roles: roleMapFor(0), companies: companyLayer() };
+const layers = { roles: roleMapFor(defaultScope()), companies: companyLayer() };
 const coEnts = layers.companies.ents.filter((e) => e.vec);
 
 // ---- taste: marks, statements and a CV, shared with Match me through this browser's storage (numbers only, never the CV text)
@@ -165,7 +167,7 @@ function renderCv() {
 renderPersonas(); renderPrefs(); renderCv(); computeTaste();
 
 // ---- state, view and drawing
-const st = { all: false, mode: 'roles', scope: 0, size: 0.09, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
+const st = { all: false, mode: 'roles', scope: defaultScope(), size: 0.09, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
 $('atlas-fields').innerHTML = ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="false">${esc(fieldLabel(f))}</button>`).join('');
 const cv = $('atlas-cv'), g = cv.getContext('2d'), W = cv.width, H = cv.height, css = (n) => getComputedStyle(document.body).getPropertyValue(n).trim() || '#888';
 const lay = () => layers[st.mode];
@@ -320,9 +322,9 @@ function cardHtml(k) {
   const e = lay().ents[k], open = st.open.has(e.id);
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '';
     return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div><div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
-  const co = [e.about || ''], vr = visibleRoles(e), flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => fieldLabel(x[0]));
+  const co = coRows[e.slug] || [e.about || ''], vr = visibleRoles(e), flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => fieldLabel(x[0]));
   return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(e.name)}</button><div class="m">${e.idx.length ? `${vr.length} ${L('open roles here', 'offene Stellen hier')}` : L('no open roles on the board right now', 'derzeit keine offenen Stellen auf der Börse')}${flds.length ? ' · ' + esc(flds.join(', ')) : e.field ? ' · ' + esc(e.field) : ''}</div><div class="snip">${esc(snip(co[0], 170))}</div>
-<div class="more"><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i])}">${esc(rows[i][1])}</a></li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12}</li>` : ''}</ul></div>${voteHtml(e.id)}</li>`;
+<div class="more"><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i])}">${esc(rows[i][1])}</a></li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12}</li>` : ''}</ul>${companyLink(e.slug) ? `<a class="link" href="${companyLink(e.slug)}">${L('Company page →', 'Firmenseite →')}</a>` : ''}</div>${voteHtml(e.id)}</li>`;
 }
 async function fillRole(li) {
   const e = lay().ents[+li.dataset.k]; if (st.mode !== 'roles') return; const id = e.id, d = (await shard(id))[id], box = li.querySelector('.more'), i = e.idx[0], row = rows[i];
@@ -334,7 +336,7 @@ async function fillRole(li) {
     + (() => { const dups = ix.dupsOf(i), nb = ix.nbOf(i).slice(0, 5);
         return (dups.length ? `<p class="atlas-note">${L(`Also listed ${dups.length} more time${dups.length > 1 ? 's' : ''}`, `Noch ${dups.length}-mal ausgeschrieben`)}: ${dups.slice(0, 4).map((j) => esc(rows[j][2] + (ix.regions[ix.attrs[j][3]] ? ' · ' + ix.regions[ix.attrs[j][3]] : ''))).join(', ')}</p>` : '')
           + (nb.length ? `<div class="atlas-note">${L('Similar roles:', 'Ähnliche Stellen:')}<ul class="co-roles">${nb.map((x) => `<li><a class="link" href="${roleLink(ix.ids[x.i])}">${esc(rows[x.i][1])}</a> · ${esc(rows[x.i][2])}</li>`).join('')}</ul></div>` : ''); })()
-    + `<div class="links"><a class="link" href="${roleLink(id)}">${L('Details in the job list →', 'Details in der Stellenliste →')}</a><a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply ↗', 'Bewerben ↗')}</a></div>`;
+    + `<div class="links"><a class="link" href="${roleLink(id)}">${cfg.role_url ? L('Full role page →', 'Ganze Stellenseite →') : L('Details in the job list →', 'Details in der Stellenliste →')}</a>${d && companyLink(d.cs) ? `<a class="link" href="${companyLink(d.cs)}">${L('About ' + row[2] + ' →', 'Über ' + row[2] + ' →')}</a>` : ''}<a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply ↗', 'Bewerben ↗')}</a></div>`;
 }
 function renderList() {
   $('atlas-list').innerHTML = st.sample.map(cardHtml).join('') || `<li class="atlas-note">${L('Nothing in the lens with these filters. Move it or make it larger.', 'Nichts in der Lupe mit diesen Filtern. Verschieben oder vergrößern Sie sie.')}</li>`;
@@ -389,7 +391,7 @@ mount.addEventListener('click', async (e) => {
     const btn = e.target.closest('#atlas-cv-read'); btn.disabled = true;
     try {
       const { loadModel } = await import('./embed.js');
-      const m = await loadModel({ modelUrl: cfg.model_url, onProgress: (f) => { stat.textContent = (f < 0.97 ? (isDe() ? 'Lade Modell: ' : 'Loading the model: ') + Math.round(f * 100) + ' %' : (isDe() ? 'Starte …' : 'Starting…')); } });
+      const m = await loadModel({ modelUrl: cfg.model_url, cacheName: modelCache(), onProgress: (f) => { stat.textContent = (f < 0.97 ? (isDe() ? 'Lade Modell: ' : 'Loading the model: ') + Math.round(f * 100) + ' %' : (isDe() ? 'Starte …' : 'Starting…')); } });
       stat.textContent = isDe() ? 'Lese …' : 'Reading…'; const v = await m.embed(text, 512);
       cvEmb = { v: Array.from(v, (x) => Math.round(x * 1e4) / 1e4), on: true }; setJ(K.cv, cvEmb); renderCv(); computeTaste(); draw();
     } catch (err) { stat.textContent = (isDe() ? 'Das Modell lässt sich hier nicht starten: ' : 'The model could not start here: ') + (err.message || err); btn.disabled = false; }

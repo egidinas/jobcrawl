@@ -16,6 +16,7 @@ import { resolve } from 'node:path';
 import { providers, resolve as resolveEntry } from './providers.mjs';
 import { harvestTable } from './providers-extra.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
+import { UA, setUserAgent } from './useragent.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : undefined);
@@ -23,6 +24,7 @@ let PROFILE;
 try { PROFILE = loadProfile(profileDirFromArgs(args)); } catch (e) { console.error(`discover: ${e.message}`); process.exit(2); }
 if (!PROFILE) { console.error('discover: no profile. Pass --profile <dir> (or set JOBCRAWL_PROFILE).'); process.exit(2); }
 const DATA = resolveDataDir(opt('data'), PROFILE);
+setUserAgent(PROFILE.userAgent);
 const MIN_JOBS = Number(opt('min-jobs') ?? 1);
 const cfg = applyProfileFilters(JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8')), PROFILE);
 
@@ -103,7 +105,6 @@ if (args.includes('--catalog')) {
 // the career/job links found on it (one hop), and searched for embedded ATS links. If none is found, the site's
 // sitemap is checked for job URLs and the job pages for schema.org JobPosting markup, so the entry can use the
 // generic `sitemap` provider.
-const UA = 'Mozilla/5.0 (compatible; jobcrawl; +https://github.com/egidinas/jobcrawl)';
 const page = async (u) => {
   try {
     const r = await fetch(u, { headers: { 'user-agent': UA }, redirect: 'follow', signal: AbortSignal.timeout(15000) });

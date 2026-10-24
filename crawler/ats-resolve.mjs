@@ -23,6 +23,7 @@ import { resolve } from 'node:path';
 import { providers, resolve as resolveEntry } from './providers.mjs';
 import { harvestTable } from './providers-extra.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
+import { UA, setUserAgent } from './useragent.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : undefined);
@@ -31,13 +32,14 @@ let PROFILE;
 try { PROFILE = loadProfile(profileDirFromArgs(args)); } catch (e) { console.error(`ats-resolve: ${e.message}`); process.exit(2); }
 if (!PROFILE) { console.error('ats-resolve: no profile. Pass --profile <dir> (or set JOBCRAWL_PROFILE).'); process.exit(2); }
 const DATA = resolveDataDir(opt('data'), PROFILE);
+setUserAgent(PROFILE.userAgent);
+const REVIEW = PROFILE.reviewDir ?? DATA;   // where the review CSV/JSON go (profile key crawl.review_dir)
 const LABEL = opt('label') ?? 'space_boards';
 const MAX_TIER = Number(opt('tiers') ?? 2);
 const CONC = Number(opt('concurrency') ?? 16);
 const LIMIT = Number(opt('limit') ?? 0);
 const DEADLINE = opt('max-minutes') ? Date.now() + Number(opt('max-minutes')) * 60000 : 0;   // stop starting new companies after this
 const NEG_TTL_DAYS = 14;
-const UA = 'Mozilla/5.0 (compatible; jobcrawl; +https://github.com/egidinas/jobcrawl)';
 const cfg = JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8'));
 
 // ---------- text helpers ----------
@@ -536,8 +538,8 @@ const order = { link: 0, verified: 1, plausible: 2, 'name-mismatch': 3, unresolv
 out.sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
 const csv = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
 const COLS = ['name', 'status', 'provider', 'slug', 'jobs', 'board_name', 'tier', 'sources', 'domain', 'note', 'sample'];
-writeFileSync(resolve(DATA, `ats_resolve_${LABEL}.csv`), [COLS.join(','), ...out.map((o) => COLS.map((c) => csv(o[c])).join(','))].join('\n'));
-writeFileSync(resolve(DATA, `ats_resolve_${LABEL}.json`), JSON.stringify(out, null, 1));
+writeFileSync(resolve(REVIEW, `ats_resolve_${LABEL}.csv`), [COLS.join(','), ...out.map((o) => COLS.map((c) => csv(o[c])).join(','))].join('\n'));
+writeFileSync(resolve(REVIEW, `ats_resolve_${LABEL}.json`), JSON.stringify(out, null, 1));
 const count = (s) => out.filter((o) => o.status === s).length;
 console.log(`\nresolved by link: ${count('link')} | verified by fuzz: ${count('verified')} | plausible: ${count('plausible')} | name-mismatch (rejected): ${count('name-mismatch')} | unresolved: ${count('unresolved')}`);
-console.log(`${stats.requests} requests, ${stats.rate} rate-limited, ${stats.transient} inconclusive probes (not cached), network errors: ${JSON.stringify(stats.errs)}. Review ${resolve(DATA, `ats_resolve_${LABEL}.csv`)}, then paste the wanted "entry" objects from the .json into ${PROFILE.companiesFile}.`);
+console.log(`${stats.requests} requests, ${stats.rate} rate-limited, ${stats.transient} inconclusive probes (not cached), network errors: ${JSON.stringify(stats.errs)}. Review ${resolve(REVIEW, `ats_resolve_${LABEL}.csv`)}, then paste the wanted "entry" objects from the .json into ${PROFILE.companiesFile}.`);

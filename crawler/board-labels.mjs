@@ -12,7 +12,7 @@ import { resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
 
-const UA = 'Mozilla/5.0 (compatible; jobcrawl; +https://github.com/egidinas/jobcrawl)';
+import { UA, setUserAgent } from './useragent.mjs';
 const FILE_NAME = 'board-labels.json';
 
 export const labelKey = (board, name) => `${board}|${String(name).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`;
@@ -101,7 +101,9 @@ export async function enumerateFindASpaceJob() {
 if (process.argv[1] && fileURLToPath(import.meta.url) === pathResolve(process.argv[1])) {
   const args = process.argv.slice(2);
   const dataArg = args.includes('--data') ? args[args.indexOf('--data') + 1] : undefined;
-  const dir = resolveDataDir(dataArg, loadProfile(profileDirFromArgs(args)));
+  const profile = loadProfile(profileDirFromArgs(args));
+  setUserAgent(profile?.userAgent);
+  const dir = resolveDataDir(dataArg, profile);
   if (args[0] === 'enumerate') {
     const labels = loadLabels(dir);
     const date = new Date().toISOString().slice(0, 10);

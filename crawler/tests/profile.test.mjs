@@ -82,3 +82,24 @@ test('applyProfileFilters: profile filters replace the companies file ones only 
   assert.deepEqual(applyProfileFilters(cfg, { titleFilter: { positive: ['C'] }, locationFilter: null }).title_filter, { positive: ['C'] });
   assert.deepEqual(applyProfileFilters(cfg, { titleFilter: null, locationFilter: null }).location_filter, { allow: ['B'] });
 });
+
+test('crawl.user_agent and crawl.review_dir are optional and resolved like the other keys', async () => {
+  const d = tmp();
+  try {
+    write(d, { crawl: { user_agent: 'Mozilla/5.0 (compatible; example-crawler; +https://example.org/about)', review_dir: 'review' } });
+    const p = loadProfile(d);
+    assert.equal(p.userAgent, 'Mozilla/5.0 (compatible; example-crawler; +https://example.org/about)');
+    assert.equal(p.reviewDir, join(d, 'review'));
+    write(d, {});
+    assert.equal(loadProfile(d).userAgent, null);
+    assert.equal(loadProfile(d).reviewDir, null);
+    write(d, { crawl: { user_agent: 7 } });
+    assert.throws(() => loadProfile(d), /crawl.user_agent/);
+    // the user agent is a live binding: providers see the profile's value once it is set
+    const ua = await import('../useragent.mjs');
+    ua.setUserAgent('example-crawler/1');
+    assert.equal(ua.UA, 'example-crawler/1');
+    ua.setUserAgent(null);
+    assert.equal(ua.UA, ua.DEFAULT_UA);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

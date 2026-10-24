@@ -34,7 +34,7 @@
 // Exports: extraProviders (merged into the registry by providers.mjs) and harvestTable (for the Common Crawl harvester).
 // Not ported: peoplesoft (career-ops version replays PeopleSoft form postbacks with a cookie jar; ~460 lines even without comments).
 
-const UA = 'Mozilla/5.0 (compatible; jobcrawl; +https://github.com/egidinas/jobcrawl)';
+import { UA } from './useragent.mjs';
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 // crawl.mjs gives one entry 35 s; paging providers stop after this budget and keep what they have.
 const BUDGET_MS = 28000;

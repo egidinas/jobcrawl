@@ -32,7 +32,7 @@ const obj = (v, key) => {
 
 /**
  * Loads <dir>/profile.json. Returns null when no folder is given. Throws ProfileError naming the key that is wrong.
- * Result: { dir, file, name, companiesFile, catalogueFile, relevance: {keywords, negative, ssic_deeptech}, titleFilter, locationFilter, dataDir, raw }
+ * Result: { dir, file, name, companiesFile, catalogueFile, userAgent, reviewDir, relevance: {keywords, negative, ssic_deeptech}, titleFilter, locationFilter, dataDir, raw }
  *   titleFilter / locationFilter are null unless the profile sets them (then they replace the filters in companies.json).
  */
 export function loadProfile(dirArg) {
@@ -49,12 +49,16 @@ export function loadProfile(dirArg) {
   const rel = obj(crawl.relevance, 'crawl.relevance');
   if (crawl.companies_file !== undefined && typeof crawl.companies_file !== 'string') throw new ProfileError('crawl.companies_file must be a string');
   if (crawl.catalogue_file !== undefined && typeof crawl.catalogue_file !== 'string') throw new ProfileError('crawl.catalogue_file must be a string');
+  if (crawl.user_agent !== undefined && typeof crawl.user_agent !== 'string') throw new ProfileError('crawl.user_agent must be a string');
+  if (crawl.review_dir !== undefined && typeof crawl.review_dir !== 'string') throw new ProfileError('crawl.review_dir must be a string');
   return {
     dir,
     file,
     name: raw.name ?? basename(dir),
     companiesFile: resolve(dir, crawl.companies_file ?? 'companies.json'),
     catalogueFile: crawl.catalogue_file ? resolve(dir, crawl.catalogue_file) : null,
+    userAgent: crawl.user_agent || null,
+    reviewDir: crawl.review_dir ? resolve(dir, crawl.review_dir) : null,
     relevance: {
       keywords: strList(rel.keywords, 'crawl.relevance.keywords'),
       negative: strList(rel.negative, 'crawl.relevance.negative'),

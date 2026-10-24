@@ -4,11 +4,13 @@ Port of the reference implementation's publish_match.py and the config part of t
     match-bm25.json, match-attrs.json   always, built from the board's own files (match_index.py)
     match-vec.bin, match-vec.json       copied from the vectors folder, when it has them
     match-prefs.json                    statements (prefs.py), when there are vectors
-    role-nb.bin, role-graph.json        neighbours and near-duplicates (neighbours.py), when there are vectors (needs numpy)
+    role-nb.bin, role-graph.json        neighbours and near-duplicates: copied when the vectors folder has them (built offline,
+                                        `jobcrawl neighbours`), else built here (neighbours.py, needs numpy)
     atlas-layout.json                   copied when the map was built (jobcrawl map)
     company-vec.bin, company-vec.json   copied when the companies were embedded (jobcrawl embed with a companies_catalogue)
 Without vectors the keyword index and config.json are still written; the Match me panel then runs on keywords alone.
-Nothing personal is involved. Standard library only, except the neighbours step, which needs numpy.
+Nothing personal is involved. Standard library only, except building the neighbours here, which needs numpy: a machine without
+numpy publishes from a vectors folder that already holds role-nb.bin and role-graph.json.
 """
 import json
 import os
@@ -19,6 +21,7 @@ from jobcrawl.site import read_site
 
 VECTOR_FILES = ('match-vec.bin', 'match-vec.json')
 COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json')
+NEIGHBOUR_FILES = ('role-nb.bin', 'role-graph.json')
 
 
 class PublishError(ValueError):
@@ -33,13 +36,14 @@ def web_config(profile):
         'tagline': profile['tagline'],
         'languages': profile['languages'],
         'scopes': [{'id': s['id'], 'label': s['label']} for s in profile['scopes']],
-        'fields': [{'id': f['id'], 'label': f['label']} for f in profile['fields']],
+        'fields': [{'id': f.get('tag', f['id']), 'label': f['label']} for f in profile['fields']],
         'levels': [{'code': b['code'], 'label': b['label'], 'rank': b['rank']} for b in profile['levels']],
         'personas': [{'id': p['id'], 'label': p['label'], 'regex': p['regex'], 'flags': p['flags']} for p in profile['personas']],
         'glossary': profile['glossary'],
         'statements_file': 'match/match-prefs.json',
         'accent': profile['accent'],
         'links': profile['links'],
+        **profile.get('web', {}),
     }
 
 
@@ -70,8 +74,12 @@ def publish(site, profile, vectors=None, log=print, text_from=None):
             src = os.path.join(vectors, name)
             if os.path.exists(src):
                 shutil.copyfile(src, os.path.join(out, name)); written.append(name)
-        neighbours.build(site, vectors, out, log)
-        written += ['role-nb.bin', 'role-graph.json']
+        if all(os.path.exists(os.path.join(vectors, n)) for n in NEIGHBOUR_FILES):
+            for n in NEIGHBOUR_FILES:
+                shutil.copyfile(os.path.join(vectors, n), os.path.join(out, n))
+        else:
+            neighbours.build(site, vectors, out, log)
+        written += list(NEIGHBOUR_FILES)
         prefs.build(site, out, prefs.statements_of(profile), log, text_from=text_from)
         written.append('match-prefs.json')
     else:

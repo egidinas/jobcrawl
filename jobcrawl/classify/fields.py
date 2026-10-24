@@ -62,11 +62,11 @@ def field_tags(title, text, company, fields, max_tags=5, matchers=None):
         if f.get('pillar'):
             text_rx, co_rx = m[f['id']]
             if co_rx(company) or text_rx(haystack):
-                add(f['id'])
+                add(f.get('tag', f['id']))
     for f in fields:
         if not f.get('pillar') and m[f['id']][0](title):
-            add(f['id'])
+            add(f.get('tag', f['id']))
     for f in fields:
         if not f.get('pillar') and m[f['id']][0](haystack):
-            add(f['id'])
+            add(f.get('tag', f['id']))
     return out
