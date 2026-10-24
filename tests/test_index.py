@@ -161,6 +161,22 @@ class NeighboursOnSynthetic(unittest.TestCase):
             for c in set(companies):
                 self.assertLessEqual(companies.count(c), neighbours.PER_EMPLOYER)
 
+    def test_closed_roles_take_no_neighbour_slot(self):
+        """Vectors of roles no longer on the board (closed since they were embedded) are nobody's neighbour and get none."""
+        import numpy as np
+        vectors = os.path.join(self.tmp, 'vectors-closed'); out = os.path.join(self.tmp, 'out-closed')
+        # the same texts again under ids the board does not have: the most similar vector of every role is a closed copy of it
+        closed = [('c%07d' % k, t) for k, (_, t) in enumerate(self.pairs)]
+        write_match_vectors(vectors, self.pairs + closed, dim=16)
+        n = neighbours.build(self.site, vectors, out, log=lambda m: None)
+        with open(os.path.join(out, 'role-nb.bin'), 'rb') as fh:
+            nb = np.frombuffer(fh.read(), np.uint16).reshape(n, neighbours.K)
+        on = len(self.pairs)
+        self.assertTrue(all(j == 65535 or j < on for j in nb[:on].flatten()), 'a closed role is someone\'s neighbour')
+        self.assertTrue((nb[on:] == 65535).all(), 'a closed role got neighbours')
+        with open(os.path.join(out, 'role-graph.json'), encoding='utf-8') as fh:
+            self.assertTrue(all(i < on for g in json.load(fh)['dup'] for i in g))
+
     def test_planted_duplicates_are_grouped(self):
         ids = [r[0] for r in self.index]
         pos = {rid: k for k, rid in enumerate(ids)}
