@@ -98,9 +98,13 @@ export function ranksOf(score, ok) {
   idx.sort((a, b) => score[b] - score[a] || a - b); const r = new Map(); idx.forEach((i, k) => r.set(i, k + 1)); return r;
 }
 
-/** Filters: scope (the index of the scope in config.json; a role in a narrow scope also counts for the wider ones), level range, employer cap. */
-export function rank(ix, { text = '', embedding = null, scope = 0, minLevel = 0, maxLevel = 99, perEmployer = 2, top = 20, companyOf = null, mode = 'auto', must = null } = {}) {
-  const ok = (i) => (ix.attrs[i][0] >> scope & 1) === 1 && ix.attrs[i][1] >= minLevel && ix.attrs[i][1] <= maxLevel && (!must || must[i] > 0);
+/** The scope index to filter by: the given one, else the widest (the last of the index's scopes: every role is in it). */
+const widest = (ix, scope) => (scope === null || scope === undefined ? ix.scopes.length - 1 : scope);
+
+/** Filters: scope (the index of the scope in config.json; a role in a narrow scope also counts for the wider ones; default: the widest,
+ *  the last one), level range, employer cap. */
+export function rank(ix, { text = '', embedding = null, scope = null, minLevel = 0, maxLevel = 99, perEmployer = 2, top = 20, companyOf = null, mode = 'auto', must = null } = {}) {
+  const inScope = widest(ix, scope), ok = (i) => (ix.attrs[i][0] >> inScope & 1) === 1 && ix.attrs[i][1] >= minLevel && ix.attrs[i][1] <= maxLevel && (!must || must[i] > 0);
   const kw = bm25(ix, text), lists = [];
   const kwScore = Float32Array.from(kw.score, (s) => (s > 0 ? s : -2)); kwScore.floorValue = 0; lists.push(ranksOf(kwScore, ok));
   let useDense = embedding && ix.dim && mode !== 'keywords';
@@ -210,8 +214,8 @@ export function tasteScores(ix, { items = [], extra = [], cvEmbedding = null, co
   return { space, cp, sc };
 }
 /** Ranked roles from rated roles (and optionally a CV embedding and text). items: [{i, w}]; likedText: the text of the liked roles, for the keyword half. */
-export function rankByTaste(ix, { items, cvEmbedding = null, text = '', likedText = '', scope = 0, minLevel = 0, maxLevel = 99, perEmployer = 2, top = 200, companyOf = null, skip = new Set(), badCompanies = new Map(), must = null, keywords = 'blend', extra = [], coKey = null, coupling = 0.15, prefs = [], explore = 0, rng = Math.random } = {}) {
-  const ok = (i) => (ix.attrs[i][0] >> scope & 1) === 1 && ix.attrs[i][1] >= minLevel && ix.attrs[i][1] <= maxLevel && !skip.has(i) && (!must || must[i] > 0);
+export function rankByTaste(ix, { items, cvEmbedding = null, text = '', likedText = '', scope = null, minLevel = 0, maxLevel = 99, perEmployer = 2, top = 200, companyOf = null, skip = new Set(), badCompanies = new Map(), must = null, keywords = 'blend', extra = [], coKey = null, coupling = 0.15, prefs = [], explore = 0, rng = Math.random } = {}) {
+  const inScope = widest(ix, scope), ok = (i) => (ix.attrs[i][0] >> inScope & 1) === 1 && ix.attrs[i][1] >= minLevel && ix.attrs[i][1] <= maxLevel && !skip.has(i) && (!must || must[i] > 0);
   const { space, cp, sc } = tasteScores(ix, { items, extra, cvEmbedding, coKey, coupling, badCompanies, prefs });
   const lists = [];
   if (space.areas.length || space.avoid.length || prefs.some((p) => p.val) || (badCompanies && badCompanies.size)) { sc.score.floorValue = -1.5; lists.push(ranksOf(sc.score, ok)); }
