@@ -53,6 +53,7 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `crawl.relevance.keywords` | list of strings | `[]` | relevance gate, probation | a role is relevant when its title or department matches one of these (see syntax below). With an empty list nothing is relevant |
 | `crawl.relevance.negative` | list of strings | `[]` | relevance gate | titles that match a keyword by accident (`search engine`, `flight attendant`) are never relevant |
 | `crawl.relevance.ssic_deeptech` | list of strings | `[]` | Singapore-style strict gate | SSIC industry code prefixes (Singapore Standard Industrial Classification) that count as the profile's sector. Only used by the MyCareersFuture provider |
+| `crawl.min_free_mb` | number >= 0 | `0` (off) | crawler | refuse to start when the disk holding the data folder has less than this many MB free: the crawl exits with code 3 before fetching or writing anything. `--dry-run` skips the check |
 | `crawl.title_filter` | object | none | crawler | when set, replaces `title_filter` in the companies file (same shape, see below) |
 | `crawl.location_filter` | object | none | crawler | when set, replaces `location_filter` in the companies file |
 

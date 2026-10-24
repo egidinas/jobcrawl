@@ -32,7 +32,7 @@ const obj = (v, key) => {
 
 /**
  * Loads <dir>/profile.json. Returns null when no folder is given. Throws ProfileError naming the key that is wrong.
- * Result: { dir, file, name, companiesFile, catalogueFile, userAgent, reviewDir, relevance: {keywords, negative, ssic_deeptech}, titleFilter, locationFilter, dataDir, raw }
+ * Result: { dir, file, name, companiesFile, catalogueFile, userAgent, reviewDir, relevance: {keywords, negative, ssic_deeptech}, titleFilter, locationFilter, minFreeMb, dataDir, raw }
  *   titleFilter / locationFilter are null unless the profile sets them (then they replace the filters in companies.json).
  */
 export function loadProfile(dirArg) {
@@ -51,6 +51,7 @@ export function loadProfile(dirArg) {
   if (crawl.catalogue_file !== undefined && typeof crawl.catalogue_file !== 'string') throw new ProfileError('crawl.catalogue_file must be a string');
   if (crawl.user_agent !== undefined && typeof crawl.user_agent !== 'string') throw new ProfileError('crawl.user_agent must be a string');
   if (crawl.review_dir !== undefined && typeof crawl.review_dir !== 'string') throw new ProfileError('crawl.review_dir must be a string');
+  if (crawl.min_free_mb !== undefined && (typeof crawl.min_free_mb !== 'number' || !(crawl.min_free_mb >= 0))) throw new ProfileError('crawl.min_free_mb must be a number >= 0');
   return {
     dir,
     file,
@@ -66,6 +67,7 @@ export function loadProfile(dirArg) {
     },
     titleFilter: crawl.title_filter ?? null,
     locationFilter: crawl.location_filter ?? null,
+    minFreeMb: crawl.min_free_mb ?? 0,
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,
   };
