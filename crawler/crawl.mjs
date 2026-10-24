@@ -14,6 +14,7 @@ import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueN
   useRelevance, INDUSTRY_AGGREGATOR_PROVIDERS, INDUSTRY_VIA, PROBATION_VERDICT } from './relevance.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
 import { setUserAgent } from './useragent.mjs';
+import { checkDisk } from './diskguard.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -33,7 +34,8 @@ options:
   --jd                also save the job description of every tracked role
   --refresh-only      update known roles only, never add new ones
   --dry-run           print the summary, write nothing
-  --help              show this text`;
+  --help              show this text
+(profile key crawl.min_free_mb: refuse to start when the data disk has less free space than this many MB; 0 = no check)`;
 
 if (flag('help')) { console.log(USAGE); process.exit(0); }
 
@@ -49,6 +51,10 @@ const CATALOGUE = PROFILE.catalogueFile;   // optional (profile key crawl.catalo
 const PROB_FILE_NAME = 'probation-state.json';
 const OUT_DIR = resolveDataDir(opt('data'), PROFILE);
 setCacheDir(OUT_DIR);
+if (!flag('dry-run')) {
+  const full = checkDisk(OUT_DIR, PROFILE.minFreeMb);
+  if (full) { console.error(`crawl: ${full}`); process.exit(3); }
+}
 const HISTORY = pathResolve(OUT_DIR, 'scan-history.tsv');
 const STATE_FILE = pathResolve(OUT_DIR, 'crawl-state.json');
 const NEW_FILE = pathResolve(OUT_DIR, 'last-new.json');
