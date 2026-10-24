@@ -3,18 +3,19 @@
 A profile is a folder with a `profile.json` and the files it names. Paths in `profile.json` are relative to the
 profile folder. Every key below is optional unless marked **required**. Unknown keys are ignored.
 
-The crawler reads the `crawl` keys and the top-level `data_dir`. Later phases add the pipeline keys (fields, scopes, levels,
-statements, personas, glossary, map, embed); they are appended here when they are implemented.
+The crawler reads the `crawl` keys and the top-level `data_dir`. The Python pipeline (`jobcrawl`, `jobcrawl/profile.py`) reads
+everything else. `profile.py` fills every default below and rejects a wrong value with the key's path in the message, e.g.
+`profiles/x/profile.json: fields[2].keywords[0]: expected a string, got int`. Unknown keys are ignored by both readers.
 
 ## Top level
 
 | key | type | default | read by | meaning |
 |---|---|---|---|---|
-| `name` | string | folder name | crawler | short identifier, shown in logs |
-| `title` | string | none | later (web config) | title of the site built from this profile |
-| `tagline` | string | none | later (web config) | one line under the title |
-| `languages` | list of `en`/`de` | `["en"]` | later | languages of the site and the labels |
-| `data_dir` | string | none | crawler, catalog, run | data folder, relative to the profile folder. Used when `--data` is not given; else `./data` |
+| `name` | string | folder name | crawler, `profile.py` | short identifier, shown in logs |
+| `title` | string | `""` | web config | title of the site built from this profile |
+| `tagline` | string | `""` | web config | one line under the title |
+| `languages` | list of `en`/`de` | `["en"]` | board, web config | languages of the labels; a label without `de` uses its `en` text |
+| `data_dir` | string | none | crawler, catalog, run | data folder, relative to the profile folder. Used when `--data` is not given; else `./data`. The Python build takes `--catalog` explicitly |
 
 ## `crawl`
 
@@ -75,3 +76,128 @@ Provider-specific keys (`queries`, `feed_url`, `url_pattern`, `region`, ...) are
 
 Top level of the companies file: `title_filter`, `location_filter`, `tracked_companies`, and `max_aggregator_age_days`
 (default 270: aggregator postings older than this are dropped).
+
+## Pipeline keys (Python: `jobcrawl`)
+
+Labels are objects `{"en": "...", "de": "..."}`; `en` is required, `de` defaults to `en`.
+Ids (`scopes[].id`, `fields[].id`, `levels[].code`, `statements[].id`, `personas[].id`) are lower case: letters, digits and `_`, starting with a letter.
+
+### `scopes`
+
+List of search scopes, **narrowest first** (the reference profile: bavaria, germany, europe, worldwide). Read by `classify/scopes.py`
+(a role's `sc`), the board's `r` (region label), the map (`map.scopes`, phase 3) and the web app.
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `scopes[].id` | id | **required** | written into `sc` of every role |
+| `scopes[].label` | label | **required** | shown in the web app |
+| `scopes[].match` | object | **required** | which places count, one of: `{"any": true}`; `{"continent": "EU"}`; `{"country": "DE"}`; `{"country": "DE", "admin1": "Bavaria"}` (admin1 = the English state name of the geo tables) |
+
+A role belongs to the scope of its narrowest matching place and to every scope listed after it. A role without a place belongs to the
+`any` scopes. Default: `[{"id": "worldwide", "label": {"en": "Worldwide", "de": "Weltweit"}, "match": {"any": true}}]`.
+
+### `fields`
+
+Field tags (`tg`). Read by `classify/fields.py`; the web app shows the labels.
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `fields[].id` | id | **required** | written into `tg` |
+| `fields[].label` | label | **required** | shown in the web app |
+| `fields[].keywords` | list of strings | `[]` | matched on the title, the description and the employer (see below). `word:` entries match whole words |
+| `fields[].company_keywords` | list of strings | `[]` | plain substrings of the employer name (a field tagged from its employers) |
+| `fields[].pillar` | bool | `false` | `true`: matched on title, description or employer, and tagged first (before the title pass) |
+
+Matching: lower case and accents removed on both sides (`Prüfer` matches `prufer`). Plain keywords are substrings; `word:` keywords
+match whole words (`word:space` matches "Space Engineer" but not "Workspace"), as in `crawler/relevance.mjs`.
+Order: pillar fields (title, description or employer), then the other fields on the title, then on the description and employer.
+
+Top-level `max_field_tags` (integer >= 1, default `5`): the cap on the number of tags of one role.
+
+Default for `fields`: `[]` (no field tags).
+
+### `levels`
+
+Seniority bands (`lv`), read by `classify/levels.py`. Tested **in list order**: the first band whose `pattern` matches gives the code;
+the band with `"pattern": null` is the default (exactly one is required). `rank` orders the filter in the web app (lowest first).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `levels[].code` | id | **required** | written into `lv` |
+| `levels[].label` | label | **required** | shown in the web app |
+| `levels[].rank` | integer | `0` | display order, lowest first |
+| `levels[].pattern` | regex or null | **required** | case-insensitive regular expression on the title; `null` for the default band |
+
+Default: the five bands of the reference board (student, lead, senior, entry, mid), `DEFAULT_LEVELS` in `profile.py`.
+The title rules of `jobcrawl/classify/seniority.py` (a ladder of rungs: Chief, Director, Head, ... Student) are a separate port; the
+board uses the bands above.
+
+### `statements`
+
+Directions for "Match me" and the Atlas (`embed/prefs`, phase 3; the web app shows the labels). Each statement has two poles.
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `statements[].id` | id | **required** | written into `match-prefs.json` |
+| `statements[].a`, `.b` | label | **required** | the two poles |
+| `statements[].a_regex`, `.b_regex` | regex | **required** | words that roles use about themselves (title and first 3,000 characters of the description), case-insensitive |
+
+Default: `[]`. The reference profile has the five statements of the reference board (`prefs.py`).
+
+### `personas`
+
+Starting points for "Match me" when there is no CV (web app, `site/assets/profile.js` in the reference site).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `personas[].id` | id | **required** | |
+| `personas[].label` | label | **required** | |
+| `personas[].regex` | string | **required** | the regular expression source (no slashes) matched on role titles |
+| `personas[].flags` | string | `"i"` | JavaScript flags, letters from `imsu`, each once |
+
+Default: `[]`.
+
+### `glossary`
+
+`[[en, de], ...]` pairs of job vocabulary. Read by the web app (`match.js`) and the keyword index (phase 3) to translate query words.
+Default: `[]`.
+
+### `map`
+
+Atlas layout (`map/atlas.py`, phase 3; needs the `map` extra).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `map.k` | integer >= 2 | `15` | neighbours per role in the grouping graph |
+| `map.layout_k` | integer >= 2 | `45` | neighbours for the UMAP placement |
+| `map.min_dist` | number >= 0 | `0.25` | UMAP minimum distance |
+| `map.even` | number 0 to 1 | `0.7` | share of the radial redistribution in `relax()` |
+| `map.reps` | integer >= 1 | `3` | representatives per company and group |
+| `map.signature` | number 0 to 1 | `0.8` | share of an employer's average direction removed |
+| `map.min_scope` | integer >= 0 | `600` | a scope gets its own map from this many roles on |
+| `map.labels_file` | string or null | `null` | JSON of hand-written group names (relative to the profile folder) |
+| `map.resolution` | [coarse, fine] numbers | `[1.6, 5.0]` | Leiden resolutions the layout starts from |
+
+### `embed`
+
+Embedding recipe (`embed/roles.py`, `embed/embedder.py`, phase 3).
+
+| key | type | default | meaning |
+|---|---|---|---|
+| `embed.model_repo` | string | `onnx-community/embeddinggemma-2-ONNX` | Hugging Face repository the model is downloaded from (`scripts/fetch_model.py`) |
+| `embed.prompt` | string | `search-query` | task prefix of the text |
+| `embed.max_tokens` | integer >= 1 | `256` | tokens per text |
+| `embed.text_chars` | integer >= 1 | `700` | characters of the work text (`text/work_text.py`) taken after the title |
+
+## Pipeline key reference (what reads what)
+
+| profile key | jobcrawl module |
+|---|---|
+| `scopes` | `classify/scopes.py`, `board.py` (`sc`, `r`) |
+| `fields`, `max_field_tags` | `classify/fields.py`, `board.py` (`tg`) |
+| `levels` | `classify/levels.py`, `board.py` (`lv`) |
+| `languages`, `title`, `tagline`, `scopes`, `fields`, `levels`, `personas`, `glossary` | web config (phase 3 publish, phase 4 app) |
+| `statements` | `embed/prefs` (phase 3) |
+| `map` | `map/atlas.py` (phase 3) |
+| `embed` | `embed/` and `scripts/fetch_model.py` (phase 3) |
+| `crawl`, `data_dir`, `name` | the crawler (`crawler/*.mjs`) |

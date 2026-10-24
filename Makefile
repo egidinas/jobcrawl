@@ -1,6 +1,8 @@
 # Thin wrappers. PROFILE selects the profile folder for every command.
 PROFILE ?= profiles/aerospace
 PYTHON ?= python3
+DATA ?= data
+SITE ?= $(DATA)/site
 
 .PHONY: test crawl build map demo
 
@@ -11,7 +13,7 @@ crawl:
 	node crawler/run.mjs --profile $(PROFILE)
 
 build:
-	$(PYTHON) -m jobcrawl build --profile $(PROFILE)
+	$(PYTHON) -m jobcrawl build --profile $(PROFILE) --catalog $(DATA)/catalog.json --out $(SITE)
 
 map:
 	$(PYTHON) -m jobcrawl map --profile $(PROFILE)
