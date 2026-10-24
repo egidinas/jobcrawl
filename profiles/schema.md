@@ -16,6 +16,7 @@ everything else. `profile.py` fills every default below and rejects a wrong valu
 | `tagline` | string | `""` | web config | one line under the title |
 | `languages` | list of `en`/`de` | `["en"]` | board, web config | languages of the labels; a label without `de` uses its `en` text |
 | `data_dir` | string | none | crawler, catalog, run | data folder, relative to the profile folder. Used when `--data` is not given; else `./data`. The Python build takes `--catalog` explicitly |
+| `companies_catalogue` | string | none | `jobcrawl embed`, atlas | optional employer catalogue for the companies layer of the Atlas, relative to the profile folder: JSON `{"companies": [{"slug", "name", "field", "arch_name", "profile": {"en": "..."}}]}`. `slug` and `name` are required; `field`, `arch_name` and `profile` add to the company's text (`embed/companies.py`). Without it the companies are not embedded and the Atlas has no companies layer |
 
 ## `crawl`
 
@@ -85,7 +86,8 @@ Ids (`scopes[].id`, `fields[].id`, `levels[].code`, `statements[].id`, `personas
 ### `scopes`
 
 List of search scopes, **narrowest first** (the reference profile: bavaria, germany, europe, worldwide). Read by `classify/scopes.py`
-(a role's `sc`), the board's `r` (region label), the map (`map.scopes`, phase 3) and the web app.
+(a role's `sc`), the board's `r` (region label), the keyword index (`index/match_index.py`), the Atlas (`map/atlas.py`: every scope with
+at least `map.min_scope` roles gets a map of its own, the `any` scope is the worldwide map) and the web app.
 
 | key | type | default | meaning |
 |---|---|---|---|
@@ -134,7 +136,7 @@ board uses the bands above.
 
 ### `statements`
 
-Directions for "Match me" and the Atlas (`embed/prefs`, phase 3; the web app shows the labels). Each statement has two poles.
+Directions for "Match me" and the Atlas (`index/prefs.py`; the web app shows the labels). Each statement has two poles.
 
 | key | type | default | meaning |
 |---|---|---|---|
@@ -159,12 +161,12 @@ Default: `[]`.
 
 ### `glossary`
 
-`[[en, de], ...]` pairs of job vocabulary. Read by the web app (`match.js`) and the keyword index (phase 3) to translate query words.
+`[[en, de], ...]` pairs of job vocabulary. Read by the web app (`match.js`) and the keyword index (`index/match_index.py`) to translate query words.
 Default: `[]`.
 
 ### `map`
 
-Atlas layout (`map/atlas.py`, phase 3; needs the `map` extra).
+Atlas layout (`map/atlas.py`; needs the `map` extra).
 
 | key | type | default | meaning |
 |---|---|---|---|
@@ -176,15 +178,15 @@ Atlas layout (`map/atlas.py`, phase 3; needs the `map` extra).
 | `map.signature` | number 0 to 1 | `0.8` | share of an employer's average direction removed |
 | `map.min_scope` | integer >= 0 | `600` | a scope gets its own map from this many roles on |
 | `map.labels_file` | string or null | `null` | JSON of hand-written group names (relative to the profile folder) |
-| `map.resolution` | [coarse, fine] numbers | `[1.6, 5.0]` | Leiden resolutions the layout starts from |
+| `map.resolution` | [coarse, fine] numbers | `[1.6, 5.0]` | Leiden resolutions of the reference layout; written into `atlas-layout.json`. The group counts are searched as before (about n^0.35 regions), so this is a record, not an input |
 
 ### `embed`
 
-Embedding recipe (`embed/roles.py`, `embed/embedder.py`, phase 3).
+Embedding recipe (`embed/roles.py`, `embed/embedder.py`, `embed/companies.py`).
 
 | key | type | default | meaning |
 |---|---|---|---|
-| `embed.model_repo` | string | `onnx-community/embeddinggemma-2-ONNX` | Hugging Face repository the model is downloaded from (`scripts/fetch_model.py`) |
+| `embed.model_repo` | string | `onnx-community/embeddinggemma-2-ONNX` | Hugging Face repository the model is downloaded from (`scripts/fetch_model.py --profile P`) |
 | `embed.prompt` | string | `search-query` | task prefix of the text |
 | `embed.max_tokens` | integer >= 1 | `256` | tokens per text |
 | `embed.text_chars` | integer >= 1 | `700` | characters of the work text (`text/work_text.py`) taken after the title |
@@ -196,8 +198,9 @@ Embedding recipe (`embed/roles.py`, `embed/embedder.py`, phase 3).
 | `scopes` | `classify/scopes.py`, `board.py` (`sc`, `r`) |
 | `fields`, `max_field_tags` | `classify/fields.py`, `board.py` (`tg`) |
 | `levels` | `classify/levels.py`, `board.py` (`lv`) |
-| `languages`, `title`, `tagline`, `scopes`, `fields`, `levels`, `personas`, `glossary` | web config (phase 3 publish, phase 4 app) |
-| `statements` | `embed/prefs` (phase 3) |
-| `map` | `map/atlas.py` (phase 3) |
-| `embed` | `embed/` and `scripts/fetch_model.py` (phase 3) |
+| `languages`, `title`, `tagline`, `scopes`, `fields`, `levels`, `personas`, `glossary` | `index/publish.py` (`config.json`) and the web app |
+| `statements` | `index/prefs.py` (`match-prefs.json`) |
+| `map`, `scopes` | `map/atlas.py`, `map/labels.py` (`atlas-layout.json`) |
+| `embed` | `embed/` and `scripts/fetch_model.py` |
+| `companies_catalogue` | `embed/companies.py`, `map/atlas.py` |
 | `crawl`, `data_dir`, `name` | the crawler (`crawler/*.mjs`) |

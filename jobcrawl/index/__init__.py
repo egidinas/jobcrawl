@@ -1,1 +1,1 @@
-"""Match index and derived data for the web app: keyword index, statements, neighbours, publish (phase 3)."""
+"""Match index and derived data for the web app: keyword index, statements, neighbours, publish."""
