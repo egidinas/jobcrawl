@@ -19,7 +19,7 @@ LANGS = ('en', 'de')
 ID_RE = re.compile(r'^[a-z][a-z0-9_]*$')
 
 # Title rules for the board's seniority bands (levels). First matching pattern wins, in list order; the band whose pattern is
-# None is the default. "rank" orders the filter (lowest first). These are the bands of the reference board (tools/companies.py).
+# None is the default. "rank" orders the filter (lowest first). These are the bands of the reference board.
 DEFAULT_LEVELS = [
     {'code': 'student', 'rank': 0, 'label': {'en': 'Student & intern', 'de': 'Student & Praktikum'},
      'pattern': r'\b(intern(ship)?|praktik\w*|werkstudent\w*|working student|thesis|abschlussarbeit|bachelorarbeit|masterarbeit|'
@@ -200,6 +200,7 @@ def _validate(raw, file):
     out['tagline'] = c.text(p.get('tagline', ''), 'tagline')
     out['languages'] = c.languages(p['languages'], 'languages') if 'languages' in p else ['en']
     out['data_dir'] = c.text(p['data_dir'], 'data_dir') if p.get('data_dir') is not None else None
+    out['companies_catalogue'] = c.text(p['companies_catalogue'], 'companies_catalogue') if p.get('companies_catalogue') is not None else None
 
     crawl = c.obj(p.get('crawl', {}), 'crawl')
     rel = c.obj(crawl.get('relevance', {}), 'crawl.relevance')
