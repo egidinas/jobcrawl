@@ -6,14 +6,16 @@
 // Site-specific behaviour comes from config.json: link templates (role_url, company_url), the default scope, and the names under
 // which the browser keeps the visitor's data (storage). Every key is optional; profiles/schema.md lists them under `web`.
 
-const PARAMS = new URL(location.href).searchParams;
+// Outside a browser (a Node script that imports match.js and profile.js for an evaluation) there is no page: defaults apply.
+const HREF = typeof location !== 'undefined' ? location.href : 'http://localhost/';
+const PARAMS = new URL(HREF).searchParams;
 const DEFAULT_PREFIX = 'jobcrawl';
 const PAGE_NAMES = { index: { en: 'Jobs', de: 'Stellen' }, match: { en: 'Match me', de: 'Passende Stellen' }, atlas: { en: 'Atlas', de: 'Atlas' } };
 const NAV = [['index', 'index.html', 'Jobs', 'Stellen'], ['match', 'match.html', 'Match me', 'Passende Stellen'], ['atlas', 'atlas.html', 'Atlas', 'Atlas']];
 
-const META_DATA = (() => { try { return document.querySelector('meta[name="jobcrawl-data"]')?.content || null; } catch (e) { return null; } })();
+const META_DATA = (() => { try { return document.querySelector('meta[name="jobcrawl-data"]')?.content || null; } catch (e) { return null; } })();   // no document: null
 export const DATA_BASE = (() => {
-  const u = new URL(PARAMS.get('data') || META_DATA || 'data/', location.href);
+  const u = new URL(PARAMS.get('data') || META_DATA || 'data/', HREF);
   if (!u.pathname.endsWith('/')) u.pathname += '/';
   return u.href;
 })();

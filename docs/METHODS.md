@@ -6,8 +6,18 @@ board of the aerospace profile: 10,235 roles with meaning vectors, embedded with
 
 ## Reproducing the numbers
 
-The simulation behind the rating and exploration tables (the reference implementation's `eval_taste.mjs`) is **not part of this
-repository**, so these tables cannot be regenerated from here yet. What the repository does provide, and what the numbers depend on:
+The simulation behind the rating, pre-shaping, exploration and persona tables is `scripts/eval_taste.mjs` (Node, no
+dependencies). It reads a published data folder (with vectors) and simulates visitors on it:
+
+```sh
+node scripts/eval_taste.mjs <data folder> 100            # rating methods
+node scripts/eval_taste.mjs <data folder> 100 shape      # pre-shaping: field chips, statements, CV
+node scripts/eval_taste.mjs <data folder> 100 explore    # exploration
+node scripts/eval_taste.mjs <data folder> 80 persona     # starting personas
+```
+
+The tables below were made on the reference board (10,235 roles); on `demo/site` (about 1,000 roles, "good" = about 10 roles per
+visitor) the same runs are much noisier. What the numbers also depend on:
 
 * the role vectors: `jobcrawl embed` (needs the model, `scripts/fetch_model.py`);
 * the statements and their AUC: `jobcrawl publish` prints one line per statement (`prefs: <id> AUC ...`) and writes `match/match-prefs.json`;
