@@ -12,6 +12,7 @@ const K = PF.keys();
 const mount = document.getElementById('atlas-mount'); if (!mount) throw new Error('no #atlas-mount');
 // the scopes of config.json, in order: a role's scope bits (match-attrs.json) follow this order
 const scopeOpts = cfg.scopes.map((x, k) => `<option value="${k}"${k === 0 ? ' selected' : ''}>${L(x.label.en, x.label.de)}</option>`).join('');
+const fieldLabel = (id) => { const f = (cfg.fields || []).find((x) => x.id === id); return f ? pick(f.label.en, f.label.de) : id; };
 const ANY = (() => { const k = cfg.scopes.findIndex((x) => x.match && x.match.any); return k < 0 ? cfg.scopes.length - 1 : k; })();   // the scope with every role: the whole-map layout
 const loadRatings = () => { try { return JSON.parse(localStorage.getItem(K.ratings) || '{}'); } catch (e) { return {}; } };
 const saveRatings = (r) => { try { localStorage.setItem(K.ratings, JSON.stringify(r)); } catch (e) { /* kept for this page only */ } };
@@ -165,7 +166,7 @@ renderPersonas(); renderPrefs(); renderCv(); computeTaste();
 
 // ---- state, view and drawing
 const st = { all: false, mode: 'roles', scope: 0, size: 0.09, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
-$('atlas-fields').innerHTML = ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="false">${esc(f)}</button>`).join('');
+$('atlas-fields').innerHTML = ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="false">${esc(fieldLabel(f))}</button>`).join('');
 const cv = $('atlas-cv'), g = cv.getContext('2d'), W = cv.width, H = cv.height, css = (n) => getComputedStyle(document.body).getPropertyValue(n).trim() || '#888';
 const lay = () => layers[st.mode];
 const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1));
@@ -294,7 +295,7 @@ function renderArea(pool) {
   const hk = [...c].sort((a, b) => b[1] - a[1])[0][0], total = Ly.ents.filter((e) => e.c2 === hk).length;
   const reg = Ly.regions[Ly.ents[pool[0]].c1], lean = leanText(h.lean);
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}${st.mode === 'roles' && reg && reg !== h ? ' · ' + esc(nameOf(reg)) : ''}</span><b>${esc(nameOf(h))}</b><span class="atlas-note">${esc(h.words.join(' · '))}</span>`
-    + `<span>${h.fields.length ? esc(h.fields.join(', ')) + ' · ' : ''}${total.toLocaleString()} ${st.mode === 'roles' ? L('roles in the neighbourhood', 'Stellen in der Nachbarschaft') : L('companies in the group', 'Firmen in der Gruppe')}, ${pool.length} ${L('in the lens', 'in der Lupe')}</span>`
+    + `<span>${h.fields.length ? esc(h.fields.map(fieldLabel).join(', ')) + ' · ' : ''}${total.toLocaleString()} ${st.mode === 'roles' ? L('roles in the neighbourhood', 'Stellen in der Nachbarschaft') : L('companies in the group', 'Firmen in der Gruppe')}, ${pool.length} ${L('in the lens', 'in der Lupe')}</span>`
     + (lean.length ? `<span class="lean">${L('Leans to: ', 'Neigt zu: ')}${esc(lean.join(' · '))}</span>` : '');
 }
 let rngState = 7; const rnd = () => (rngState = (rngState * 16807) % 2147483647) / 2147483647;
@@ -319,7 +320,7 @@ function cardHtml(k) {
   const e = lay().ents[k], open = st.open.has(e.id);
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '';
     return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div><div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
-  const co = [e.about || ''], vr = visibleRoles(e), flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => x[0]);
+  const co = [e.about || ''], vr = visibleRoles(e), flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => fieldLabel(x[0]));
   return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(e.name)}</button><div class="m">${e.idx.length ? `${vr.length} ${L('open roles here', 'offene Stellen hier')}` : L('no open roles on the board right now', 'derzeit keine offenen Stellen auf der Börse')}${flds.length ? ' · ' + esc(flds.join(', ')) : e.field ? ' · ' + esc(e.field) : ''}</div><div class="snip">${esc(snip(co[0], 170))}</div>
 <div class="more"><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i])}">${esc(rows[i][1])}</a></li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12}</li>` : ''}</ul></div>${voteHtml(e.id)}</li>`;
 }

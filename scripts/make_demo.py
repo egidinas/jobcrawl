@@ -21,7 +21,7 @@ Steps:
  3. Vectors: the rows of the roles that have one, copied as they are (int8, same mean and language directions); the company vectors of
     the companies with roles in the subset.
  4. The demo profile: profiles/aerospace with its scopes narrowed to the demo scope and worldwide (the atlas needs the any scope), a title
-    for the demo, no reference links, a companies catalogue made from the subset's company names, and the Bavaria group names as labels.
+    for the demo, a companies catalogue made from the subset's company names, and the Bavaria group names as labels.
  5. jobcrawl publish --text-from (the keyword index and statements read the full text), jobcrawl map (with the labels), then publish
     again so the atlas layout is copied into the match folder.
 """
@@ -225,7 +225,6 @@ def main(argv=None):
     raw['tagline'] = DEMO_TAGLINE
     raw['scopes'] = scopes
     raw['companies_catalogue'] = 'companies.json'
-    raw['links'] = {'reference': []}     # the demo folder names no reference site (demo/README.md)
     raw['map']['labels_file'] = 'labels.json'
     shutil.copyfile(os.path.join(work, 'companies.json'), os.path.join(wp, 'companies.json'))
     with open(os.path.join(wp, 'profile.json'), 'w', encoding='utf-8') as fh:
