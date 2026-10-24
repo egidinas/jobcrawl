@@ -1,0 +1,25 @@
+{
+  "name": "minimal",
+  "title": "Software jobs in Germany (minimal example)",
+  "tagline": "Software roles from three public job boards, one country.",
+  "languages": ["en"],
+  "data_dir": "data",
+  "crawl": {
+    "companies_file": "companies.json",
+    "relevance": {
+      "keywords": [
+        "software",
+        "developer",
+        "entwickler",
+        "word:backend",
+        "word:frontend",
+        "word:devops",
+        "word:sre",
+        "machine learning",
+        "data engineer",
+        "word:ml"
+      ],
+      "negative": ["word:sales", "recruiter", "account executive", "marketing", "intern", "werkstudent"]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Atlas</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<a class="skip" href="#main" data-de="Zum Inhalt springen">Skip to content</a>
+<header class="site-header" id="site-header"></header>
+<main id="main" class="wrap">
+  <h1 data-de="Atlas der Stellen">Atlas of roles</h1>
+  <p class="lead" data-de="Eine Karte der Stellen: ähnliche Stellen liegen nah beieinander. Die Lupe zieht eine Stichprobe aus einem Bereich; alles bleibt auf diesem Gerät.">A map of the roles: similar roles sit close together. The lens samples an area; everything stays on this device.</p>
+  <div id="atlas-mount" class="atlas-mount"></div>
+</main>
+<footer class="site-footer" id="site-footer"></footer>
+<script type="module">
+import { boot } from './assets/app.js';
+await boot('atlas');
+await import('./assets/atlas.js');
+</script>
+</body>
+</html>
