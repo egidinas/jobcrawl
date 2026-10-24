@@ -38,6 +38,7 @@ DEFAULT_SCOPES = [{'id': 'worldwide', 'label': {'en': 'Worldwide', 'de': 'Weltwe
 
 DEFAULT_MAP = {'k': 15, 'layout_k': 45, 'min_dist': 0.25, 'even': 0.7, 'reps': 3, 'signature': 0.8, 'min_scope': 600,
                'labels_file': None, 'resolution': [1.6, 5.0]}
+ACCENT_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 DEFAULT_EMBED = {'model_repo': 'onnx-community/embeddinggemma-2-ONNX', 'prompt': 'search-query', 'max_tokens': 256, 'text_chars': 700}
 
 
@@ -191,6 +192,31 @@ def _level(check, b, path):
             'pattern': pattern}
 
 
+def _accent(check, v, path):
+    check.text(v, path)
+    if not ACCENT_RE.match(v):
+        check.fail(path, f'{v!r} is not a hex colour (use #rgb or #rrggbb)')
+    return v
+
+
+def _links(check, v, path):
+    """{"reference": [{"label": text, "url": http or https link}]}: the web app's footer, nothing else reads it."""
+    check.obj(v, path)
+    unknown = set(v) - {'reference'}
+    if unknown:
+        check.fail(path, f'unknown key {sorted(unknown)[0]!r} (only "reference")')
+    out = {'reference': []}
+    for i, item in enumerate(check.lst(v.get('reference', []), f'{path}.reference')):
+        ip = f'{path}.reference[{i}]'
+        check.obj(item, ip)
+        label = check.text(item['label'], f'{ip}.label') if 'label' in item else check.fail(ip, 'needs a "label"')
+        url = check.text(item['url'], f'{ip}.url') if 'url' in item else check.fail(ip, 'needs a "url"')
+        if not re.match(r'^https?://\S+$', url):
+            check.fail(f'{ip}.url', f'{url!r} is not an http or https link')
+        out['reference'].append({'label': label, 'url': url})
+    return out
+
+
 def _validate(raw, file):
     c = _Check(file)
     p = c.obj(raw, 'profile.json')
@@ -201,6 +227,8 @@ def _validate(raw, file):
     out['languages'] = c.languages(p['languages'], 'languages') if 'languages' in p else ['en']
     out['data_dir'] = c.text(p['data_dir'], 'data_dir') if p.get('data_dir') is not None else None
     out['companies_catalogue'] = c.text(p['companies_catalogue'], 'companies_catalogue') if p.get('companies_catalogue') is not None else None
+    out['accent'] = _accent(c, p['accent'], 'accent') if p.get('accent') is not None else None
+    out['links'] = _links(c, p.get('links', {}), 'links')
 
     crawl = c.obj(p.get('crawl', {}), 'crawl')
     rel = c.obj(crawl.get('relevance', {}), 'crawl.relevance')

@@ -1187,5 +1187,18 @@
     "prompt": "search-query",
     "max_tokens": 256,
     "text_chars": 700
+  },
+  "accent": "#2563eb",
+  "links": {
+    "reference": [
+      {
+        "label": "madenetwork.de — board, Match me, Atlas",
+        "url": "https://madenetwork.de/jobs.html"
+      },
+      {
+        "label": "jobs.jmeyer.space",
+        "url": "https://jobs.jmeyer.space"
+      }
+    ]
   }
 }

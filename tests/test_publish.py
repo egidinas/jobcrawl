@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -17,7 +18,7 @@ from synthetic import HAVE_NUMPY, NUMPY_REASON, write_company_vectors, write_mat
 from jobcrawl import board
 from jobcrawl.cli import default_vectors, main
 from jobcrawl.index import publish
-from jobcrawl.profile import load_profile
+from jobcrawl.profile import ProfileError, load_profile, _validate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE = os.path.join(HERE, 'fixtures', 'catalog.json')
@@ -30,7 +31,14 @@ def silent(message):
 
 MATCH_FILES = ['match-vec.bin', 'match-vec.json', 'match-bm25.json', 'match-attrs.json', 'match-prefs.json', 'role-nb.bin', 'role-graph.json',
                'atlas-layout.json', 'company-vec.bin', 'company-vec.json']
-CONFIG_KEYS = ['name', 'title', 'tagline', 'languages', 'scopes', 'fields', 'levels', 'personas', 'glossary', 'statements_file']
+CONFIG_KEYS = ['name', 'title', 'tagline', 'languages', 'scopes', 'fields', 'levels', 'personas', 'glossary', 'statements_file', 'accent', 'links']
+
+
+def profile_from_dict(raw):
+    """A profile from a dict, validated the way load_profile validates a file."""
+    out = _validate(dict({'levels': [{'code': 'mid', 'rank': 0, 'label': {'en': 'Mid'}, 'pattern': None}]}, **raw), 'profile.json')
+    out['name'] = out['name'] or 'x'
+    return out
 
 
 class PublishFixture(unittest.TestCase):
@@ -107,6 +115,26 @@ class PublishFixture(unittest.TestCase):
         self.assertEqual(cfg['personas'][0]['flags'], 'i')
         self.assertEqual(cfg['levels'][0]['code'], 'student')
         self.assertEqual(cfg['glossary'][0], ['test', 'prüfung'])
+        self.assertEqual(cfg['accent'], '#2563eb')
+        self.assertEqual([x['url'] for x in cfg['links']['reference']], ['https://madenetwork.de/jobs.html', 'https://jobs.jmeyer.space'])
+
+    def test_links_and_accent_default_to_nothing(self):
+        raw = {'name': 'plain', 'languages': ['en'], 'levels': [{'code': 'mid', 'rank': 0, 'label': {'en': 'Mid'}, 'pattern': None}]}
+        profile = profile_from_dict(raw)
+        self.assertIsNone(profile['accent'])
+        self.assertEqual(profile['links'], {'reference': []})
+        site = self.fresh_site('plain-links')
+        publish.publish(site, profile, None, log=silent)
+        with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
+            cfg = json.load(fh)
+        self.assertIsNone(cfg['accent'])
+        self.assertEqual(cfg['links'], {'reference': []})
+
+    def test_bad_links_and_accent_name_the_key(self):
+        for raw, key in [({'accent': 'blue'}, 'accent'), ({'links': {'reference': [{'label': 'x', 'url': 'ftp://x'}]}}, 'links.reference[0].url'),
+                         ({'links': {'reference': [{'url': 'https://x'}]}}, 'links.reference[0]'), ({'links': {'site': []}}, 'links')]:
+            with self.assertRaisesRegex(ProfileError, re.escape(key)):
+                profile_from_dict(dict(raw, name='bad'))
 
     def test_missing_index_is_refused(self):
         empty = os.path.join(self.tmp, 'empty-site')

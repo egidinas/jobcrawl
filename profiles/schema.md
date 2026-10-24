@@ -17,6 +17,8 @@ everything else. `profile.py` fills every default below and rejects a wrong valu
 | `languages` | list of `en`/`de` | `["en"]` | board, web config | languages of the labels; a label without `de` uses its `en` text |
 | `data_dir` | string | none | crawler, catalog, run | data folder, relative to the profile folder. Used when `--data` is not given; else `./data`. The Python build takes `--catalog` explicitly |
 | `companies_catalogue` | string | none | `jobcrawl embed`, atlas | optional employer catalogue for the companies layer of the Atlas, relative to the profile folder: JSON `{"companies": [{"slug", "name", "field", "arch_name", "profile": {"en": "..."}}]}`. `slug` and `name` are required; `field`, `arch_name` and `profile` add to the company's text (`embed/companies.py`). Without it the companies are not embedded and the Atlas has no companies layer |
+| `accent` | CSS hex colour (`#rgb` or `#rrggbb`) | none | web config | accent colour of the web app (buttons, links, highlights); without it the app's built-in colour is used |
+| `links` | object `{"reference": [{"label", "url"}]}` | `{"reference": []}` | web config | links shown in the web app's footer, only when there are any; `url` must be http or https. Use them for sites that show the same data or are the reference implementation of the profile |
 
 ## `crawl`
 
@@ -203,4 +205,5 @@ Embedding recipe (`embed/roles.py`, `embed/embedder.py`, `embed/companies.py`).
 | `map`, `scopes` | `map/atlas.py`, `map/labels.py` (`atlas-layout.json`) |
 | `embed` | `embed/` and `scripts/fetch_model.py` |
 | `companies_catalogue` | `embed/companies.py`, `map/atlas.py` |
+| `accent`, `links` | `index/publish.py` (into `config.json`), web app footer and colour |
 | `crawl`, `data_dir`, `name` | the crawler (`crawler/*.mjs`) |
