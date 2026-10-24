@@ -499,7 +499,7 @@
         "en": "Lead & management",
         "de": "Leitung & Management"
       },
-      "pattern": "\\b(head of|director|vp|vice president|chief|cto|coo|ceo|manager|management|\\w*leiter\\w*|team ?lead\\w*|lead|principal investigator|general manager|geschäftsführ\\w*)\\b"
+      "pattern": "\\b(head of|director|vp|vice president|chief|cto|coo|ceo|manager|\\w+manager(?:in)?|(?!\\w*(?:halb|supra|ab|blitz|strom|wärme|licht|isolier|über)leiter)(?!leiter(?:platt|bahn|techn|werkstoff|material))\\w*leiter\\w*|team ?lead\\w*|lead(?![\\s-]+(?:free|times?|generation|gen|qualification|scoring|nurturing|magnet\\w*|conversion|sources?|capture|lists?|pipeline)\\b)|principal investigator|general manager|geschäftsführ\\w*)\\b"
     },
     {
       "code": "senior",

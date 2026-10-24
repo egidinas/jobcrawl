@@ -6,7 +6,7 @@ from jobcrawl.classify.levels import compile_levels, level_of
 from jobcrawl.classify.scopes import region_label, scope_ids
 from jobcrawl.classify.seniority import level as ladder
 from jobcrawl.geo import geo
-from jobcrawl.profile import load_profile
+from jobcrawl.profile import DEFAULT_LEVELS, load_profile
 
 PROFILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'profiles', 'aerospace')
 
@@ -83,3 +83,19 @@ class Ladder(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LeadBandFalsePositives(unittest.TestCase):
+    """The lead band: ranks, not fields or things (the default bands, shared by the reference profile)."""
+
+    def test_titles(self):
+        bands = compile_levels(DEFAULT_LEVELS)
+        cases = {
+            'Leiterplatten-Designer (m/w/d)': 'mid', 'Halbleiter Prozessingenieur': 'mid', 'Quality Management Engineer': 'mid',
+            'Lead-free Soldering Technician': 'mid', 'Lead Time Analyst': 'mid', 'Senior Configuration Management Specialist': 'senior',
+            'Teamleiter Montage': 'lead', 'Leiter Qualität': 'lead', 'Projektleiter Bau': 'lead', 'Projektmanager (m/w/d)': 'lead',
+            'Qualitätsmanagerin': 'lead', 'Project Manager Satellites': 'lead', 'Team Lead Software': 'lead', 'Lead Test Engineer': 'lead',
+            'Head of AIT': 'lead', 'Werkstudent Projektmanagement': 'student', 'Working student, team lead assistant': 'student',
+        }
+        for title, band in cases.items():
+            self.assertEqual(level_of(title, bands), band, title)
