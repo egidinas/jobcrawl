@@ -73,7 +73,7 @@ What the script changes from the aerospace profile, and why:
 
 * the scopes are narrowed to `bavaria` and `worldwide` (the atlas needs the `any` scope; every role is in both);
 * the title and tagline say that this is the demo;
-* the reference links in the footer are removed, so the folder names no other site;
+* the footer links to the two reference implementations (madenetwork.de and jobs.jmeyer.space), as the aerospace profile does;
 * the companies layer uses the employer names of the subset (no company profiles: the names are all the atlas gets);
 * the Bavaria group names come from the reference labels (`profiles/aerospace/labels.json`): 41 of the 43 groups keep a name;
   the other two keep their word labels, as designed. Labels whose role ids are no longer on the reference board are dropped.
