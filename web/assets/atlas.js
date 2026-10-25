@@ -232,16 +232,40 @@ const LEGAL_END = /[\s,]+(gmbh\s*&\s*co\.?\s*kg|gmbh|mbh|ag|se|kg|pte\.?\s*ltd\.
 const shortName = (name) => { const full = String(name || ''); let s = full.replace(/\s*\(via [^)]*\)\s*$/i, '').replace(/[\s,.]+$/, '');
   for (let q = 0; q < 8; q++) { const t = s.replace(LEGAL_END, '').replace(/[\s,.]+$/, ''); if (!t || t === s) break; s = t; }
   return s || full; };
-// a label's box [x0, y0, x1, y1] for its anchor: the centre (align 'center'), or the left or the right edge; p scales the padding
-function labelBox(ctx, t, fs, face, x, y, align, p = 1) {
-  ctx.font = `${face} ${fs}px system-ui, sans-serif`; const w = ctx.measureText(t).width + (align === 'center' ? 10 : 4) * p, h = fs + 6 * p;
-  const x0 = align === 'left' ? x : align === 'right' ? x - w : x - w / 2;
-  return [x0, y - h / 2, x0 + w, y + h / 2];
+// a label is a list of lines: [{t, fs, face, alpha, color}] (fs in logical px; p is the text scale). Its box: the widest line,
+// the lines at 1.15 x their size, and the padding. align 'center': the block centred on (x, y); 'left' / 'right': the block beside
+// the anchor (right of it, or left of it), its first line centred on y (so a dot at the anchor marks the first line).
+function labelLayout(ctx, lines, x, y, align, p = 1) {
+  let wmax = 0, hsum = 0;
+  const L = lines.map((ln) => { ctx.font = `${ln.face} ${ln.fs * p}px system-ui, sans-serif`; const w = ctx.measureText(ln.t).width, lh = 1.15 * ln.fs * p; wmax = Math.max(wmax, w); hsum += lh; return { ...ln, F: ln.fs * p, lh }; });
+  const padX = (align === 'center' ? 5 : 2) * p, padY = 3 * p, W = wmax + 2 * padX, H = hsum + 2 * padY;
+  const x0 = align === 'left' ? x : align === 'right' ? x - W : x - W / 2;
+  const top = align === 'center' ? y - H / 2 : y - L[0].lh / 2 - padY;
+  let cy = top + padY;
+  const out = L.map((ln) => { const c = { ...ln, cy: cy + ln.lh / 2, cx: align === 'left' ? x0 + padX : align === 'right' ? x0 + W - padX : x0 + W / 2 }; cy += ln.lh; return c; });
+  return { box: [x0, top, x0 + W, top + H], lines: out, align, p };
 }
-function labelDraw(ctx, t, fs, face, b, align, ink, halo, alpha, p = 1) {
-  ctx.font = `${face} ${fs}px system-ui, sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = align; ctx.globalCompositeOperation = 'source-over';
-  const tx = align === 'left' ? b[0] + 2 * p : align === 'right' ? b[2] - 2 * p : (b[0] + b[2]) / 2, ty = (b[1] + b[3]) / 2;
-  ctx.globalAlpha = alpha; ctx.lineJoin = 'round'; ctx.lineWidth = 4 * p; ctx.strokeStyle = halo; ctx.fillStyle = ink; ctx.strokeText(t, tx, ty); ctx.fillText(t, tx, ty);
+function labelDraw(ctx, lay, halo) {
+  ctx.textBaseline = 'middle'; ctx.textAlign = lay.align; ctx.globalCompositeOperation = 'source-over'; ctx.lineJoin = 'round';
+  for (const ln of lay.lines) { ctx.font = `${ln.face} ${ln.F}px system-ui, sans-serif`; ctx.globalAlpha = ln.alpha ?? 1; ctx.lineWidth = 4 * lay.p; ctx.strokeStyle = halo; ctx.fillStyle = ln.color;
+    ctx.strokeText(ln.t, ln.cx, ln.cy); ctx.fillText(ln.t, ln.cx, ln.cy); }
+}
+// text wrapped at word boundaries to lines of about `width` characters; at most maxLines: a text that needs more is cut on its
+// last line with "…"
+function wrapText(s, width, maxLines) {
+  const words = String(s || '').split(/\s+/).filter(Boolean), lines = []; let cur = '';
+  for (const w of words) { if (cur && (cur + ' ' + w).length > width) { lines.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w; }
+  if (cur) lines.push(cur);
+  // no orphan: a short last word ("I/II", "Lead") stays on the line before when that line overruns the width only a little
+  if (lines.length > 1 && lines[lines.length - 1].length <= 5 && (lines[lines.length - 2] + ' ' + lines[lines.length - 1]).length <= width + 6) lines.splice(-2, 2, lines[lines.length - 2] + ' ' + lines[lines.length - 1]);
+  if (lines.length > maxLines) { const rest = lines.slice(maxLines - 1).join(' '); lines.length = maxLines - 1; lines.push(cutWords(rest, width)); }
+  // a connecting "&" or "+" at a line end moves to the start of the next line ("Test" / "& Verification"); a dangling dash,
+  // comma or colon is dropped
+  for (let i = 0; i < lines.length - 1; i++) {
+    const m = lines[i].match(/\s+([&+])$/); if (m) { lines[i] = lines[i].slice(0, -m[0].length); lines[i + 1] = m[1] + ' ' + lines[i + 1]; }
+    lines[i] = lines[i].replace(/[\s,\-–:;\/]+$/, '');
+  }
+  return lines;
 }
 // the representative roles of each neighbourhood (the layout's representatives, i.e. the shown roles), the most typical first:
 // nearest to the neighbourhood's centre in the embedding. Returns lists[h] = entity indices.
@@ -298,11 +322,11 @@ function paintMap(ctx, P, o) {
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
   // screen) and of every label already placed; otherwise it is left out. Areas first, then role labels or company names.
   const boxes = screen ? [[W - 56, 0, W, 130]] : [], lr = st.size * W + 6, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
-  const place = (t, fs, face, cands, ink2, alpha) => { const F = fs * ts; for (const [x, y, a] of cands) { const b = labelBox(ctx, t, F, face, x, y, a, ts);
+  const place = (lines, cands) => { for (const [x, y, a] of cands) { const lay = labelLayout(ctx, lines, x, y, a, ts), b = lay.box;
       if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
       if (screen) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) continue; }
       if (boxes.some((q) => !(b[2] < q[0] || b[0] > q[2] || b[3] < q[1] || b[1] > q[3]))) continue;
-      boxes.push(b); labelDraw(ctx, t, F, face, b, a, ink2, halo, alpha, ts); return b; } return false; };
+      boxes.push(b); labelDraw(ctx, lay, halo); return b; } return false; };
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
   const counts = { areas: 0, roles: 0, companies: 0 }, byN = (list, sub) => list.map((r) => ({ r, sub })).sort((a, b) => b.r.n - a.r.n);
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
@@ -311,7 +335,8 @@ function paintMap(ctx, P, o) {
   for (const { r, sub } of areas) {
     if (counts.areas >= (many ? 400 : 24) || (!r.words.length && !r.label)) continue;
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(r.n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(r.n) * 0.33)));
-    if (place(nameOf(r), fs, sub ? '500' : '600', [[sx(r.xy[0]), sy(r.xy[1]), 'center']], areaInk(sub), 1)) counts.areas++;
+    const lines = wrapText(nameOf(r), 16, 2).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));
+    if (place(lines, [[sx(r.xy[0]), sy(r.xy[1]), 'center']])) counts.areas++;
   }
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
@@ -323,8 +348,10 @@ function paintMap(ctx, P, o) {
         if (counts.roles >= cap) break rounds;
         const e = Ly.ents[list[r]], X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) continue;
         const row = rows[e.idx[0]], title = cleanTitle(row[1]), key = title.toLowerCase(); if (!title || seenT.has(key)) continue;
-        const col = T.tintL ? tintOf(e.c1) : ink, text = `${cutWords(title, 40)} (${cutWords(coInLabel(row[2]), 22)})`;
-        if (place(text, ENT_FS, 'italic 400', [[X0 + 6 * ts, Y0, 'left'], [X0 - 6 * ts, Y0, 'right']], col, 0.9)) { seenT.add(key); counts.roles++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); } }
+        const col = T.tintL ? tintOf(e.c1) : ink;
+        // the title (up to 2 lines of about 26 characters), then the company in brackets on its own line: a little smaller and dimmer
+        const lines = wrapText(title, 26, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col })).concat([{ t: `(${cutWords(coInLabel(row[2]), 28)})`, fs: ENT_FS * 0.9, face: 'italic 400', alpha: 0.8, color: col }]);
+        if (place(lines, [[X0 + 6 * ts, Y0, 'left'], [X0 - 6 * ts, Y0, 'right']])) { seenT.add(key); counts.roles++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); } }
       if (!any) break; }
   }
   // companies (companies map): next to their dot, right of it or else left, the companies with most open roles first
@@ -332,7 +359,8 @@ function paintMap(ctx, P, o) {
     const order = Ly.ents.map((e, k) => k).filter((k) => vis[k] && Ly.ents[k].name).sort((a, b) => Ly.ents[b].idx.length - Ly.ents[a].idx.length), rr = dot / 2 + 3, seen = new Set();
     for (const k of order) { if (counts.companies >= (many ? 300 : 15)) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) continue;
       const nm = shortName(e.name); if (seen.has(nm)) continue; seen.add(nm);
-      if (place(nm, ENT_FS, 'italic 400', [[X0 + rr, Y0, 'left'], [X0 - rr, Y0, 'right']], T.tintL ? tintOf(e.c1) : ink, 0.9)) counts.companies++; }
+      const col = T.tintL ? tintOf(e.c1) : ink, lines = wrapText(nm, 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
+      if (place(lines, [[X0 + rr, Y0, 'left'], [X0 - rr, Y0, 'right']])) counts.companies++; }
   }
   if (screen) {   // the lens and the sampled points
     const r = st.size * W, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
