@@ -63,7 +63,7 @@ mount.innerHTML = `<div class="atlas-bar">
 <label class="shape-toggle"><input type="checkbox" id="atlas-taste" checked> ${L('Show how well each area fits me (bright: close to my profile, faint: far from it)', 'Zeigen, wie gut jeder Bereich zu mir passt (hell: nah an meinem Profil, blass: weit weg)')}</label>
 <label class="shape-toggle"><input type="checkbox" id="atlas-all"> ${L('Show every role (otherwise at most three per employer and neighbourhood, so big employers do not crowd the map)', 'Jede Stelle zeigen (sonst höchstens drei je Arbeitgeber und Nachbarschaft, damit große Arbeitgeber die Karte nicht füllen)')}</label></div></details>
 <div class="atlas-grid"><div>
-<div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button></div></div>
+<div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div></div>
 <p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
 <div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong>${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
 <ul class="atlas-list" id="atlas-list"></ul>
@@ -169,7 +169,13 @@ renderPersonas(); renderPrefs(); renderCv(); computeTaste();
 // ---- state, view and drawing
 const st = { all: false, mode: 'roles', scope: defaultScope(), size: 0.09, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
 $('atlas-fields').innerHTML = ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="false">${esc(fieldLabel(f))}</button>`).join('');
-const cv = $('atlas-cv'), g = cv.getContext('2d'), W = cv.width, H = cv.height, css = (n) => getComputedStyle(document.body).getPropertyValue(n).trim() || '#888';
+const W = 900, H = 640;      // the logical map size: positions, labels and pointer maps are in these units; the canvas store is k times larger
+const cv = $('atlas-cv'), g = cv.getContext('2d'), css = (n, fb = '#888') => getComputedStyle(document.body).getPropertyValue(n).trim() || fb;
+// the backing store follows the screen's pixel density (k = device pixel ratio, at most 3); everything is drawn in logical units
+function sizeCanvas() { const k = Math.min(3, window.devicePixelRatio || 1), w = Math.round(W * k), h = Math.round(H * k); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0); }
+sizeCanvas();
+// employers by their number of roles on the board (rows of jobs-index.json, by company slug), largest first: the names on the map
+const EMP_RANK = (() => { const m = new Map(); rows.forEach((r) => { const s = r[4]; if (!s) return; const e = m.get(s); if (e) e.n++; else m.set(s, { slug: s, name: r[2], n: 1 }); }); return [...m.values()].sort((a, b) => b.n - a.n || (a.slug < b.slug ? -1 : 1)); })();
 const lay = () => layers[st.mode];
 const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1));
 const visibleRoles = (e) => e.idx.filter(roleVisible);
@@ -179,14 +185,20 @@ const voteOf = (id) => (ratings[id] ? tw(ratings[id]) : null);
 const sx = (x) => ((x - st.z.cx) * st.z.s + 0.5) * W, sy = (y) => ((y - st.z.cy) * st.z.s + 0.5) * H;
 const ux = (px) => (px / W - 0.5) / st.z.s + st.z.cx, uy = (py) => (py / H - 0.5) / st.z.s + st.z.cy;
 const hue = (c) => (c * 137.508) % 360;      // one colour per region, spread around the colour wheel
-// region colours of equal perceived lightness and colourfulness (OKLCH), so no hue looks stronger than another
-function oklch(L, C, h) {
+// region colours: OKLCH at the same lightness for every hue, with chroma VIVID_C wherever that colour is inside the sRGB gamut;
+// a hue whose vivid colour would be clipped takes the largest chroma that is inside (binary search on C)
+const VIVID_C = 0.19;
+function oklinear(L, C, h) {
   const a = C * Math.cos(h * Math.PI / 180), b = C * Math.sin(h * Math.PI / 180);
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3, m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3, s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3;
-  const lin = [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
-  return lin.map((x) => Math.round(255 * Math.max(0, Math.min(1, x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055))));
+  return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s, -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s];
 }
-const rgbCache = new Map(), regionRgb = (c, L) => { const k = c + '/' + L; if (!rgbCache.has(k)) rgbCache.set(k, oklch(L, 0.13, hue(c))); return rgbCache.get(k); };
+const inGamut = (L, C, h) => oklinear(L, C, h).every((x) => x >= 0 && x <= 1);
+// the largest chroma up to the target that is inside the sRGB gamut at this lightness and hue (binary search when it is clipped)
+function maxChroma(L, h, target) { if (inGamut(L, target, h)) return target; let lo = 0, hi = target; for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (inGamut(L, mid, h)) lo = mid; else hi = mid; } return lo; }
+function oklch(L, C, h) { return oklinear(L, C, h).map((x) => Math.round(255 * Math.max(0, Math.min(1, x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)))); }
+const rgbCache = new Map();
+const regionRgb = (c, L, target = VIVID_C) => { const k = c + '/' + L + '/' + target; if (!rgbCache.has(k)) { const h = hue(c); rgbCache.set(k, oklch(L, maxChroma(L, h, target), h)); } return rgbCache.get(k); };
 let densAt = () => 1;      // how crowded a point's spot on screen is, relative to a typical spot (set by colourField)
 // a group's name: the hand-written key term (atlas-labels.json), else its first two distinctive words
 const nameOf = (r) => (r.label ? r.label[isDe() ? 1 : 0] : r.words.slice(0, 2).map((w) => w[0].toUpperCase() + w.slice(1)).join(' & '));
@@ -198,52 +210,140 @@ function grid(GW, GH, add) {      // per screen cell: sums of add(k) over visibl
   return A;
 }
 function blur(A, GW, GH, passes) { for (let pass = 0; pass < passes; pass++) { const t = new Float32Array(A.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let q = 0, m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) { q += A[yy * GW + xx]; m++; } } t[y * GW + x] = q / m; } A.set(t); } }
-function paint(A, GW, GH, rgb, alphaOf) {
+function paint(ctx, A, GW, GH, rgb, alphaOf) {
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);
   for (let k = 0; k < A.length; k++) { img.data[k * 4] = rgb[0]; img.data[k * 4 + 1] = rgb[1]; img.data[k * 4 + 2] = rgb[2]; img.data[k * 4 + 3] = Math.round(255 * alphaOf(A[k])); }
-  sg.putImageData(img, 0, 0); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.globalAlpha = 1; g.drawImage(small, 0, 0, W, H);
+  sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1; ctx.drawImage(small, 0, 0, W, H);
 }
-function draw() {
-  const Ly = lay(), ink = css('--ink'), paper = css('--panel'), showTaste = taste && $('atlas-taste').checked, roles = st.mode === 'roles';
+// the colour themes. 'light': the vivid look of the page. 'neon': aggressive colour on near black; its colour field is added up
+// (so overlapping regions glow) and a wider, fainter pass gives a halo
+const THEMES = {
+  light: { C: VIVID_C, fieldL: 0.66, pointL: 0.70, pointA: 0.95, fieldStrength: 0.62 },
+  neon: { C: 0.30, fieldL: 0.72, pointL: 0.84, pointA: 1, fieldStrength: 0.38, glow: { strength: 0.30, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
+};
+// the theme on screen: neon on a dark page, light otherwise (data-theme on the root element overrides the page setting)
+function themeFor() { const r = document.documentElement.dataset.theme; if (r === 'light' || r === 'dark') return r === 'light' ? 'light' : 'neon'; return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'neon' : 'light'; }
+// the display name of an employer or company on the map (labels only; the data keeps the full name): a trailing "(via ...)"
+// and a legal form at the end (GmbH, Ltd., S.A.S. ...) are dropped, repeatedly
+const LEGAL_END = /[\s,]+(gmbh\s*&\s*co\.?\s*kg|gmbh|mbh|ag|se|kg|pte\.?\s*ltd\.?|ltd\.?|limited|inc\.?|llc|s\.a\.s\.|s\.a\.|sas|sa|b\.v\.|bv|kft\.?|s\.r\.l\.|srl|oy|ab|plc)[\s,.]*$/i;
+const shortName = (name) => { const full = String(name || ''); let s = full.replace(/\s*\(via [^)]*\)\s*$/i, '').replace(/[\s,.]+$/, '');
+  for (let q = 0; q < 8; q++) { const t = s.replace(LEGAL_END, '').replace(/[\s,.]+$/, ''); if (!t || t === s) break; s = t; }
+  return s || full; };
+// a label's box [x0, y0, x1, y1] for its anchor: the centre (align 'center'), or the left or the right edge; p scales the padding
+function labelBox(ctx, t, fs, face, x, y, align, p = 1) {
+  ctx.font = `${face} ${fs}px system-ui, sans-serif`; const w = ctx.measureText(t).width + (align === 'center' ? 10 : 4) * p, h = fs + 6 * p;
+  const x0 = align === 'left' ? x : align === 'right' ? x - w : x - w / 2;
+  return [x0, y - h / 2, x0 + w, y + h / 2];
+}
+function labelDraw(ctx, t, fs, face, b, align, ink, halo, alpha, p = 1) {
+  ctx.font = `${face} ${fs}px system-ui, sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = align; ctx.globalCompositeOperation = 'source-over';
+  const tx = align === 'left' ? b[0] + 2 * p : align === 'right' ? b[2] - 2 * p : (b[0] + b[2]) / 2, ty = (b[1] + b[3]) / 2;
+  ctx.globalAlpha = alpha; ctx.lineJoin = 'round'; ctx.lineWidth = 4 * p; ctx.strokeStyle = halo; ctx.fillStyle = ink; ctx.strokeText(t, tx, ty); ctx.fillText(t, tx, ty);
+}
+const median = (a) => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+// ---- drawing. prepare(T) sets the visible points and the taste fit for the current view; paintMap(ctx, P, o) draws the view on
+// any context whose transform maps the logical W x H map onto it. o.screen: the lens, sample and zoom buttons are drawn and kept
+// clear (o.names 'few'); an exported image has none of them and names the areas and the employers or companies ('many').
+// o.ff: the colour field's grid factor (finer when zoomed or exported big); o.ts: the text scale.
+function prepare(T) {
+  const Ly = lay(), roles = st.mode === 'roles', showTaste = !!(taste && $('atlas-taste').checked);
   act = Ly.ents.map((e) => visibleRoles(e).length > 0); vis = roles ? act : Ly.ents.map(() => true);
-  g.clearRect(0, 0, W, H);
-  // links between neighbourhoods (share of neighbour links that cross), then the points coloured by region
-  if (roles && Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); g.strokeStyle = ink; g.lineWidth = 1;
-    for (const [a, b, w] of Ly.links) { const A = Ly.hoods[a].xy, B = Ly.hoods[b].xy; g.globalAlpha = 0.05 + 0.25 * (w / mx); g.beginPath(); g.moveTo(sx(A[0]), sy(A[1])); g.lineTo(sx(B[0]), sy(B[1])); g.stroke(); } }
-  // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
   fit = showTaste ? fitOf(Ly) : null;
-  colourField(Ly, 0.42);
+  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel') };
+}
+function paintMap(ctx, P, o) {
+  const { Ly, roles, T, ink, paper } = P, screen = o.screen, many = o.names === 'many', zoomed = st.z.s >= 2.2, ts = o.ts || 1, ff = o.ff || 1;
+  const bg = T.bg || paper, halo = T.halo || paper, tintOf = (c) => { const r = regionRgb(c, T.tintL, T.C); return `rgb(${r[0]},${r[1]},${r[2]})`; };
+  ctx.globalCompositeOperation = 'source-over';
+  if (screen && !T.bg) ctx.clearRect(0, 0, W, H); else { ctx.globalAlpha = 1; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
+  // links between neighbourhoods (share of neighbour links that cross)
+  if (roles && Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1;
+    for (const [a, b, w] of Ly.links) { const A = Ly.hoods[a].xy, B = Ly.hoods[b].xy; ctx.globalAlpha = T.linkInk ? 0.04 + 0.12 * (w / mx) : 0.05 + 0.25 * (w / mx); ctx.beginPath(); ctx.moveTo(sx(A[0]), sy(A[1])); ctx.lineTo(sx(B[0]), sy(B[1])); ctx.stroke(); } }
+  // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
+  if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff, additive: true }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
+  else colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff });
   const dot = (roles ? 2 : 5) * Math.min(2.5, Math.sqrt(st.z.s)); let shown = 0;
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (act[k]) shown++; if (e.hidden && !st.all) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const rgb = regionRgb(e.c1, act[k] ? 0.78 : 0.55); g.globalAlpha = (act[k] ? 0.9 : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1); g.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-    if (roles) g.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { g.beginPath(); g.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) g.fill(); else { g.strokeStyle = g.fillStyle; g.lineWidth = 1; g.stroke(); } } });
-  Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); g.globalAlpha = 1; g.fillStyle = col; g.strokeStyle = paper; g.lineWidth = 2; g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill(); g.stroke(); });
-  // group labels: regions at full view, neighbourhoods when zoomed in. A label is drawn only where it fits completely inside
-  // the map, clear of the zoom buttons, the lens and every label already placed (larger groups first); otherwise it is left out.
-  const groups = (roles && st.z.s >= 2.2 ? Ly.hoods : Ly.regions).map((r, k) => ({ r, k })).sort((a, b) => b.r.n - a.r.n), boxes = [[W - 56, 0, W, 130]];
-  const lr = st.size * W + 6, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
-  const hitsLens = (b) => { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); return Math.hypot(nx - lcx, ny - lcy) < lr; };
-  g.textAlign = 'center'; g.textBaseline = 'middle'; let placed = 0;
-  for (const { r } of groups) {
-    if ((!r.words.length && !r.label) || placed >= 24) continue; const x = sx(r.xy[0]), y = sy(r.xy[1]);
-    const fs = Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(r.n) * 0.33))), t1 = nameOf(r), t2 = '';
-    g.font = `600 ${fs}px system-ui, sans-serif`; const w1 = g.measureText(t1).width; g.font = `400 ${fs - 3}px system-ui, sans-serif`; const w2 = t2 ? g.measureText(t2).width : 0;
-    const bw = Math.max(w1, w2) + 10, bh = fs + (t2 ? fs : 0) + 6, box = [x - bw / 2, y - bh / 2, x + bw / 2, y + bh / 2];
-    if (box[0] < 4 || box[1] < 4 || box[2] > W - 4 || box[3] > H - 4) continue;
-    if (hitsLens(box) || boxes.some((b) => !(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
-    boxes.push(box); placed++;
-    g.globalAlpha = 1; g.lineJoin = 'round'; g.lineWidth = 4; g.strokeStyle = paper; g.fillStyle = ink;
-    g.font = `600 ${fs}px system-ui, sans-serif`; const y1 = t2 ? y - fs * 0.45 : y; g.strokeText(t1, x, y1); g.fillText(t1, x, y1);
-    if (t2) { g.font = `400 ${fs - 3}px system-ui, sans-serif`; g.globalAlpha = 0.8; g.strokeText(t2, x, y + fs * 0.6); g.fillText(t2, x, y + fs * 0.6); }
+    const rgb = regionRgb(e.c1, act[k] ? T.pointL : 0.55, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    if (roles) ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { ctx.beginPath(); ctx.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); } } });
+  Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.strokeStyle = halo; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke(); });
+  // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
+  // screen) and of every label already placed; otherwise it is left out. Areas first, then employers or companies.
+  const boxes = screen ? [[W - 56, 0, W, 130]] : [], lr = st.size * W + 6, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
+  const place = (t, fs, face, cands, ink2, alpha) => { const F = fs * ts; for (const [x, y, a] of cands) { const b = labelBox(ctx, t, F, face, x, y, a, ts);
+      if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
+      if (screen) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) continue; }
+      if (boxes.some((q) => !(b[2] < q[0] || b[0] > q[2] || b[3] < q[1] || b[1] > q[3]))) continue;
+      boxes.push(b); labelDraw(ctx, t, F, face, b, a, ink2, halo, alpha, ts); return b; } return false; };
+  const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
+  const counts = { areas: 0, employers: 0, companies: 0 }, byN = (list, sub) => list.map((r) => ({ r, sub })).sort((a, b) => b.r.n - a.r.n);
+  // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
+  const areas = many ? [...byN(Ly.regions, false), ...(roles ? byN(Ly.hoods, true) : [])] : byN(roles && zoomed ? Ly.hoods : Ly.regions, false);
+  const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
+  for (const { r, sub } of areas) {
+    if (counts.areas >= (many ? 400 : 24) || (!r.words.length && !r.label)) continue;
+    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(r.n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(r.n) * 0.33)));
+    if (place(nameOf(r), fs, sub ? '500' : '600', [[sx(r.xy[0]), sy(r.xy[1]), 'center']], areaInk(sub), 1)) counts.areas++;
   }
-  // the lens and the sampled points
-  const r = st.size * W, lx = sx(st.lens.x), ly = sy(st.lens.y); g.globalAlpha = 1; g.strokeStyle = ink; g.lineWidth = 2; g.setLineDash([6, 4]); g.beginPath(); g.arc(lx, ly, r, 0, 7); g.stroke(); g.setLineDash([]);
-  g.fillStyle = ink; st.sample.forEach((k) => { const e = Ly.ents[k]; g.beginPath(); g.arc(sx(e.x), sy(e.y), 4, 0, 7); g.fill(); });
-  const unitEn = roles ? 'roles' : 'companies', unitDe = roles ? 'Stellen' : 'Firmen';
-  $('atlas-status').innerHTML = L(`${shown.toLocaleString()} ${unitEn} shown${roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
-    `${shown.toLocaleString('de-DE')} ${unitDe} gezeigt${roles && Ly.placed ? ` (${Ly.placed} neuere Stellen neben ihren nächsten Nachbarn platziert)` : ''}. Farben sind Regionen eng verbundener ${unitDe}; Linien verbinden Nachbarschaften mit vielen gemeinsamen Verbindungen. Die gestrichelte Lupe ziehen, um einen Bereich zu sehen, daneben ziehen, um die Karte zu verschieben, mit + und − oder dem Mausrad zoomen.${showTaste ? '  Die Helligkeit zeigt, wie gut ein Bereich zu Ihrem Profil passt; solange wenig bekannt ist, ist der Kontrast gering.' : ''}`);
+  // employers (roles map): at the median position of their visible dots, largest employer first; a display name is used once
+  if (roles && (many || zoomed)) {
+    const dots = new Map();
+    Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all)) return; const X0 = sx(e.x), Y0 = sy(e.y), s = rows[e.idx[0]][4]; if (!s || X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) return; if (!dots.has(s)) dots.set(s, { pts: [], c1: e.c1 }); dots.get(s).pts.push([X0, Y0]); });
+    const seen = new Set();
+    for (const em of EMP_RANK) { if (counts.employers >= (many ? 80 : 12)) break; const d = dots.get(em.slug); if (!d) continue;
+      const nm = shortName(em.name); if (seen.has(nm)) continue; seen.add(nm);
+      const mx = median(d.pts.map((p) => p[0])), my = median(d.pts.map((p) => p[1])), col = T.tintL ? tintOf(d.c1) : ink;
+      // the name beside a small dot marker at the employer's median position (on the left of the name, or the right when the left is taken)
+      if (place(nm, ENT_FS, 'italic 400', [[mx + 6 * ts, my, 'left'], [mx - 6 * ts, my, 'right']], col, 0.9)) { counts.employers++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(mx, my, 2.4 * ts, 0, 7); ctx.fill(); } }
+  }
+  // companies (companies map): next to their dot, right of it or else left, the companies with most open roles first
+  if (!roles && (many || zoomed)) {
+    const order = Ly.ents.map((e, k) => k).filter((k) => vis[k] && Ly.ents[k].name).sort((a, b) => Ly.ents[b].idx.length - Ly.ents[a].idx.length), rr = dot / 2 + 3, seen = new Set();
+    for (const k of order) { if (counts.companies >= (many ? 300 : 15)) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) continue;
+      const nm = shortName(e.name); if (seen.has(nm)) continue; seen.add(nm);
+      if (place(nm, ENT_FS, 'italic 400', [[X0 + rr, Y0, 'left'], [X0 - rr, Y0, 'right']], T.tintL ? tintOf(e.c1) : ink, 0.9)) counts.companies++; }
+  }
+  if (screen) {   // the lens and the sampled points
+    const r = st.size * W, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = ink; st.sample.forEach((k) => { const e = Ly.ents[k]; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), 4, 0, 7); ctx.fill(); });
+  }
+  return { shown, counts };
 }
+function draw() {
+  sizeCanvas(); const T = THEMES[themeFor()], ff = Math.min(3, Math.max(1, Math.sqrt(st.z.s))), P = prepare(T), res = paintMap(g, P, { screen: true, names: 'few', ff, ts: 1 }), Ly = P.Ly;
+  const unitEn = P.roles ? 'roles' : 'companies', unitDe = P.roles ? 'Stellen' : 'Firmen', showTaste = P.showTaste;
+  $('atlas-status').innerHTML = L(`${res.shown.toLocaleString()} ${unitEn} shown${P.roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
+    `${res.shown.toLocaleString('de-DE')} ${unitDe} gezeigt${P.roles && Ly.placed ? ` (${Ly.placed} neuere Stellen neben ihren nächsten Nachbarn platziert)` : ''}. Farben sind Regionen eng verbundener ${unitDe}; Linien verbinden Nachbarschaften mit vielen gemeinsamen Verbindungen. Die gestrichelte Lupe ziehen, um einen Bereich zu sehen, daneben ziehen, um die Karte zu verschieben, mit + und − oder dem Mausrad zoomen.${showTaste ? '  Die Helligkeit zeigt, wie gut ein Bereich zu Ihrem Profil passt; solange wenig bekannt ist, ist der Kontrast gering.' : ''}`);
+}
+// the current view as a PNG Blob, on the theme's background with a margin of 4 % of the width on every side; the map is fitted
+// into the rest at one uniform scale. Fonts are drawn at scale * textScale px (default 0.6 for the 'many' names).
+let lastRender = null;
+async function renderImage({ scale = 4, names = 'many', theme = 'neon', textScale } = {}) {
+  const T = THEMES[theme] || THEMES.neon, P = prepare(T); P.paper = css('--panel', '#fff');
+  const cw = Math.round(W * scale), ch = Math.round(H * scale), m = 0.04 * cw;
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const ctx = c.getContext('2d'); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.fillStyle = T.bg || P.paper; ctx.fillRect(0, 0, cw, ch);
+  const u = Math.min((cw - 2 * m) / W, (ch - 2 * m) / H), ox = (cw - u * W) / 2, oy = (ch - u * H) / 2;
+  ctx.setTransform(u, 0, 0, u, ox, oy);
+  const ts = (textScale ?? (names === 'many' ? 0.6 : 1)) * scale / u;
+  const res = paintMap(ctx, P, { screen: false, names, ff: Math.min(4, scale / 1.5), ts });
+  lastRender = { scale, names, theme, mode: st.mode, width: cw, height: ch, mapScale: u, shown: res.shown, ...res.counts };
+  return new Promise((ok, bad) => c.toBlob((b) => (b ? ok(b) : bad(new Error('the image could not be made'))), 'image/png'));
+}
+async function saveImage() {
+  const blob = await renderImage({ scale: 3 }), a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = st.mode === 'roles' ? 'atlas-roles.png' : 'atlas-companies.png';
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+// switch the view (for the export script and the page): mode 'roles' or 'companies', scope the index of config.json's scopes
+function setView({ mode = st.mode, scope = st.scope } = {}) {
+  st.mode = mode; st.scope = scope; st.open.clear(); st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 };
+  mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.m === mode)));
+  $('atlas-scope').value = String(scope); layers.roles = roleMapFor(scope); resample();
+}
+// the page's colour scheme changed: redraw in the other theme
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => draw());
 // how well each point fits the visitor's profile, 0..1: its rank among the visible points by taste score (the best fifth near 1).
 // With few signals the contrast is reduced, so a thin profile only tints the map.
 function fitOf(Ly) {
@@ -253,22 +353,25 @@ function fitOf(Ly) {
   order.forEach((k, r) => { const p = Math.pow((r + 1) / order.length, 2.2); out[k] = (1 - contrast) * 0.6 + contrast * p; });
   return out;
 }
-function colourField(Ly, strength) {
-  // the colour of each spot is the blend of the region colours there; its strength does not depend on how many points are
-  // there: full wherever points are, fading only towards empty space
-  const GW = 96, GH = 68, R = new Float32Array(GW * GH), G = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH);
+// a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense.
+// o.strength; o.L and o.C: the colours' lightness and chroma target; o.ff: the grid factor (the grid is ff times finer and the blur
+// passes ff*ff more, so the softness stays the same in map units); o.extra: more blur passes (a wider glow); o.additive: 'lighter'
+function colourField(ctx, Ly, o) {
+  const f = o.ff || 1, GW = Math.round(96 * f), GH = Math.round(68 * f);
+  const R = new Float32Array(GW * GH), G = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH);
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x) / W, Y0 = sy(e.y) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) return;
-    const c = regionRgb(e.c1, 0.62), q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), w = fit ? 0.08 + fit[k] * fit[k] : 1;
+    const c = regionRgb(e.c1, o.L, o.C), q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), w = fit ? 0.08 + fit[k] * fit[k] : 1;
     R[q] += c[0] * w; G[q] += c[1] * w; B[q] += c[2] * w; N[q] += w; C0[q]++; });
   const raw = Float32Array.from(C0), nz = [...raw].filter((x) => x > 0).sort((a, b) => a - b), typical = nz.length ? nz[Math.floor(nz.length / 2)] : 1;
   densAt = (px, py) => { const q = Math.min(GH - 1, Math.max(0, Math.floor(py / H * GH))) * GW + Math.min(GW - 1, Math.max(0, Math.floor(px / W * GW))); return Math.max(1, raw[q] / typical); };
-  const passes = 4 + Math.min(4, Math.round(Math.log2(st.z.s + 1))); for (const A of [R, G, B, N, C0]) blur(A, GW, GH, passes);
+  const passes = Math.max(1, Math.round((4 + Math.min(4, Math.round(Math.log2(st.z.s + 1))) + (o.extra || 0)) * f * f)); for (const A of [R, G, B, N, C0]) blur(A, GW, GH, passes);
   const cov = [...C0].filter((x) => x > 1e-3).sort((a, b) => a - b); if (!cov.length) return; const full = cov[Math.floor(cov.length * 0.3)] || 1e-3;
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);
   for (let q = 0; q < N.length; q++) { const n = N[q]; if (n < 1e-4) continue;
     const coverage = Math.min(1, C0[q] / full), match = fit ? Math.min(1, 0.15 + 1.2 * n / Math.max(C0[q], 1e-6)) : 1;
-    img.data[q * 4] = R[q] / n; img.data[q * 4 + 1] = G[q] / n; img.data[q * 4 + 2] = B[q] / n; img.data[q * 4 + 3] = Math.round(255 * strength * coverage * coverage * match); }
-  sg.putImageData(img, 0, 0); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.globalAlpha = 1; g.drawImage(small, 0, 0, W, H);
+    img.data[q * 4] = R[q] / n; img.data[q * 4 + 1] = G[q] / n; img.data[q * 4 + 2] = B[q] / n; img.data[q * 4 + 3] = Math.round(255 * o.strength * coverage * coverage * match); }
+  sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = o.additive ? 'lighter' : 'source-over'; ctx.drawImage(small, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over';
 }
 // favoured / pushed-away field: per screen cell, the share of entities in the top of your taste (green) and under a penalty (red);
 // the fewer signals there are, the more it is blurred, so a thin profile shows as a soft haze and sharpens as you mark more
@@ -282,7 +385,7 @@ function drawTaste(Ly) {
   for (const [A, rgb] of [[G, [47, 179, 107]], [R, [217, 83, 79]]]) {
     let mx = 0; for (let k = 0; k < A.length; k++) { A[k] = C[k] > 0.02 ? A[k] / C[k] : 0; mx = Math.max(mx, A[k]); } if (mx <= 0) continue;
     for (let k = 0; k < A.length; k++) A[k] /= Math.max(mx, 0.25);
-    paint(A, GW, GH, rgb, (a) => Math.min(0.75, Math.pow(a, 0.8) * 0.75));
+    paint(g, A, GW, GH, rgb, (a) => Math.min(0.75, Math.pow(a, 0.8) * 0.75));
   }
 }
 function inLens() {
@@ -368,7 +471,8 @@ $('atlas-zout').addEventListener('click', () => zoom(1 / 1.5, sx(st.lens.x), sy(
 $('atlas-zreset').addEventListener('click', () => { st.z = { s: 1, cx: 0.5, cy: 0.5 }; resample(); });
 mount.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); st.open.clear(); st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; resample(); }
+  if (b.id === 'atlas-save-img') { saveImage().catch((err) => { $('atlas-status').textContent = err.message || String(err); }); }
+  else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); st.open.clear(); st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; resample(); }
   else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); resample(); }
   else if (b.id === 'atlas-shuffle') resample();
   else if (b.classList.contains('hd')) { const li = b.closest('li'), id = li.dataset.id, on = li.classList.toggle('open'); b.setAttribute('aria-expanded', String(on)); if (on) st.open.add(id); else st.open.delete(id); fillRole(li); }
@@ -410,3 +514,5 @@ $('atlas-scope').addEventListener('change', (e) => { st.scope = +e.target.value;
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; resample(); });
 window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); draw(); });
 resample();
+// for scripts (scripts/export_atlas.mjs): the image export and the view switch
+window.jobcrawlAtlas = { renderImage, setView, lastRender: () => lastRender };
