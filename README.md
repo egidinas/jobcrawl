@@ -58,7 +58,7 @@ and 3 the site works on keywords alone, and there is no atlas.
 Dependencies: `requirements-embed.txt` and `requirements-map.txt` for the two optional steps. The crawler, `jobcrawl build`,
 `jobcrawl publish` without vectors, and the web app need nothing beyond Node 22 and the Python standard library.
 
-Map images: the Atlas page has a "Save as image" button (the current view, with area, employer and company names). For a
+Map images: the Atlas page has a "Save as image" button (the current view, with area, role and company names). For a
 large export of the whole role map and the company map: `node scripts/export_atlas.mjs --data data/site --out exports
 --scale 5 [--theme neon|light]` (needs Playwright). The neon theme (on black) is also what the page shows in dark mode.
 

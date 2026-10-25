@@ -174,8 +174,6 @@ const cv = $('atlas-cv'), g = cv.getContext('2d'), css = (n, fb = '#888') => get
 // the backing store follows the screen's pixel density (k = device pixel ratio, at most 3); everything is drawn in logical units
 function sizeCanvas() { const k = Math.min(3, window.devicePixelRatio || 1), w = Math.round(W * k), h = Math.round(H * k); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0); }
 sizeCanvas();
-// employers by their number of roles on the board (rows of jobs-index.json, by company slug), largest first: the names on the map
-const EMP_RANK = (() => { const m = new Map(); rows.forEach((r) => { const s = r[4]; if (!s) return; const e = m.get(s); if (e) e.n++; else m.set(s, { slug: s, name: r[2], n: 1 }); }); return [...m.values()].sort((a, b) => b.n - a.n || (a.slug < b.slug ? -1 : 1)); })();
 const lay = () => layers[st.mode];
 const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1));
 const visibleRoles = (e) => e.idx.filter(roleVisible);
@@ -245,10 +243,34 @@ function labelDraw(ctx, t, fs, face, b, align, ink, halo, alpha, p = 1) {
   const tx = align === 'left' ? b[0] + 2 * p : align === 'right' ? b[2] - 2 * p : (b[0] + b[2]) / 2, ty = (b[1] + b[3]) / 2;
   ctx.globalAlpha = alpha; ctx.lineJoin = 'round'; ctx.lineWidth = 4 * p; ctx.strokeStyle = halo; ctx.fillStyle = ink; ctx.strokeText(t, tx, ty); ctx.fillText(t, tx, ty);
 }
-const median = (a) => { const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+// the representative roles of each neighbourhood (the layout's representatives, i.e. the shown roles), the most typical first:
+// nearest to the neighbourhood's centre in the embedding. Returns lists[h] = entity indices.
+function roleRounds(Ly) {
+  const byH = Ly.hoods.map(() => []);
+  Ly.ents.forEach((e, k) => { if (!vis[k] || e.hidden || pos[e.idx[0]] < 0) return; byH[e.c2].push(k); });
+  return byH.map((ks) => { if (!ks.length) return []; const c = new Float32Array(D);
+    ks.forEach((k) => { const v = vecOf(Ly.ents[k].idx[0]); for (let d = 0; d < D; d++) c[d] += v[d]; });
+    return ks.map((k) => { const v = vecOf(Ly.ents[k].idx[0]); let s = 0; for (let d = 0; d < D; d++) s += v[d] * c[d]; return [s, k]; }).sort((a, b) => b[0] - a[0]).map((x) => x[1]); });
+}
+// a role title for a label: gender tags and reference codes out, spaces collapsed, cut at 40 characters on a word boundary
+const GENDER_TAG = /(?:[(\[]\s*)?\/?\s*[mwfdxh]\s*\/\s*[mwfdxh](?:\s*\/\s*[mwfdxh])*\s*[)\]]?|[(\[]\s*(?:all\s+genders|gn|\*)\s*[)\]]/gi;
+const GENDER_END = /(?:^|[\s,\-–])[mwfdxh]\s*\/\s*[mwfdxh](?:\s*\/\s*[mwfdxh])?\s*$/i;
+const REF_CODE = /\(\s*[a-z]{0,3}\d{3,}\s*\)|[\s,\-–]*\b(?:m\s?w\s?d|w\s?m\s?d|f\s?m\s?d|h\s?f|f\s?h|d\s?f\s?m)?\s*\b\d{4,}\s*$/gi;
+// the company inside a role label's brackets: its short name without a bracket of its own ("STARK (STARK Defence)" -> "STARK")
+const coInLabel = (name) => { const s = shortName(name), t = s.replace(/\s*\([^()]*\)\s*$/, '').trim(); return t || s; };
+function cleanTitle(title) {
+  let s = String(title || '').replace(GENDER_TAG, ' ').replace(/\s+/g, ' ').trim();
+  for (let q = 0; q < 4; q++) { const u = s.replace(GENDER_END, '').replace(REF_CODE, '').replace(/\s+/g, ' ').trim(); if (u === s) break; s = u; }
+  return s.replace(/[\s,\-–:;\/]+$/, '').trim();
+}
+function cutWords(s, n) {
+  s = String(s || '').trim(); if (s.length <= n) return s;
+  let c = s.slice(0, n); const p = c.lastIndexOf(' '); if (p >= n / 2) c = c.slice(0, p);
+  return c.replace(/[\s,.\-–:;\/&]+$/, '') + '…';
+}
 // ---- drawing. prepare(T) sets the visible points and the taste fit for the current view; paintMap(ctx, P, o) draws the view on
 // any context whose transform maps the logical W x H map onto it. o.screen: the lens, sample and zoom buttons are drawn and kept
-// clear (o.names 'few'); an exported image has none of them and names the areas and the employers or companies ('many').
+// clear (o.names 'few'); an exported image has none of them and names the areas and the role labels or company names ('many').
 // o.ff: the colour field's grid factor (finer when zoomed or exported big); o.ts: the text scale.
 function prepare(T) {
   const Ly = lay(), roles = st.mode === 'roles', showTaste = !!(taste && $('atlas-taste').checked);
@@ -274,7 +296,7 @@ function paintMap(ctx, P, o) {
     if (roles) ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { ctx.beginPath(); ctx.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); } } });
   Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.strokeStyle = halo; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke(); });
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
-  // screen) and of every label already placed; otherwise it is left out. Areas first, then employers or companies.
+  // screen) and of every label already placed; otherwise it is left out. Areas first, then role labels or company names.
   const boxes = screen ? [[W - 56, 0, W, 130]] : [], lr = st.size * W + 6, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
   const place = (t, fs, face, cands, ink2, alpha) => { const F = fs * ts; for (const [x, y, a] of cands) { const b = labelBox(ctx, t, F, face, x, y, a, ts);
       if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
@@ -282,7 +304,7 @@ function paintMap(ctx, P, o) {
       if (boxes.some((q) => !(b[2] < q[0] || b[0] > q[2] || b[3] < q[1] || b[1] > q[3]))) continue;
       boxes.push(b); labelDraw(ctx, t, F, face, b, a, ink2, halo, alpha, ts); return b; } return false; };
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
-  const counts = { areas: 0, employers: 0, companies: 0 }, byN = (list, sub) => list.map((r) => ({ r, sub })).sort((a, b) => b.r.n - a.r.n);
+  const counts = { areas: 0, roles: 0, companies: 0 }, byN = (list, sub) => list.map((r) => ({ r, sub })).sort((a, b) => b.r.n - a.r.n);
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
   const areas = many ? [...byN(Ly.regions, false), ...(roles ? byN(Ly.hoods, true) : [])] : byN(roles && zoomed ? Ly.hoods : Ly.regions, false);
   const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
@@ -291,16 +313,19 @@ function paintMap(ctx, P, o) {
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(r.n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(r.n) * 0.33)));
     if (place(nameOf(r), fs, sub ? '500' : '600', [[sx(r.xy[0]), sy(r.xy[1]), 'center']], areaInk(sub), 1)) counts.areas++;
   }
-  // employers (roles map): at the median position of their visible dots, largest employer first; a display name is used once
+  // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
+  // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
+  // title and its company in brackets, beside a small dot marker at the role's own position. A title is used once.
   if (roles && (many || zoomed)) {
-    const dots = new Map();
-    Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all)) return; const X0 = sx(e.x), Y0 = sy(e.y), s = rows[e.idx[0]][4]; if (!s || X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) return; if (!dots.has(s)) dots.set(s, { pts: [], c1: e.c1 }); dots.get(s).pts.push([X0, Y0]); });
-    const seen = new Set();
-    for (const em of EMP_RANK) { if (counts.employers >= (many ? 80 : 12)) break; const d = dots.get(em.slug); if (!d) continue;
-      const nm = shortName(em.name); if (seen.has(nm)) continue; seen.add(nm);
-      const mx = median(d.pts.map((p) => p[0])), my = median(d.pts.map((p) => p[1])), col = T.tintL ? tintOf(d.c1) : ink;
-      // the name beside a small dot marker at the employer's median position (on the left of the name, or the right when the left is taken)
-      if (place(nm, ENT_FS, 'italic 400', [[mx + 6 * ts, my, 'left'], [mx - 6 * ts, my, 'right']], col, 0.9)) { counts.employers++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(mx, my, 2.4 * ts, 0, 7); ctx.fill(); } }
+    const cap = many ? 120 : 14, lists = roleRounds(Ly), order = [...Ly.hoods.keys()].sort((x, y) => Ly.hoods[y].n - Ly.hoods[x].n), seenT = new Set();
+    rounds: for (let r = 0; ; r++) { let any = false;
+      for (const h of order) { const list = lists[h]; if (r >= list.length) continue; any = true;
+        if (counts.roles >= cap) break rounds;
+        const e = Ly.ents[list[r]], X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) continue;
+        const row = rows[e.idx[0]], title = cleanTitle(row[1]), key = title.toLowerCase(); if (!title || seenT.has(key)) continue;
+        const col = T.tintL ? tintOf(e.c1) : ink, text = `${cutWords(title, 40)} (${cutWords(coInLabel(row[2]), 22)})`;
+        if (place(text, ENT_FS, 'italic 400', [[X0 + 6 * ts, Y0, 'left'], [X0 - 6 * ts, Y0, 'right']], col, 0.9)) { seenT.add(key); counts.roles++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); } }
+      if (!any) break; }
   }
   // companies (companies map): next to their dot, right of it or else left, the companies with most open roles first
   if (!roles && (many || zoomed)) {
