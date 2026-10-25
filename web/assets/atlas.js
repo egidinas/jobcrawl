@@ -221,8 +221,13 @@ const THEMES = {
   light: { C: VIVID_C, fieldL: 0.66, pointL: 0.70, pointA: 0.95, fieldStrength: 0.62 },
   neon: { C: 0.30, fieldL: 0.72, pointL: 0.84, pointA: 1, fieldStrength: 0.38, glow: { strength: 0.30, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
 };
-// the theme on screen: neon on a dark page, light otherwise (data-theme on the root element overrides the page setting)
-function themeFor() { const r = document.documentElement.dataset.theme; if (r === 'light' || r === 'dark') return r === 'light' ? 'light' : 'neon'; return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'neon' : 'light'; }
+// the theme on screen: neon on a dark page, light otherwise. The page decides in this order: data-theme="light|dark" on the
+// root element, data-mode="light|dark" on <body> (a site's own light/dark switch), else the system setting
+function themeFor() {
+  const r = document.documentElement.dataset.theme, b = document.body && document.body.dataset.mode;
+  for (const v of [r, b]) if (v === 'light' || v === 'dark') return v === 'light' ? 'light' : 'neon';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'neon' : 'light';
+}
 // the display name of an employer or company on the map (labels only; the data keeps the full name): a trailing "(via ...)"
 // and a legal form at the end (GmbH, Ltd., S.A.S. ...) are dropped, repeatedly
 const LEGAL_END = /[\s,]+(gmbh\s*&\s*co\.?\s*kg|gmbh|mbh|ag|se|kg|pte\.?\s*ltd\.?|ltd\.?|limited|inc\.?|llc|s\.a\.s\.|s\.a\.|sas|sa|b\.v\.|bv|kft\.?|s\.r\.l\.|srl|oy|ab|plc)[\s,.]*$/i;
@@ -344,6 +349,10 @@ function setView({ mode = st.mode, scope = st.scope } = {}) {
 }
 // the page's colour scheme changed: redraw in the other theme
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => draw());
+// a site's own switch: redraw when the root's data-theme or the body's data-mode changes
+const themeWatch = new MutationObserver(() => draw());
+themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+if (document.body) themeWatch.observe(document.body, { attributes: true, attributeFilter: ['data-mode'] });
 // how well each point fits the visitor's profile, 0..1: its rank among the visible points by taste score (the best fifth near 1).
 // With few signals the contrast is reduced, so a thin profile only tints the map.
 function fitOf(Ly) {
