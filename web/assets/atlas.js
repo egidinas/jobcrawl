@@ -183,8 +183,8 @@ const voteOf = (id) => (ratings[id] ? tw(ratings[id]) : null);
 const sx = (x) => ((x - st.z.cx) * st.z.s + 0.5) * W, sy = (y) => ((y - st.z.cy) * st.z.s + 0.5) * H;
 const ux = (px) => (px / W - 0.5) / st.z.s + st.z.cx, uy = (py) => (py / H - 0.5) / st.z.s + st.z.cy;
 const hue = (c) => (c * 137.508) % 360;      // one colour per region, spread around the colour wheel
-// region colours: OKLCH at the same lightness for every hue, with chroma VIVID_C wherever that colour is inside the sRGB gamut;
-// a hue whose vivid colour would be clipped takes the largest chroma that is inside (binary search on C)
+// region colours in OKLCH, one hue per region; at a given lightness a hue takes the largest chroma up to the target that is inside
+// the sRGB gamut (binary search on C). The themes use lightness bands instead (vivid() below)
 const VIVID_C = 0.19;
 function oklinear(L, C, h) {
   const a = C * Math.cos(h * Math.PI / 180), b = C * Math.sin(h * Math.PI / 180);
@@ -195,8 +195,20 @@ const inGamut = (L, C, h) => oklinear(L, C, h).every((x) => x >= 0 && x <= 1);
 // the largest chroma up to the target that is inside the sRGB gamut at this lightness and hue (binary search when it is clipped)
 function maxChroma(L, h, target) { if (inGamut(L, target, h)) return target; let lo = 0, hi = target; for (let i = 0; i < 30; i++) { const mid = (lo + hi) / 2; if (inGamut(L, mid, h)) lo = mid; else hi = mid; } return lo; }
 function oklch(L, C, h) { return oklinear(L, C, h).map((x) => Math.round(255 * Math.max(0, Math.min(1, x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055)))); }
+// the most vivid colour of a hue within a lightness band: the lightness in [lo, hi] where the gamut allows the most chroma (up to
+// `target`). Every hue peaks at its own lightness (yellow near 0.9, blue near 0.45), so one lightness for all would leave most
+// hues pastel; a band keeps blues bright enough on black and yellows dark enough on white. Cached per whole degree.
+const vividCache = new Map();
+function vivid(h, lo, hi, target) {
+  const k = Math.round(h) % 360 + '/' + lo + '/' + hi + '/' + target;
+  if (!vividCache.has(k)) { const hh = Math.round(h) % 360; let best = [lo, 0];
+    for (let L = lo; L <= hi + 1e-9; L += 0.01) { const c = maxChroma(L, hh, target); if (c > best[1] + 1e-4) best = [L, c]; }
+    vividCache.set(k, oklch(best[0], best[1], hh)); }
+  return vividCache.get(k);
+}
+// a region's colour: L a number (that lightness, the largest chroma inside the gamut) or a band [lo, hi] (the vivid colour)
 const rgbCache = new Map();
-const regionRgb = (c, L, target = VIVID_C) => { const k = c + '/' + L + '/' + target; if (!rgbCache.has(k)) { const h = hue(c); rgbCache.set(k, oklch(L, maxChroma(L, h, target), h)); } return rgbCache.get(k); };
+const regionRgb = (c, L, target = VIVID_C) => { const k = c + '/' + L + '/' + target; if (!rgbCache.has(k)) { const h = hue(c); rgbCache.set(k, Array.isArray(L) ? vivid(h, L[0], L[1], target) : oklch(L, maxChroma(L, h, target), h)); } return rgbCache.get(k); };
 let densAt = () => 1;      // how crowded a point's spot on screen is, relative to a typical spot (set by colourField)
 // a group's name: the hand-written key term (atlas-labels.json), else its first two distinctive words
 const nameOf = (r) => (r.label ? r.label[isDe() ? 1 : 0] : r.words.slice(0, 2).map((w) => w[0].toUpperCase() + w.slice(1)).join(' & '));
@@ -213,11 +225,12 @@ function paint(ctx, A, GW, GH, rgb, alphaOf) {
   for (let k = 0; k < A.length; k++) { img.data[k * 4] = rgb[0]; img.data[k * 4 + 1] = rgb[1]; img.data[k * 4 + 2] = rgb[2]; img.data[k * 4 + 3] = Math.round(255 * alphaOf(A[k])); }
   sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1; ctx.drawImage(small, 0, 0, W, H);
 }
-// the colour themes. 'light': the vivid look of the page. 'neon': aggressive colour on near black; its colour field is added up
-// (so overlapping regions glow) and a wider, fainter pass gives a halo
+// the colour themes. fieldL / pointL / dimL: the lightness bands of the field, the points and the points out of the filter (see
+// vivid()); C: the chroma cap. 'light': vivid colour on the page. 'neon': aggressive colour on near black; a wider, fainter
+// pass is added on top (so overlapping regions glow) and gives a halo
 const THEMES = {
-  light: { C: VIVID_C, fieldL: 0.66, pointL: 0.70, pointA: 0.95, fieldStrength: 0.62 },
-  neon: { C: 0.30, fieldL: 0.72, pointL: 0.84, pointA: 1, fieldStrength: 0.38, glow: { strength: 0.30, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
+  light: { C: 0.32, fieldL: [0.55, 0.74], pointL: [0.50, 0.70], dimL: [0.62, 0.80], pointA: 0.95, fieldStrength: 0.62 },
+  neon: { C: 0.37, fieldL: [0.52, 0.80], pointL: [0.62, 0.88], dimL: [0.45, 0.65], pointA: 1, fieldStrength: 0.62, glow: { strength: 0.16, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
 };
 // the theme on screen: neon on a dark page, light otherwise. The page decides in this order: data-theme="light|dark" on the
 // root element, data-mode="light|dark" on <body> (a site's own light/dark switch), else the system setting
@@ -311,12 +324,12 @@ function paintMap(ctx, P, o) {
   if (roles && Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1;
     for (const [a, b, w] of Ly.links) { const A = Ly.hoods[a].xy, B = Ly.hoods[b].xy; ctx.globalAlpha = T.linkInk ? 0.04 + 0.12 * (w / mx) : 0.05 + 0.25 * (w / mx); ctx.beginPath(); ctx.moveTo(sx(A[0]), sy(A[1])); ctx.lineTo(sx(B[0]), sy(B[1])); ctx.stroke(); } }
   // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
-  if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff, additive: true }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
+  if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
   else colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff });
   const dot = (roles ? 2 : 5) * Math.min(2.5, Math.sqrt(st.z.s)); let shown = 0;
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (act[k]) shown++; if (e.hidden && !st.all) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const rgb = regionRgb(e.c1, act[k] ? T.pointL : 0.55, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     if (roles) ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { ctx.beginPath(); ctx.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); } } });
   Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.strokeStyle = halo; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke(); });
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
@@ -420,18 +433,23 @@ function fitOf(Ly) {
 // passes ff*ff more, so the softness stays the same in map units); o.extra: more blur passes (a wider glow); o.additive: 'lighter'
 function colourField(ctx, Ly, o) {
   const f = o.ff || 1, GW = Math.round(96 * f), GH = Math.round(68 * f);
-  const R = new Float32Array(GW * GH), G = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH);
+  // regions are mixed as hue directions (unit vectors around the OKLCH wheel), not as RGB: an RGB average of two hues is greyer
+  // than either. Each cell then takes the vivid colour of its mixed hue, so borders between regions stay saturated.
+  const A = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH);
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x) / W, Y0 = sy(e.y) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) return;
-    const c = regionRgb(e.c1, o.L, o.C), q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), w = fit ? 0.08 + fit[k] * fit[k] : 1;
-    R[q] += c[0] * w; G[q] += c[1] * w; B[q] += c[2] * w; N[q] += w; C0[q]++; });
+    const h = hue(e.c1) * Math.PI / 180, q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), w = fit ? 0.08 + fit[k] * fit[k] : 1;
+    A[q] += Math.cos(h) * w; B[q] += Math.sin(h) * w; N[q] += w; C0[q]++; });
   const raw = Float32Array.from(C0), nz = [...raw].filter((x) => x > 0).sort((a, b) => a - b), typical = nz.length ? nz[Math.floor(nz.length / 2)] : 1;
   densAt = (px, py) => { const q = Math.min(GH - 1, Math.max(0, Math.floor(py / H * GH))) * GW + Math.min(GW - 1, Math.max(0, Math.floor(px / W * GW))); return Math.max(1, raw[q] / typical); };
-  const passes = Math.max(1, Math.round((4 + Math.min(4, Math.round(Math.log2(st.z.s + 1))) + (o.extra || 0)) * f * f)); for (const A of [R, G, B, N, C0]) blur(A, GW, GH, passes);
+  const passes = Math.max(1, Math.round((4 + Math.min(4, Math.round(Math.log2(st.z.s + 1))) + (o.extra || 0)) * f * f)); for (const X of [A, B, N, C0]) blur(X, GW, GH, passes);
   const cov = [...C0].filter((x) => x > 1e-3).sort((a, b) => a - b); if (!cov.length) return; const full = cov[Math.floor(cov.length * 0.3)] || 1e-3;
+  const band = Array.isArray(o.L) ? o.L : [o.L, o.L];
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);
   for (let q = 0; q < N.length; q++) { const n = N[q]; if (n < 1e-4) continue;
     const coverage = Math.min(1, C0[q] / full), match = fit ? Math.min(1, 0.15 + 1.2 * n / Math.max(C0[q], 1e-6)) : 1;
-    img.data[q * 4] = R[q] / n; img.data[q * 4 + 1] = G[q] / n; img.data[q * 4 + 2] = B[q] / n; img.data[q * 4 + 3] = Math.round(255 * o.strength * coverage * coverage * match); }
+    // where opposite hues cancel out (the mixed direction is short) the cell fades instead of turning grey
+    const len = Math.hypot(A[q], B[q]) / n, h = (Math.atan2(B[q], A[q]) * 180 / Math.PI + 360) % 360, c = vivid(h, band[0], band[1], o.C);
+    img.data[q * 4] = c[0]; img.data[q * 4 + 1] = c[1]; img.data[q * 4 + 2] = c[2]; img.data[q * 4 + 3] = Math.round(255 * o.strength * coverage * coverage * match * Math.min(1, 0.35 + len)); }
   sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = o.additive ? 'lighter' : 'source-over'; ctx.drawImage(small, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over';
 }
