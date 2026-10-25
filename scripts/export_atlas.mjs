@@ -84,8 +84,8 @@ async function main() {
     await write('companies', 'atlas-companies.png');
     if (errors.length) throw new Error(`page errors: ${errors.join('; ')}`);
     for (const f of files) {
-      const isCo = path.basename(f.dest).startsWith('atlas-companies'), c = f.info, placed = c.areas + (isCo ? c.companies : c.employers);
-      const names = isCo ? `${c.areas} area names + ${c.companies} company names` : `${c.areas} area names + ${c.employers} employer names`;
+      const isCo = path.basename(f.dest).startsWith('atlas-companies'), c = f.info, placed = c.areas + (isCo ? c.companies : c.roles);
+      const names = isCo ? `${c.areas} area names + ${c.companies} company names` : `${c.areas} area names + ${c.roles} role labels`;
       console.log(`${f.dest}  ${f.width}x${f.height}  ${names} (${placed} placed)`);
     }
     return 0;
