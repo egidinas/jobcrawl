@@ -115,6 +115,18 @@ class Validation(unittest.TestCase):
     def test_atlas_maps_bad_value_names_key(self):
         self.bad({'web': {'atlas_maps': 'germany'}}, 'web.atlas_maps')
 
+    def test_board_order_values(self):
+        for v in ('first_seen', 'published'):
+            folder = write_profile({'board': {'order': v}})
+            self.folders.append(folder)
+            self.assertEqual(load_profile(folder)['board']['order'], v)
+        folder = write_profile({})
+        self.folders.append(folder)
+        self.assertEqual(load_profile(folder)['board'], {'order': 'first_seen'})
+
+    def test_board_order_bad_value_names_key(self):
+        self.bad({'board': {'order': 'newest'}}, 'board.order')
+
     def test_map_range(self):
         self.bad({'map': {'even': 1.5}}, 'map.even')
 

@@ -20,6 +20,12 @@ everything else. `profile.py` fills every default below and rejects a wrong valu
 | `accent` | CSS hex colour (`#rgb` or `#rrggbb`) | none | web config | accent colour of the web app (buttons, links, highlights); without it the app's built-in colour is used |
 | `links` | object `{"reference": [{"label", "url"}]}` | `{"reference": []}` | web config | links shown in the web app's footer, only when there are any; `url` must be http or https. Use them for sites that show the same data or are the reference implementation of the profile |
 
+## `board`: the order of the roles (optional)
+
+| key | type | default | effect |
+|---|---|---|---|
+| `board.order` | `first_seen` or `published` | `first_seen` | the order of `jobs-index.json` and `jobs.json`. `first_seen`: newest first by the day the crawler first saw a role (`fs`). `published`: newest first by the posting date (`d`, the source's posted date, or the first-seen day when the source gives none). Ties: company, then title |
+
 ## `web`: site settings of the web app (all optional, copied into `config.json`)
 
 Defaults fit the bundled pages (`web/`). A site that hosts the modules in its own pages sets what differs.
@@ -55,6 +61,7 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `crawl.relevance.negative` | list of strings | `[]` | relevance gate | titles that match a keyword by accident (`search engine`, `flight attendant`) are never relevant |
 | `crawl.relevance.ssic_deeptech` | list of strings | `[]` | Singapore-style strict gate | SSIC industry code prefixes (Singapore Standard Industrial Classification) that count as the profile's sector. Only used by the MyCareersFuture provider |
 | `crawl.min_free_mb` | number >= 0 | `0` (off) | crawler | refuse to start when the disk holding the data folder has less than this many MB free: the crawl exits with code 3 before fetching or writing anything. `--dry-run` skips the check |
+| `crawl.jd_keep_days` | number >= 0 | `90` | crawler | a role's saved description (`<data>/jd/`) is removed once the role has not been seen for more than this many days (its history row is not `open`). Open roles are never touched and the history rows are kept. `0` keeps every description. `node crawler/crawl.mjs --profile <dir> --jd-cleanup-only` runs just this step |
 | `crawl.title_filter` | object | none | crawler | when set, replaces `title_filter` in the companies file (same shape, see below) |
 | `crawl.location_filter` | object | none | crawler | when set, replaces `location_filter` in the companies file |
 
@@ -226,6 +233,7 @@ Embedding recipe (`embed/roles.py`, `embed/embedder.py`, `embed/companies.py`).
 |---|---|
 | `scopes` | `classify/scopes.py`, `board.py` (`sc`, `r`) |
 | `fields`, `max_field_tags` | `classify/fields.py`, `board.py` (`tg`) |
+| `board.order` | `board.py` (the order of `jobs-index.json`, `jobs.json`) |
 | `levels` | `classify/levels.py`, `board.py` (`lv`) |
 | `languages`, `title`, `tagline`, `scopes`, `fields`, `levels`, `personas`, `glossary` | `index/publish.py` (`config.json`) and the web app |
 | `statements` | `index/prefs.py` (`match-prefs.json`) |

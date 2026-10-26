@@ -66,6 +66,11 @@ Publishing on a small machine (a router, a static host's build step) without num
 made (`python3 -m jobcrawl neighbours --site data/site`, written into the vectors folder); publish then copies them and needs only
 the standard library.
 
+History: run `python3 -m jobcrawl traces --site data/site [--traces DIR]` after each crawl round (needs numpy). It keeps a
+permanent trace of every role that was on the board (title, company, location, URL, first and last seen to the crawl round, a
+128-number fingerprint), in a folder best kept out of version control (`--traces`, default the vectors folder), and derives the
+weekly trends and the atlas timeline; `publish --traces DIR` copies those two (titles and companies only, no URLs) into the site.
+
 ## Writing a profile
 
 A profile is a folder with a `profile.json` and a `companies.json` (the employers to poll). Start from `profiles/minimal`, which
