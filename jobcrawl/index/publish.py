@@ -8,12 +8,15 @@ Port of the reference implementation's publish_match.py and the config part of t
                                         `jobcrawl neighbours`), else built here (neighbours.py, needs numpy)
     atlas-layout.json                   copied when the map was built (jobcrawl map)
     company-vec.bin, company-vec.json   copied when the companies were embedded (jobcrawl embed with a companies_catalogue)
+    role-trends.json, role-timeline.*   copied when the traces were built (jobcrawl traces); the traces themselves stay in the vectors folder
+    role-timeline-names-NNN.json        the timeline's title and company names, 2000 records per shard (copied with the timeline)
 Without vectors the keyword index and config.json are still written; the Match me panel then runs on keywords alone.
 Nothing personal is involved. Standard library only, except building the neighbours here, which needs numpy: a machine without
 numpy publishes from a vectors folder that already holds role-nb.bin and role-graph.json.
 """
 import json
 import os
+import re
 import shutil
 
 from jobcrawl.index import match_index, neighbours, prefs
@@ -22,6 +25,8 @@ from jobcrawl.site import read_site
 VECTOR_FILES = ('match-vec.bin', 'match-vec.json')
 COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json')
 NEIGHBOUR_FILES = ('role-nb.bin', 'role-graph.json')
+TRENDS = ('role-trends.json', 'role-timeline.json', 'role-timeline.bin')     # built by jobcrawl traces; copied when present
+NAMES = re.compile(r'^role-timeline-names-\d{3}\.json$')
 
 
 class PublishError(ValueError):
@@ -51,7 +56,7 @@ def has_vectors(vectors):
     return bool(vectors) and all(os.path.exists(os.path.join(vectors, f)) for f in VECTOR_FILES)
 
 
-def publish(site, profile, vectors=None, log=print, text_from=None):
+def publish(site, profile, vectors=None, log=print, text_from=None, traces=None):
     """Writes SITE/match/ and SITE/config.json. Returns the files written, relative to SITE, sorted.
 
     text_from: a folder written by jobcrawl build with the full descriptions. When given, the keyword index and the statements read
@@ -84,6 +89,11 @@ def publish(site, profile, vectors=None, log=print, text_from=None):
         written.append('match-prefs.json')
     else:
         log(f'no match-vec files in {vectors}: vectors, neighbours and statements are not published (keywords only)')
+    src = traces or vectors        # the traces folder (jobcrawl traces --traces), else the vectors folder
+    listed = sorted(f for f in os.listdir(src) if NAMES.match(f)) if src and os.path.isdir(src) else []
+    for name in TRENDS + tuple(listed):
+        if src and os.path.exists(os.path.join(src, name)):
+            shutil.copyfile(os.path.join(src, name), os.path.join(out, name)); written.append(name)
     match_index.build(site, out, profile, log, text_from=text_from)
     written += ['match-bm25.json', 'match-attrs.json']
     with open(os.path.join(site, 'config.json'), 'w', encoding='utf-8') as fh:
