@@ -225,7 +225,7 @@ def _links(check, v, path):
 
 
 WEB_STORAGE_KEYS = ('prefix', 'lang', 'model_cache', 'profile_kind', 'profile_file')
-WEB_TEXT_KEYS = ('role_url', 'company_url', 'company_texts', 'default_scope', 'model_url')
+WEB_TEXT_KEYS = ('role_url', 'company_url', 'company_texts', 'default_scope', 'model_url', 'atlas_maps')
 
 
 def _web(check, v, path, scope_ids):
@@ -241,6 +241,8 @@ def _web(check, v, path, scope_ids):
         check.fail(f'{path}.company_url', 'needs the placeholder {slug}, e.g. "company-{slug}.html"')
     if 'default_scope' in out and out['default_scope'] not in scope_ids:
         check.fail(f'{path}.default_scope', f'{out["default_scope"]!r} is not one of the scopes ({", ".join(scope_ids)})')
+    if 'atlas_maps' in out and out['atlas_maps'] not in ('worldwide', 'per_scope'):
+        check.fail(f'{path}.atlas_maps', "use 'worldwide' (one map, filters hide what is outside) or 'per_scope' (a separate map per region filter)")
     st = check.obj(v.get('storage', {}), f'{path}.storage')
     unknown = set(st) - set(WEB_STORAGE_KEYS)
     if unknown:
