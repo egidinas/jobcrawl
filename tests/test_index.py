@@ -62,6 +62,64 @@ class KeywordIndexOnFixture(unittest.TestCase):
         self.assertEqual(sorted(at['regions']), sorted(set(r['r'] for r in read_site(self.site)[1].values())))
 
 
+def _site_with_dates(dates):
+    """A board built from the fixture whose roles carry the first-seen dates (in board order; None drops d). Returns (tmp, site)."""
+    profile = load_profile(PROFILE)
+    tmp = tempfile.mkdtemp(prefix='jc-seen-')
+    site = os.path.join(tmp, 'site')
+    board.build(profile, FIXTURE, site)
+    index, _ = read_site(site)
+    want = {index[i][0]: d for i, d in enumerate(dates)}
+    for name in os.listdir(site):
+        if name.startswith('jobs-desc-') and name.endswith('.json'):
+            with open(os.path.join(site, name), encoding='utf-8') as fh:
+                shard = json.load(fh)
+            for k, entry in shard.items():
+                if k in want:
+                    if want[k] is None:
+                        entry.pop('d', None)
+                    else:
+                        entry['d'] = want[k]
+            with open(os.path.join(site, name), 'w', encoding='utf-8') as fh:
+                json.dump(shard, fh, ensure_ascii=False)
+    os.makedirs(os.path.join(site, 'match'))
+    match_index.build(site, os.path.join(site, 'match'), profile, log=lambda m: None)
+    return tmp, site
+
+
+class DatesFromDescriptions(unittest.TestCase):
+    DATES = ['2026-03-10', '2026-03-01', None, '2026-03-10', '2026-02-20']
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp, cls.site = _site_with_dates(cls.DATES)
+        with open(os.path.join(cls.site, 'match', 'match-attrs.json'), encoding='utf-8') as fh:
+            cls.at = json.load(fh)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_base_is_the_newest_date(self):
+        self.assertEqual(self.at['dates']['base'], '2026-03-10')
+
+    def test_ago_is_whole_days_before_base_and_minus_one_without_a_date(self):
+        self.assertEqual(self.at['dates']['ago'], [0, 9, -1, 0, 18])      # 03-01 is 9 days before 03-10, 02-20 is 18, the role without d is -1
+
+    def test_one_entry_per_role_and_dates_is_the_last_key(self):
+        self.assertEqual(len(self.at['dates']['ago']), len(self.at['a']))
+        self.assertEqual(list(self.at)[-1], 'dates')
+
+    def test_no_dates_gives_an_empty_base(self):
+        tmp, site = _site_with_dates([None] * len(self.DATES))
+        try:
+            with open(os.path.join(site, 'match', 'match-attrs.json'), encoding='utf-8') as fh:
+                dates = json.load(fh)['dates']
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.assertEqual(dates, {'base': '', 'ago': [-1] * len(self.DATES)})
+
+
 class LevelOrderFromProfile(unittest.TestCase):
     def test_codes_follow_rank_not_list_order(self):
         profile = {'levels': [{'code': 'b', 'rank': 2}, {'code': 'a', 'rank': 0}, {'code': 'c', 'rank': 1}]}

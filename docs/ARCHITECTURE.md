@@ -82,7 +82,8 @@ The crawler adds more keys (source, posting date, last seen, metadata). The boar
 | `r` | string | region label: the country of the first place, else the narrowest scope (English) |
 | `sc` | list of scope ids | the profile's scopes the role belongs to (narrowest first, and every wider one) |
 | `lv` | string | seniority band code (`levels[].code`) |
-| `d` | string | first-seen date, `YYYY-MM-DD` |
+| `d` | string | published date, `YYYY-MM-DD`: the source's posted date, else the first-seen day |
+| `fs` | string | first-seen date, `YYYY-MM-DD` |
 | `tg` | list of field ids | the field tags (at most `max_field_tags`) |
 | `x` | string | the description text: full in a private build; the demo carries excerpts of at most 300 characters |
 
@@ -98,9 +99,10 @@ only. The title counts 3 per word, the first 3,000 characters of the description
 
 ### match/match-attrs.json (publish)
 
-`{scopes, levels, regions, fields, langs, a}`. `a` has one row per role in index order:
+`{scopes, levels, regions, fields, langs, a, dates}`. `a` has one row per role in index order:
 `[scope bits, level index, has description, region index, field bits, language index]`. Bit `k` of the scope bits is `scopes[k]`;
 `levels` lists `""` and then the codes by rank; `langs` is `en, de, fr, es`.
+`dates` is `{base, ago}`: `base` the newest date (`d`, posted or first-seen) of the roles, `ago[i]` the whole days role `i` is older than it (`-1`: no date).
 
 ### match/match-vec.bin and match/match-vec.json (embed, copied by publish)
 

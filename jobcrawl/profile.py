@@ -253,6 +253,15 @@ def _web(check, v, path, scope_ids):
     return out
 
 
+def _board(check, v, path):
+    """The board's settings (jobs-index.json, jobs.json): the order of the roles. All optional."""
+    check.obj(v, path)
+    order = check.text(v.get('order', 'first_seen'), f'{path}.order')
+    if order not in ('first_seen', 'published'):
+        check.fail(f'{path}.order', "use 'first_seen' (newest first by the day the crawler first saw a role) or 'published' (newest first by the posting date, or the first-seen day when the source gives none)")
+    return {'order': order}
+
+
 def _validate(raw, file):
     c = _Check(file)
     p = c.obj(raw, 'profile.json')
@@ -297,6 +306,7 @@ def _validate(raw, file):
         c.fail('levels', 'needs exactly one band with "pattern": null (the default band)')
     out['levels'] = levels
     out['web'] = _web(c, p.get('web', {}), 'web', [x['id'] for x in scopes])
+    out['board'] = _board(c, p.get('board', {}), 'board')
 
     stm = []
     for i, s in enumerate(c.lst(p.get('statements', []), 'statements')):
