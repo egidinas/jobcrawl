@@ -14,6 +14,7 @@ const mount = document.getElementById('atlas-mount'); if (!mount) throw new Erro
 const scopeOpts = cfg.scopes.map((x, k) => `<option value="${k}"${k === defaultScope() ? ' selected' : ''}>${L(x.label.en, x.label.de)}</option>`).join('');
 const fieldLabel = (id) => { const f = (cfg.fields || []).find((x) => x.id === id); return f ? pick(f.label.en, f.label.de) : id; };
 const ANY = (() => { const k = cfg.scopes.findIndex((x) => x.match && x.match.any); return k < 0 ? cfg.scopes.length - 1 : k; })();   // the scope with every role: the whole-map layout
+const perScope = cfg.atlas_maps === 'per_scope';   // web.atlas_maps: a separate map per region filter (else one map, filters hide what is outside)
 const loadRatings = () => { try { return JSON.parse(localStorage.getItem(K.ratings) || '{}'); } catch (e) { return {}; } };
 const saveRatings = (r) => { try { localStorage.setItem(K.ratings, JSON.stringify(r)); } catch (e) { /* kept for this page only */ } };
 let ratings = loadRatings();
@@ -115,10 +116,12 @@ function companyLayer() {
   ents.forEach((e) => { e.f = new Float32Array(ix.fields.length); e.idx.forEach((i) => ix.fields.forEach((f, q) => { if (ix.attrs[i][4] >> q & 1) e.f[q] += 1 / e.idx.length; })); });
   return { kind: 'companies', ents, n: ents.length, regions: C.regions, hoods: C.regions, links: [] };
 }
-// one role map per region filter with enough roles (built separately, so a smaller area spreads over the whole map);
+// per_scope only: one role map per region filter with enough roles (built separately, so a smaller area spreads over the whole map);
 // filters without a map of their own use the next larger one and only hide what is outside
 const roleMaps = new Map();
+let worldMap = null;
 function roleMapFor(scope) {
+  if (!perScope) return worldMap || (worldMap = roleLayer(LAY.roles, ANY));   // one map: every filter shows the worldwide layout
   for (let s0 = scope; s0 < cfg.scopes.length; s0++) { const name = cfg.scopes[s0].id, R = s0 === ANY ? LAY.roles : (LAY.scopes || {})[name];
     if (R) { if (!roleMaps.has(name)) roleMaps.set(name, roleLayer(R, s0)); return roleMaps.get(name); } }
   return roleLayer();
@@ -317,6 +320,13 @@ function cutWords(s, n) {
   let c = s.slice(0, n); const p = c.lastIndexOf(' '); if (p >= n / 2) c = c.slice(0, p);
   return c.replace(/[\s,.\-–:;\/&]+$/, '') + '…';
 }
+// with the one map: per region and neighbourhood, the visible roles in it (n) and their mean position (xy), so a filter moves a
+// label to where its roles are. A label needs at least `min` visible roles: 6, or 0.4 % of the visible roles.
+function visStats(Ly) {
+  const group = (key, groups) => { const G = groups.map(() => ({ n: 0, sx: 0, sy: 0 })); Ly.ents.forEach((e, k) => { if (!vis[k]) return; const g = G[e[key]]; g.n++; g.sx += e.x; g.sy += e.y; });
+    return G.map((g, q) => ({ r: groups[q], n: g.n, xy: g.n ? [g.sx / g.n, g.sy / g.n] : groups[q].xy })); };
+  return { min: Math.max(6, 0.004 * vis.filter(Boolean).length), reg: group('c1', Ly.regions), hood: group('c2', Ly.hoods) };
+}
 // ---- drawing. prepare(T) sets the visible points and the taste fit for the current view; paintMap(ctx, P, o) draws the view on
 // any context whose transform maps the logical W x H map onto it. o.screen: the lens, sample and zoom buttons are drawn and kept
 // clear (o.names 'few'); an exported image has none of them and names the areas and the role labels or company names ('many').
@@ -325,16 +335,17 @@ function prepare(T) {
   const Ly = lay(), roles = st.mode === 'roles', showTaste = !!(taste && $('atlas-taste').checked);
   act = Ly.ents.map((e) => visibleRoles(e).length > 0); vis = roles ? act : Ly.ents.map(() => true);
   fit = showTaste ? fitOf(Ly) : null;
-  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel') };
+  const stat = roles && !perScope ? visStats(Ly) : null;
+  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel'), stat };
 }
 function paintMap(ctx, P, o) {
-  const { Ly, roles, T, ink, paper } = P, screen = o.screen, many = o.names === 'many', zoomed = st.z.s >= 2.2, ts = o.ts || 1, ff = o.ff || 1, ks = Math.max(1, W * H / (900 * 640));   // ks: the label caps grow with the area
+  const { Ly, roles, T, ink, paper, stat } = P, screen = o.screen, many = o.names === 'many', zoomed = st.z.s >= 2.2, ts = o.ts || 1, ff = o.ff || 1, ks = Math.max(1, W * H / (900 * 640));   // ks: the label caps grow with the area
   const bg = T.bg || paper, halo = T.halo || paper, tintOf = (c) => { const r = regionRgb(c, T.tintL, T.C); return `rgb(${r[0]},${r[1]},${r[2]})`; };
   ctx.globalCompositeOperation = 'source-over';
   if (screen && !T.bg) ctx.clearRect(0, 0, W, H); else { ctx.globalAlpha = 1; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
   // links between neighbourhoods (share of neighbour links that cross)
-  if (roles && Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1;
-    for (const [a, b, w] of Ly.links) { const A = Ly.hoods[a].xy, B = Ly.hoods[b].xy; ctx.globalAlpha = T.linkInk ? 0.04 + 0.12 * (w / mx) : 0.05 + 0.25 * (w / mx); ctx.beginPath(); ctx.moveTo(sx(A[0]), sy(A[1])); ctx.lineTo(sx(B[0]), sy(B[1])); ctx.stroke(); } }
+  if (roles && Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1; const HX = stat ? stat.hood : Ly.hoods;
+    for (const [a, b, w] of Ly.links) { if (stat && (!HX[a].n || !HX[b].n)) continue; const A = HX[a].xy, B = HX[b].xy; ctx.globalAlpha = T.linkInk ? 0.04 + 0.12 * (w / mx) : 0.05 + 0.25 * (w / mx); ctx.beginPath(); ctx.moveTo(sx(A[0]), sy(A[1])); ctx.lineTo(sx(B[0]), sy(B[1])); ctx.stroke(); } }
   // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
   if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
   else colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff });
@@ -353,21 +364,24 @@ function paintMap(ctx, P, o) {
       if (boxes.some((q) => !(b[2] < q[0] || b[0] > q[2] || b[3] < q[1] || b[1] > q[3]))) continue;
       boxes.push(b); labelDraw(ctx, lay, halo); return b; } return false; };
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
-  const counts = { areas: 0, roles: 0, companies: 0 }, byN = (list, sub) => list.map((r) => ({ r, sub })).sort((a, b) => b.r.n - a.r.n);
+  const counts = { areas: 0, roles: 0, companies: 0 };
+  // the regions and neighbourhoods as { r, n, xy }: with the one map, the visible roles and their mean position (see visStats)
+  const regs = stat ? stat.reg.filter((g) => g.n >= stat.min) : Ly.regions.map((r) => ({ r, n: r.n, xy: r.xy })), hoods = stat ? stat.hood.filter((g) => g.n >= stat.min) : Ly.hoods.map((r) => ({ r, n: r.n, xy: r.xy }));
+  const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => b.n - a.n);
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
-  const areas = many ? [...byN(Ly.regions, false), ...(roles ? byN(Ly.hoods, true) : [])] : byN(roles && zoomed ? Ly.hoods : Ly.regions, false);
+  const areas = many ? [...byN(regs, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed ? hoods : regs, false);
   const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
-  for (const { r, sub } of areas) {
+  for (const { r, n, xy, sub } of areas) {
     if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
-    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(r.n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(r.n) * 0.33)));
+    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
     const lines = wrapText(nameOf(r), 16, 2).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));
-    if (place(lines, [[sx(r.xy[0]), sy(r.xy[1]), 'center']])) counts.areas++;
+    if (place(lines, [[sx(xy[0]), sy(xy[1]), 'center']])) counts.areas++;
   }
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
   // title and its company in brackets, beside a small dot marker at the role's own position. A title is used once.
   if (roles && (many || zoomed)) {
-    const cap = Math.round((many ? 120 : 14) * ks), lists = roleRounds(Ly), order = [...Ly.hoods.keys()].sort((x, y) => Ly.hoods[y].n - Ly.hoods[x].n), seenT = new Set();
+    const cap = Math.round((many ? 120 : 14) * ks), lists = roleRounds(Ly), order = [...Ly.hoods.keys()].sort((x, y) => (stat ? stat.hood[y].n - stat.hood[x].n : Ly.hoods[y].n - Ly.hoods[x].n)), seenT = new Set();
     rounds: for (let r = 0; ; r++) { let any = false;
       for (const h of order) { const list = lists[h]; if (r >= list.length) continue; any = true;
         if (counts.roles >= cap) break rounds;
@@ -432,9 +446,9 @@ new ResizeObserver(relayout).observe(stage); window.addEventListener('resize', r
 document.addEventListener('fullscreenchange', relayout); document.addEventListener('webkitfullscreenchange', relayout);
 // switch the view (for the export script and the page): mode 'roles' or 'companies', scope the index of config.json's scopes
 function setView({ mode = st.mode, scope = st.scope } = {}) {
-  st.mode = mode; st.scope = scope; st.open.clear(); st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 };
+  st.mode = mode; st.scope = scope; st.open.clear(); st.sample = [];
   mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.m === mode)));
-  $('atlas-scope').value = String(scope); layers.roles = roleMapFor(scope); resample();
+  $('atlas-scope').value = String(scope); layers.roles = roleMapFor(scope); fitOrWhole(); resample();
 }
 // the page's colour scheme changed: redraw in the other theme
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => draw());
@@ -500,13 +514,26 @@ function inLens() {
 function renderArea(pool) {
   const Ly = lay(); if (!pool.length) { $('atlas-area').innerHTML = `<span class="atlas-note">${L('Move the lens onto the map.', 'Die Lupe auf die Karte ziehen.')}</span>`; return; }
   const c = new Map(); pool.forEach((k) => c.set(Ly.ents[k].c2, (c.get(Ly.ents[k].c2) || 0) + 1)); const h = Ly.hoods[[...c].sort((a, b) => b[1] - a[1])[0][0]];
-  const hk = [...c].sort((a, b) => b[1] - a[1])[0][0], total = Ly.ents.filter((e) => e.c2 === hk).length;
+  const hk = [...c].sort((a, b) => b[1] - a[1])[0][0], total = Ly.ents.filter((e, k) => e.c2 === hk && (perScope || vis[k])).length;
   const reg = Ly.regions[Ly.ents[pool[0]].c1], lean = leanText(h.lean);
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}${st.mode === 'roles' && reg && reg !== h ? ' · ' + esc(nameOf(reg)) : ''}</span><b>${esc(nameOf(h))}</b><span class="atlas-note">${esc(h.words.join(' · '))}</span>`
     + `<span>${h.fields.length ? esc(h.fields.map(fieldLabel).join(', ')) + ' · ' : ''}${total.toLocaleString()} ${st.mode === 'roles' ? L('roles in the neighbourhood', 'Stellen in der Nachbarschaft') : L('companies in the group', 'Firmen in der Gruppe')}, ${pool.length} ${L('in the lens', 'in der Lupe')}</span>`
     + (lean.length ? `<span class="lean">${L('Leans to: ', 'Neigt zu: ')}${esc(lean.join(' · '))}</span>` : '');
 }
 let rngState = 7; const rnd = () => (rngState = (rngState * 16807) % 2147483647) / 2147483647;
+// the view on the visible roles (one map): the 2nd to 98th percentile of their positions (outliers left out), 6 % padding on each
+// side, zoomed so that box fills the map box; the lens moves to its centre. Fewer than 10 visible roles: the whole map
+function fitTo() {
+  const Ly = lay(), xs = [], ys = [];
+  Ly.ents.forEach((e) => { if (visibleRoles(e).length) { xs.push(e.x); ys.push(e.y); } });
+  if (xs.length < 10) { st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = { x: 0.5, y: 0.5 }; return; }
+  const pct = (a, p) => { const q = [...a].sort((u, v) => u - v); return q[Math.min(q.length - 1, Math.floor(p * q.length))]; };
+  const x0 = pct(xs, 0.02), x1 = pct(xs, 0.98), y0 = pct(ys, 0.02), y1 = pct(ys, 0.98);
+  const bw = (x1 - x0) * 1.12, bh = (y1 - y0) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: cx, y: cy };
+}
+// the view after a filter or a switch: fitted to the visible roles (one map, roles), else the whole map (as per_scope always did)
+const fitOrWhole = () => { if (!perScope && st.mode === 'roles') fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
 function resample() {
   draw();   // refreshes which entities are visible under the current filters
   const Ly = lay(), pool = inLens(), per = new Map(); pool.forEach((k) => { const c = st.mode === 'roles' ? rows[Ly.ents[k].idx[0]][2] : Ly.ents[k].name; per.set(c, (per.get(c) || 0) + 1); });
@@ -571,13 +598,13 @@ cv.addEventListener('dblclick', (e) => { e.preventDefault(); const [px, py] = pt
 cv.addEventListener('wheel', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
 $('atlas-zin').addEventListener('click', () => zoom(1.5, sx(st.lens.x), sy(st.lens.y)));
 $('atlas-zout').addEventListener('click', () => zoom(1 / 1.5, sx(st.lens.x), sy(st.lens.y)));
-$('atlas-zreset').addEventListener('click', () => { st.z = { s: 1, cx: 0.5, cy: 0.5 }; resample(); });
+$('atlas-zreset').addEventListener('click', () => { fitOrWhole(); resample(); });
 mount.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'atlas-save-img') { saveImage().catch((err) => { $('atlas-status').textContent = err.message || String(err); }); }
   else if (b.id === 'atlas-fs') toggleFs();
-  else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); st.open.clear(); st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; resample(); }
-  else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); resample(); }
+  else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); st.open.clear(); st.sample = []; fitOrWhole(); resample(); }
+  else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (!perScope && st.mode === 'roles') fitTo(); resample(); }
   else if (b.id === 'atlas-shuffle') resample();
   else if (b.classList.contains('hd')) { const li = b.closest('li'), id = li.dataset.id, on = li.classList.toggle('open'); b.setAttribute('aria-expanded', String(on)); if (on) st.open.add(id); else st.open.delete(id); fillRole(li); }
   else if (b.closest('.atlas-vote')) {
@@ -614,9 +641,13 @@ mount.addEventListener('change', async (e) => {
   if (e.target.id === 'atlas-cv-on') { cvEmb.on = e.target.checked; setJ(K.cv, cvEmb); computeTaste(); draw(); }
   if (e.target.id === 'atlas-taste') draw();
 });
-$('atlas-scope').addEventListener('change', (e) => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope); if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } resample(); });
+$('atlas-scope').addEventListener('change', (e) => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope);
+  if (perScope) { if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } }
+  else if (st.mode === 'roles') fitTo();
+  resample(); });
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; resample(); });
 window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); draw(); });
+fitOrWhole();
 resample();
 // for scripts (scripts/export_atlas.mjs): the image export and the view switch
 window.jobcrawlAtlas = { renderImage, setView, lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }) };

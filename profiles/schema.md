@@ -30,6 +30,7 @@ Defaults fit the bundled pages (`web/`). A site that hosts the modules in its ow
 | `web.company_url` | string with `{slug}` | none | link to an employer's page, e.g. `company-{slug}.html`; without it no company links are shown |
 | `web.company_texts` | file in the data folder | none | `{slug: [text, ...]}`: the texts the Atlas shows on company cards |
 | `web.default_scope` | a scope id | the first scope | the scope Match me, the Atlas and the job list start with |
+| `web.atlas_maps` | `worldwide` or `per_scope` | `worldwide` | the Atlas's Where filter: one map for every filter (filters hide what is outside, the view fits the rest); `per_scope` builds a separate map per region filter, as before |
 | `web.model_url` | path | `models/eg2/` | the model folder, relative to the web root (the folder above `assets/`) |
 | `web.storage.prefix` | string | `jobcrawl` | the visitor's data is kept in the browser as `<prefix>-ratings`, `-prefs`, `-cv`, `-persona`, `-explored`, `-settings` |
 | `web.storage.lang` | string | `<prefix>-lang` | where the language choice is kept (share it with the site's own pages) |

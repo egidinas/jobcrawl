@@ -106,6 +106,15 @@ class Validation(unittest.TestCase):
     def test_glossary_pairs(self):
         self.bad({'glossary': [['only-one']]}, 'glossary[0]')
 
+    def test_atlas_maps_values(self):
+        for v in ('worldwide', 'per_scope'):
+            folder = write_profile({'web': {'atlas_maps': v}})
+            self.folders.append(folder)
+            self.assertEqual(load_profile(folder)['web']['atlas_maps'], v)
+
+    def test_atlas_maps_bad_value_names_key(self):
+        self.bad({'web': {'atlas_maps': 'germany'}}, 'web.atlas_maps')
+
     def test_map_range(self):
         self.bad({'map': {'even': 1.5}}, 'map.even')
 
