@@ -96,7 +96,10 @@ def publish(site, profile, vectors=None, log=print, text_from=None, traces=None)
             shutil.copyfile(os.path.join(src, name), os.path.join(out, name)); written.append(name)
     match_index.build(site, out, profile, log, text_from=text_from)
     written += ['match-bm25.json', 'match-attrs.json']
+    cfg = web_config(profile)
+    if 'role-timeline.json' in written:
+        cfg['timeline'] = 'match/role-timeline.json'          # the atlas loads the timeline only when it is there
     with open(os.path.join(site, 'config.json'), 'w', encoding='utf-8') as fh:
-        json.dump(web_config(profile), fh, ensure_ascii=False, indent=1)
+        json.dump(cfg, fh, ensure_ascii=False, indent=1)
         fh.write('\n')
     return sorted(os.path.join('match', n) for n in written) + ['config.json']
