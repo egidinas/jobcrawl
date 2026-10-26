@@ -11,7 +11,10 @@ export async function fileText(file) {
       const tc = await (await doc.getPage(p)).getTextContent();
       out.push(tc.items.map((it) => it.str + (it.hasEOL ? '\n' : ' ')).join(''));
     }
-    return out.join('\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    const text = out.join('\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    // a scanned CV is only pictures of text: say so instead of handing back an empty text
+    if (text.length < 20) throw new Error('No text found in this PDF (a scanned document?). Paste the text instead, or save the CV as a PDF with text.');
+    return text;
   }
   if (/\.(txt|md|text)$/.test(name) || (file.type || '').startsWith('text/')) return (await file.text()).trim();
   throw new Error(name.endsWith('.docx') || name.endsWith('.doc') ? 'Word files cannot be read here; save the CV as PDF or paste the text.' : 'Only PDF and text files can be read.');
