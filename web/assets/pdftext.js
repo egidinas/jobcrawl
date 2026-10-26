@@ -4,8 +4,8 @@ const base = new URL('.', import.meta.url);
 export async function fileText(file) {
   const name = (file.name || '').toLowerCase();
   if (name.endsWith('.pdf') || file.type === 'application/pdf') {
-    const pdfjs = await import(new URL('vendor/pdfjs/pdf.min.mjs', base).href);
-    pdfjs.GlobalWorkerOptions.workerSrc = new URL('vendor/pdfjs/pdf.worker.min.mjs', base).href;
+    const pdfjs = await import(new URL('vendor/pdfjs/pdf.min.js', base).href);
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL('vendor/pdfjs/pdf.worker.min.js', base).href;
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise, out = [];
     for (let p = 1; p <= Math.min(doc.numPages, 12); p++) {
       const tc = await (await doc.getPage(p)).getTextContent();

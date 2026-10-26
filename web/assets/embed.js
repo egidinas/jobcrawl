@@ -22,7 +22,7 @@ async function getBytes(url, onChunk, cacheName) {
 
 /** Downloads (once, then from the browser cache) and starts the model. onProgress(fraction 0..1, label). */
 const HERE = import.meta.url;
-export async function loadModel({ modelUrl = 'models/eg2/', ortBase = new URL('vendor/ort/', HERE).href, tokenizerModule = new URL('vendor/tokenizers.min.mjs', HERE).href, cacheName = 'jobcrawl-eg2-v1', onProgress = () => {} } = {}) {
+export async function loadModel({ modelUrl = 'models/eg2/', ortBase = new URL('vendor/ort/', HERE).href, tokenizerModule = new URL('vendor/tokenizers.min.js', HERE).href, cacheName = 'jobcrawl-eg2-v1', onProgress = () => {} } = {}) {
   const WEB_ROOT = new URL('../', HERE);
   const base = new URL(modelUrl.endsWith('/') ? modelUrl : modelUrl + '/', WEB_ROOT).href;
   const probe = await fetch(base + 'embed_meta.json', { method: 'HEAD' }).catch(() => null);
@@ -31,8 +31,9 @@ export async function loadModel({ modelUrl = 'models/eg2/', ortBase = new URL('v
   const total = sizes.reduce((a, b) => a + b, 0) || 1; let got = 0;
   const bytes = {}; for (const f of MODEL_FILES) bytes[f] = await getBytes(base + f, (k) => { got += k; onProgress(Math.min(0.97, got / total), f); }, cacheName);
   onProgress(0.97, 'starting');
-  const [{ Tokenizer }, ort] = await Promise.all([import(tokenizerModule), import(ortBase + 'ort.wasm.min.mjs')]);
-  ort.env.wasm.wasmPaths = ortBase; ort.env.wasm.numThreads = (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated) ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
+  const [{ Tokenizer }, ort] = await Promise.all([import(tokenizerModule), import(ortBase + 'ort.wasm.min.js')]);
+  // the vendor modules end in .js: some servers send .mjs with a non-JavaScript type, which browsers refuse for a module
+  ort.env.wasm.wasmPaths = { mjs: ortBase + 'ort-wasm-simd-threaded.js', wasm: ortBase + 'ort-wasm-simd-threaded.wasm' }; ort.env.wasm.numThreads = (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated) ? Math.min(4, navigator.hardwareConcurrency || 1) : 1;
   const dec = new TextDecoder(), meta = JSON.parse(dec.decode(bytes['embed_meta.json']));
   const tok = new Tokenizer(JSON.parse(dec.decode(bytes['tokenizer.json'])), JSON.parse(dec.decode(bytes['tokenizer_config.json'])));
   const session = await ort.InferenceSession.create(bytes['model_text_q4.onnx'], { executionProviders: ['wasm'], externalData: [{ path: 'model_text_q4.onnx_data', data: bytes['model_text_q4.onnx_data'] }] });
