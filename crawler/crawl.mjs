@@ -3,7 +3,7 @@
 // filter, dedups and tracks liveness in <data>/scan-history.tsv, and (with --jd) saves the full job description of every tracked
 // role to <data>/jd/. New postings of a run go to <data>/last-new.json. Reads public job feeds only; nothing in here knows about
 // any candidate. Run `node crawler/crawl.mjs --help` for the options.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, appendFileSync } from 'node:fs';
 import { loadLabels, saveLabels, merge as mergeLabel } from './board-labels.mjs';
 import { createHash } from 'node:crypto';
 import { resolve as pathResolve } from 'node:path';
@@ -15,6 +15,7 @@ import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueN
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
 import { setUserAgent } from './useragent.mjs';
 import { checkDisk } from './diskguard.mjs';
+import { cleanJd, jdFileName } from './jdclean.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -34,8 +35,12 @@ options:
   --jd                also save the job description of every tracked role
   --refresh-only      update known roles only, never add new ones
   --dry-run           print the summary, write nothing
+  --jd-cleanup-only   no crawl: remove the descriptions of roles not seen for more than jd_keep_days days, then exit
+                      (with --dry-run it only counts them)
   --help              show this text
-(profile key crawl.min_free_mb: refuse to start when the data disk has less free space than this many MB; 0 = no check)`;
+(profile key crawl.min_free_mb: refuse to start when the data disk has less free space than this many MB; 0 = no check)
+(profile key crawl.jd_keep_days: a role's description is removed once the role has not been seen for more than this many days
+ (its history row is not 'open'); default 90; 0 = keep forever)`;
 
 if (flag('help')) { console.log(USAGE); process.exit(0); }
 
@@ -51,7 +56,7 @@ const CATALOGUE = PROFILE.catalogueFile;   // optional (profile key crawl.catalo
 const PROB_FILE_NAME = 'probation-state.json';
 const OUT_DIR = resolveDataDir(opt('data'), PROFILE);
 setCacheDir(OUT_DIR);
-if (!flag('dry-run')) {
+if (!flag('dry-run') && !flag('jd-cleanup-only')) {   // the cleanup frees space, so it runs even on a full disk
   const full = checkDisk(OUT_DIR, PROFILE.minFreeMb);
   if (full) { console.error(`crawl: ${full}`); process.exit(3); }
 }
@@ -164,8 +169,14 @@ function saveHistory(map) {
   renameSync(tmp, HISTORY);
 }
 
+// Rows that left the working history, appended to <data>/scan-history-archive.tsv (same columns; the header is written once)
+function archiveRows(rows) {
+  const file = pathResolve(OUT_DIR, 'scan-history-archive.tsv'), head = existsSync(file) ? '' : HEADER.join('\t') + '\n';
+  appendFileSync(file, head + rows.map((r) => HEADER.map((h) => String(r[h] ?? '').replace(/[\t\n]/g, ' ')).join('\t')).join('\n') + '\n');
+}
+
 // ---------- job descriptions ----------
-const jdFile = (url) => pathResolve(JD_DIR, createHash('sha1').update(url).digest('hex').slice(0, 10) + '.md');
+const jdFile = (url) => pathResolve(JD_DIR, jdFileName(url));
 // The description part of a saved job file (saveJd writes a "- First seen:" header block, a blank line, then the text).
 function jdBody(text) {
   const i = text.indexOf('\n- First seen:');
@@ -196,6 +207,13 @@ function saveJd(row, j) {
   const head = ['# ' + row.title, '', '- Company: ' + row.company, '- Location: ' + (row.location || '?'), '- URL: ' + row.url, '- First seen: ' + row.first_seen,
     j.postedAt ? '- Posted: ' + String(j.postedAt).slice(0, 10) : '', j.compensation ? '- Compensation (posted): ' + j.compensation : '', ...(j.meta?.departments ? ['- Department: ' + [].concat(j.meta.departments).join(' / ')] : []), ''].filter((x, i) => x !== '' || i === 1 || i > 2);
   writeFileSync(f, head.join('\n') + '\n' + clipDescription(j.description) + '\n');
+}
+// Retention (jdclean.mjs): called with a history loaded or written without error. Logs one line; dryRun only counts.
+function jdCleanup(history, dryRun) {
+  const r = cleanJd({ history, jdDir: JD_DIR, keepDays: PROFILE.jdKeepDays, today: today(), dryRun });
+  if (r.skipped) return console.log(`descriptions: 0 removed (${r.skipped}), ${r.kept} kept`);
+  const verb = dryRun ? 'would be removed' : 'removed';
+  console.log(`descriptions: ${r.removed.length} ${verb} (not seen for more than ${PROFILE.jdKeepDays} days), ${r.kept} kept${dryRun ? ' (dry run: nothing deleted)' : ''}`);
 }
 
 // Board metadata of the roles that are open right now, keyed by url: current state only (a role that closed drops out), compact on purpose.
@@ -615,14 +633,19 @@ async function scan() {
   // Sweep: a role that no feed has confirmed for 3 days is gone (covers sources that are no longer crawled).
   const cutoff = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
   for (const row of history.values()) if ((row.status === 'open' || row.status === 'dup' || row.status === 'extra') && row.last_seen < cutoff) row.status = 'gone';
-  // Retention: prune inactive/filtered postings unseen for > 90 days to bound history storage
-  const pruneCutoff = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  // The description retention (jdCleanup) needs the rows the prune below drops, so it gets a copy taken before the prune.
+  const jdRows = new Map(history);
+  // Retention: postings unseen for > 90 days leave the working history (it stays small) and move to the archive, which keeps
+  // their row (first and last seen, title, company, location) for good: the trace of what was on the market, and when
+  const pruneCutoff = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10), archived = [];
   for (const [url, row] of history.entries()) {
     if ((row.status === 'gone' || row.status === 'filtered') && row.last_seen < pruneCutoff) {
-      history.delete(url);
+      archived.push(row); history.delete(url);
     }
   }
+  if (archived.length) archiveRows(archived);
   saveHistory(history);
+  if (existsSync(JD_DIR) && jdRows.size) jdCleanup(jdRows, false);
   if (labelsDirty) saveLabels(OUT_DIR, boardLabels);
   writeFileSync(STATE_FILE, JSON.stringify(crawlState, null, 1) + '\n');
   for (const k of Object.keys(health)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete health[k];
@@ -647,4 +670,10 @@ async function scan() {
   writeFileSync(NEW_FILE, JSON.stringify({ date, rows: fresh.map(({ url, company, title, location, first_seen, seniority, posted }) => ({ url, company, title, location, first_seen, seniority, posted })) }, null, 1) + '\n');
 }
 
-await scan();
+if (flag('jd-cleanup-only')) {
+  // Standalone retention: loads the history as the last run left it, runs the cleanup and exits. Rows the 90-day prune already dropped
+  // are no longer in it, so their files count as unknown and stay.
+  try { jdCleanup(loadHistory(), flag('dry-run')); } catch (e) { console.error(`crawl: ${e.message}`); process.exit(1); }
+} else {
+  await scan();
+}
