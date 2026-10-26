@@ -397,14 +397,14 @@ function paintMap(ctx, P, o) {
   // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
   if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
   else colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff });
-  // hot and cold spots: after the colour field, before the points; the field is dimmed first so the growth colours stand out
-  if (P.heat) { ctx.globalAlpha = T.glow ? 0.6 : 0.5; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; heatField(ctx, ff, T); }
+  // hot and cold spots: after the colour field, before the points; an area keeps its colour and only gets brighter or dimmer
+  if (P.heat) heatField(ctx, ff, T, bg);
   const dot = (roles ? 2 : 5) * Math.min(2.5, Math.sqrt(st.z.s)); let shown = 0; const hot = [];
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (act[k] && !e.ember) shown++; if (e.hidden && !st.all) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     if (e.ember) { ctx.globalAlpha = e.ea; ctx.fillStyle = 'rgb(190,120,60)'; ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }   // a role last seen before the scrubbed time: a dim warm ember
     if (roles && wE(e) > 0) { hot.push(k); return; }   // new roles are drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     if (roles) ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { ctx.beginPath(); ctx.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); } } });
   // the new roles, on top: radius dot x (1 + 1.6 w) at full strength; on the dark theme a glow in the region colour and a white core,
   // today's also a small sparkle; on the light theme the region colour with a thin ink ring
@@ -561,6 +561,7 @@ function fitOf(Ly) {
 // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense.
 // o.strength; o.L and o.C: the colours' lightness and chroma target; o.ff: the grid factor (the grid is ff times finer and the blur
 // passes ff*ff more, so the softness stays the same in map units); o.extra: more blur passes (a wider glow); o.additive: 'lighter'
+let lastField = null;
 function colourField(ctx, Ly, o) {
   const f = o.ff || 1, GW = Math.round(96 * f * W / BW), GH = Math.round(68 * f * H / BH);
   // regions are mixed as hue directions (unit vectors around the OKLCH wheel), not as RGB: an RGB average of two hues is greyer
@@ -582,6 +583,7 @@ function colourField(ctx, Ly, o) {
     img.data[q * 4] = c[0]; img.data[q * 4 + 1] = c[1]; img.data[q * 4 + 2] = c[2]; img.data[q * 4 + 3] = Math.round(255 * o.strength * coverage * coverage * match * Math.min(1, 0.35 + len)); }
   sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = o.additive ? 'lighter' : 'source-over'; ctx.drawImage(small, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over';
+  if (!o.additive) lastField = { small, GW, GH };      // the main layer, which the hot and cold spots brighten
 }
 // favoured / pushed-away field: per screen cell, the share of entities in the top of your taste (green) and under a penalty (red);
 // the fewer signals there are, the more it is blurred, so a thin profile shows as a soft haze and sharpens as you mark more
@@ -719,7 +721,9 @@ function tlCardHtml(k, e) { return `<li class="atlas-item" data-k="${k}" data-id
 function tlFill(host, e) { tlNamesOf(e.rec).then(([t, c]) => { if (host.dataset.id !== e.id) return; const a = host.querySelector('.tl-t'), b = host.querySelector('.tl-c'); if (a) a.textContent = t || pick('(no name saved)', '(kein Name gespeichert)'); if (b) b.textContent = c || ''; }); }
 // hot and cold spots: per cell of the colour field's grid, the roles first seen in the window minus those no longer seen, over the roles on
 // the board (+10 damps small areas), blurred like the colour field. Warm where the board grows, cool where it shrinks
-function heatField(ctx, ff, T) { const GW = Math.round(96 * ff * W / BW), GH = Math.round(68 * ff * H / BH), n = GW * GH, f = tlFilt(), tm = scrub.tm, win = tlWin();
+// a CSS colour as [r, g, b] (the canvas normalises it to #rrggbb or rgba(...))
+const rgbOf = (col) => { const c = document.createElement('canvas').getContext('2d'); c.fillStyle = col; const v = c.fillStyle; return v[0] === '#' ? [1, 3, 5].map((i) => parseInt(v.slice(i, i + 2), 16)) : (v.match(/\d+/g) || [0, 0, 0]).slice(0, 3).map(Number); };
+function heatField(ctx, ff, T, bg) { const GW = Math.round(96 * ff * W / BW), GH = Math.round(68 * ff * H / BH), n = GW * GH, f = tlFilt(), tm = scrub.tm, win = tlWin();
   const N = new Float32Array(n), G = new Float32Array(n), S = new Float32Array(n);
   for (let r = 0; r < TLN; r++) { const fa = TLF[r], la = TLL[r]; if (fa > tm || TLX[r] === 0xFFFF) continue; const inS = la >= tm, inN = fa > tm - win, inG = la > tm - win && la <= tm && la < TL.end;
     if (!(inS || inN || inG) || !tlOk(r, f)) continue;
@@ -729,11 +733,16 @@ function heatField(ctx, ff, T) { const GW = Math.round(96 * ff * W / BW), GH = M
   // the blurred counts are per cell; the blur's area (about (2 passes + 1)^2 cells) turns them into the roles around a cell, so k = 10
   // damps the areas with few roles
   const Ak = (2 * passes + 1) ** 2, sc = new Float32Array(n); for (let q = 0; q < n; q++) sc[q] = (N[q] - G[q]) / (S[q] + 10 / Ak); lastHeat = { GW, GH, sc };
-  const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH), dark = !!T.glow;
-  const warm = dark ? [[255, 170, 0], [255, 60, 20]] : [[235, 130, 0], [200, 40, 0]], cool = dark ? [[0, 200, 255], [40, 90, 255]] : [[0, 150, 220], [20, 60, 200]];
-  for (let q = 0; q < n; q++) { const m = Math.abs(sc[q]); if (m < 0.2) continue; const k = Math.min(1, (m - 0.2) / 0.5), [a, b] = sc[q] > 0 ? warm : cool;   // small changes stay neutral
-    for (let c = 0; c < 3; c++) img.data[q * 4 + c] = Math.round(a[c] + (b[c] - a[c]) * k); img.data[q * 4 + 3] = Math.round(255 * 0.8 * k); }
-  sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.drawImage(small, 0, 0, W, H); }
+  // growing cells: the colour field's own colour drawn once more on top (added on black, laid over on paper), so the area glows in
+  // its hue; shrinking cells: the background laid over, so the area dims. Changes below 0.2 stay as they are.
+  const dark = !!T.glow, hot = document.createElement('canvas'), cold = document.createElement('canvas'); hot.width = cold.width = GW; hot.height = cold.height = GH;
+  const hg = hot.getContext('2d'), cg = cold.getContext('2d'), hi = hg.createImageData(GW, GH), ci = cg.createImageData(GW, GH), b = rgbOf(bg);
+  const base = lastField && lastField.GW === GW && lastField.GH === GH ? lastField.small.getContext('2d').getImageData(0, 0, GW, GH).data : null;
+  for (let q = 0; q < n; q++) { const m = Math.abs(sc[q]); if (m < 0.2) continue; const k = Math.min(1, (m - 0.2) / 0.5);
+    if (sc[q] > 0) { if (!base) continue; for (let c = 0; c < 3; c++) hi.data[q * 4 + c] = base[q * 4 + c]; hi.data[q * 4 + 3] = Math.round(base[q * 4 + 3] * k * (dark ? 1 : 0.8)); }
+    else { for (let c = 0; c < 3; c++) ci.data[q * 4 + c] = +b[c]; ci.data[q * 4 + 3] = Math.round(255 * 0.7 * k); } }
+  hg.putImageData(hi, 0, 0); cg.putImageData(ci, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1;
+  ctx.drawImage(cold, 0, 0, W, H); ctx.globalCompositeOperation = dark ? 'lighter' : 'source-over'; ctx.drawImage(hot, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over'; }
 // the mean hot-and-cold score (last drawn) over the roles of region c on the board at the scrubbed time
 function heatMeanOf(c) { if (!lastHeat || !TL) return null; const f = tlFilt(), tm = scrub.tm, { GW, GH, sc } = lastHeat; let s = 0, n = 0;
   for (let r = 0; r < TLN; r++) { if (TLC[r] !== c || TLF[r] > tm || TLL[r] < tm || TLX[r] === 0xFFFF || !tlOk(r, f)) continue;
