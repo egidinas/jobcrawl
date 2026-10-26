@@ -362,6 +362,8 @@ class PublishCopiesTrendsOnly(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(site, 'match', 'role-timeline.json')))
             self.assertTrue(os.path.exists(os.path.join(site, 'match', 'role-timeline.bin')))
             self.assertIn(os.path.join('match', 'role-timeline-names-000.json'), files)
+            with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
+                self.assertEqual(json.load(fh).get('timeline'), 'match/role-timeline.json')
             for root, _, names in os.walk(site):
                 self.assertFalse([n for n in names if n.startswith('role-traces')], root)
         finally:
@@ -377,6 +379,8 @@ class PublishCopiesTrendsOnly(unittest.TestCase):
                 fh.write('{"version": 1}')
             files = publish.publish(site, load_profile(PROFILE), vectors, log=silent, traces=tr)
             self.assertIn(os.path.join('match', 'role-trends.json'), files)
+            with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
+                self.assertNotIn('timeline', json.load(fh))           # no timeline published: the atlas does not look for one
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
