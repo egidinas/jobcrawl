@@ -71,7 +71,7 @@ async function main() {
     const write = async (mode, file) => {
       await page.evaluate(({ mode, scope }) => window.jobcrawlAtlas.setView({ mode, scope }), { mode, scope: worldwide });
       const b64 = await page.evaluate(async ({ scale, theme }) => {
-        const blob = await window.jobcrawlAtlas.renderImage({ scale, names: 'many', theme }), bytes = new Uint8Array(await blob.arrayBuffer());
+        const blob = await window.jobcrawlAtlas.renderImage({ scale, names: 'many', theme, frame: [900, 640] }), bytes = new Uint8Array(await blob.arrayBuffer());
         let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         return btoa(s);
       }, { scale: args.scale, theme: args.theme });
