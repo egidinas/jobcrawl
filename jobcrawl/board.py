@@ -6,10 +6,13 @@
 
 id = first 8 hex digits of sha1(url), as in the reference board. t title, c company, cs company slug, u posting URL,
 l location text as the posting gives it, r region label (country of the first place, else the narrowest scope),
-sc scope ids (profile order), lv seniority band code, d first-seen date (YYYY-MM-DD), tg field ids, x description text.
+sc scope ids (profile order), lv seniority band code, d published date (the source's posted date, YYYY-MM-DD; the first-seen
+day when the source gives none), fs first-seen date (YYYY-MM-DD), tg field ids, x description text.
 
-Order: newest first by d, then company and title. Standard library only, plus the geo module (also standard library).
+Order: newest first by fs, then company and title; with board.order 'published', newest first by d. Standard library only,
+plus the geo module (also standard library).
 """
+import datetime
 import hashlib
 import json
 import os
@@ -21,6 +24,8 @@ from jobcrawl.classify.scopes import region_label, scope_ids
 from jobcrawl.geo import geo
 
 FEED_SIZE = 500
+ORDERS = ('first_seen', 'published')                           # board.order: the sort key of jobs-index.json and jobs.json
+DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
 
 
 class BoardError(ValueError):
@@ -36,6 +41,18 @@ def company_slug(company):
     name = re.sub(r'\s*\(via [^)]*\)\s*$', '', company or '').strip().lower()
     name = re.sub(r'[^a-z0-9]+', '-', fold(name.replace('ß', 'ss')))
     return name.strip('-')
+
+
+def _day(s):
+    """s cut to 10 characters when it is a real YYYY-MM-DD date, else ''."""
+    s = str(s or '').strip()[:10]
+    if not DATE.fullmatch(s):
+        return ''
+    try:
+        datetime.date.fromisoformat(s)
+    except ValueError:
+        return ''
+    return s
 
 
 def read_catalog(path):
@@ -63,7 +80,10 @@ def _roles(items):
 
 
 def build_entries(items, profile, excerpt=None):
-    """[(id, entry)] for the catalog items, newest first."""
+    """[(id, entry)] for the catalog items, newest first (by fs, or by d when board.order is 'published')."""
+    order = profile.get('board', {}).get('order', 'first_seen')
+    if order not in ORDERS:
+        raise BoardError(f'board.order {order!r} is not one of {", ".join(ORDERS)}')
     fields = profile['fields']
     matchers = field_matchers(fields)
     levels = compile_levels(profile['levels'])
@@ -78,6 +98,7 @@ def build_entries(items, profile, excerpt=None):
         g = geo.resolve(location if location.lower() not in ('', 'unspecified') else '')
         places = [dict(p) for p in g['places']]
         first_seen = str(it.get('first_seen') or '').strip()[:10]
+        posted = _day(it.get('posted'))
         entries.append((role_id(url), {
             't': title,
             'c': company,
@@ -87,12 +108,13 @@ def build_entries(items, profile, excerpt=None):
             'r': region_label(places, profile['scopes'], 'en'),
             'sc': scope_ids(places, profile['scopes']),
             'lv': level_of(title, levels),
-            'd': first_seen,
+            'd': posted or first_seen,
+            'fs': first_seen,
             'tg': field_tags(title, text, company, fields, max_tags, matchers),
             'x': text,
         }))
     entries.sort(key=lambda e: (e[1]['c'].lower(), e[1]['t'].lower()))
-    entries.sort(key=lambda e: e[1]['d'], reverse=True)
+    entries.sort(key=lambda e: e[1]['d' if order == 'published' else 'fs'], reverse=True)
     ids = {}
     for rid, e in entries:
         if rid in ids:

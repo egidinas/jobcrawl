@@ -5,6 +5,8 @@ Writes into the match folder:
     match-bm25.json   keyword postings: n, avgdl, ids, len, idf, post (term -> [role index, weight, ...])
     match-attrs.json  per role, in board order: [scope bits, level index, has description, region index, field bits, language index]
                       with the lists scopes (profile order, narrowest first), levels ("" then the codes by rank), regions, fields, langs
+                      and dates: {base, ago}: base is the newest date (d) of the roles, ago[i] the whole days role i's date
+                      is before it (0 = same day, -1 = no valid date), in board order
 
 The scopes and levels come from the profile (scopes[].id, levels[].code and rank). The languages are the four that
 jobcrawl/text/langfix.py can tell apart; the fields and regions are whatever the board wrote into the role (tg, r).
@@ -13,6 +15,7 @@ Role id: the board's (first 8 hex digits of sha1(url)). The role's text is its t
 """
 import array
 import collections
+import datetime
 import json
 import math
 import os
@@ -46,6 +49,19 @@ def level_codes_of(profile):
     """"" (no band) followed by the band codes ordered by rank: the index the attributes refer to."""
     bands = sorted(enumerate(profile['levels']), key=lambda x: (x[1]['rank'], x[0]))
     return [''] + [b['code'] for _, b in bands]
+
+
+DATE = re.compile(r'\d{4}-\d{2}-\d{2}')
+
+
+def _day(s):
+    """The date of a "YYYY-MM-DD" string, or None."""
+    if not isinstance(s, str) or not DATE.fullmatch(s):
+        return None
+    try:
+        return datetime.date.fromisoformat(s)
+    except ValueError:
+        return None
 
 
 SHARD = re.compile(r'^jobs-desc-[0-9a-f]{2}\.json$')          # the shard names read_site() reads
@@ -83,7 +99,7 @@ def build(site, out, profile, log=print, text_from=None):
             if k in where:
                 owner[k] = f
     vocab = {}; words = []; df = array.array('L')
-    rows = [None] * n; lens = [0] * n; small = [None] * n
+    rows = [None] * n; lens = [0] * n; small = [None] * n; days = [None] * n
 
     def add(i, d):
         title = index[i][1]; text = d.get('x') or ''
@@ -98,7 +114,7 @@ def build(site, out, profile, log=print, text_from=None):
             if j is None:
                 j = vocab[w] = len(words); words.append(w); df.append(0)
             df[j] += 1; ids.append(j); ks.append(k)
-        rows[i] = (ids, ks); lens[i] = sum(c.values())
+        rows[i] = (ids, ks); lens[i] = sum(c.values()); days[i] = _day(d.get('d'))
         sc = d.get('sc') if isinstance(d.get('sc'), list) else []
         lv = d.get('lv') or ''
         small[i] = (sum(1 << s for s, sid in enumerate(SCOPES) if sid in sc), LEVELS.index(lv) if lv in LEVELS else 0, 1 if text else 0,
@@ -138,8 +154,11 @@ def build(site, out, profile, log=print, text_from=None):
     at = []; rix = {}; fx = {}
     for sc_bits, lv_i, hasx, reg, tg, lang in small:
         at.append([sc_bits, lv_i, hasx, rix.setdefault(reg, len(rix)), sum(1 << fx.setdefault(t, len(fx)) for t in tg), lang])
+    base = max((x for x in days if x is not None), default=None)
+    dates = {'base': base.isoformat() if base else '', 'ago': [(base - x).days if x is not None else -1 for x in days]}
     with open(os.path.join(out, 'match-attrs.json'), 'w', encoding='utf-8') as fh:
-        json.dump({'scopes': SCOPES, 'levels': LEVELS, 'regions': sorted(rix, key=rix.get), 'fields': sorted(fx, key=fx.get), 'langs': LANGS, 'a': at},
+        json.dump({'scopes': SCOPES, 'levels': LEVELS, 'regions': sorted(rix, key=rix.get), 'fields': sorted(fx, key=fx.get), 'langs': LANGS, 'a': at,
+                   'dates': dates},
                   fh, separators=(',', ':'))
     log(f'{n} roles, {len(keep)} terms -> match-bm25.json, match-attrs.json')
     return n
