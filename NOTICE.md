@@ -8,7 +8,7 @@ under the terms stated here. Where a licence text is shipped, it sits next to th
 | component | licence | where | notes |
 |---|---|---|---|
 | ONNX Runtime Web 1.30.0 (`onnxruntime-web`), Microsoft Corporation | MIT | `web/assets/vendor/ort/` (`LICENSE.txt`) | runs the embedding model in the browser |
-| `@huggingface/tokenizers` (the browser tokenizer, `tokenizers.min.mjs`) | Apache-2.0 | `web/assets/vendor/` (`LICENSE-tokenizers.txt`) | tokenises the text for the model in the browser |
+| `@huggingface/tokenizers` (the browser tokenizer, `tokenizers.min.js`) | Apache-2.0 | `web/assets/vendor/` (`LICENSE-tokenizers.txt`) | tokenises the text for the model in the browser |
 | pdf.js 4.10.38, Mozilla Foundation | Apache-2.0 | `web/assets/vendor/pdfjs/` (`LICENSE.txt`) | reads the text of a CV (PDF) in the browser; the CV never leaves the browser |
 
 ## Used at build time (`jobcrawl/geo/`)
