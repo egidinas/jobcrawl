@@ -39,6 +39,7 @@ and the neighbours), and once after `map` to copy the atlas layout into the matc
 | statements and neighbours | `jobcrawl/index/prefs.py`, `jobcrawl/index/neighbours.py` | site folder, vectors, profile `statements` | `match-prefs.json`, `role-nb.bin`, `role-graph.json` | numpy (neighbours) |
 | publish | `jobcrawl/index/publish.py` (`jobcrawl publish`) | everything above, profile | `match/` folder, `config.json` | standard library, numpy with vectors |
 | map | `jobcrawl/map/atlas.py`, `jobcrawl/map/labels.py` (`jobcrawl map`) | vectors, site folder, match-prefs, profile `map`, `scopes` | `atlas-layout.json` (in the vectors folder) | `requirements-map.txt` |
+| traces | `jobcrawl/index/traces.py` (`jobcrawl traces`) | site folder, vectors, `atlas-layout.json`, the earlier traces | `role-traces.*` (private), `role-trends.json`, `role-timeline.*` (in the vectors folder) | numpy |
 | web | `web/` (`index.html`, `match.html`, `atlas.html`), `scripts/serve.py` | `config.json`, `jobs-*.json`, `match/`, optional `models/` | the browser's own state only | a browser; a static server |
 
 Where the files go: the **site folder** (`data/site`, or `--site`) is everything the web app loads. The **vectors folder** defaults to
@@ -82,7 +83,8 @@ The crawler adds more keys (source, posting date, last seen, metadata). The boar
 | `r` | string | region label: the country of the first place, else the narrowest scope (English) |
 | `sc` | list of scope ids | the profile's scopes the role belongs to (narrowest first, and every wider one) |
 | `lv` | string | seniority band code (`levels[].code`) |
-| `d` | string | first-seen date, `YYYY-MM-DD` |
+| `d` | string | published date, `YYYY-MM-DD`: the source's posted date, else the first-seen day |
+| `fs` | string | first-seen date, `YYYY-MM-DD` |
 | `tg` | list of field ids | the field tags (at most `max_field_tags`) |
 | `x` | string | the description text: full in a private build; the demo carries excerpts of at most 300 characters |
 
@@ -98,9 +100,10 @@ only. The title counts 3 per word, the first 3,000 characters of the description
 
 ### match/match-attrs.json (publish)
 
-`{scopes, levels, regions, fields, langs, a}`. `a` has one row per role in index order:
+`{scopes, levels, regions, fields, langs, a, dates}`. `a` has one row per role in index order:
 `[scope bits, level index, has description, region index, field bits, language index]`. Bit `k` of the scope bits is `scopes[k]`;
 `levels` lists `""` and then the codes by rank; `langs` is `en, de, fr, es`.
+`dates` is `{base, ago}`: `base` the newest date (`d`, posted or first-seen) of the roles, `ago[i]` the whole days role `i` is older than it (`-1`: no date).
 
 ### match/match-vec.bin and match/match-vec.json (embed, copied by publish)
 
@@ -135,6 +138,32 @@ duplicate group); 65535 means none. `role-graph.json`: `{k, ids_from, sim, dup}`
   the groups: `{n, words, fields, lean, xy, label}` (`label` is `[en, de]` when the labels file names the group), and `links` the
   connections between groups `[a, b, weight]`.
 * `companies` is the companies map: `{names, about, field, slugs, x, y, c1, roles, regions}`, one entry per company.
+
+### role-traces.json and role-traces.bin (traces, private: never published)
+
+`role-traces.json`: `{version, dim, run, layout, regions, conv, ids, t, c, cs, l, u, p, fa, la, sc, tg, lv, c1, x, y}`, one entry per
+role ever on the board, in the order first traced. `t`, `c`, `cs`, `l`, `u` are the raw facts as the board has them (title, company, slug,
+location text, posting URL); `p` the posted day where it differs from first seen (`''` otherwise). `fa` and `la` are the first and last seen
+times, `YYYY-MM-DDTHH:MMZ` (UTC). `sc` and `tg` are bit sets and `lv` an index, all over `conv` = `{scopes, fields, levels}`, the lists the
+bits refer to (so they still decode after the profile changes). `c1` the region (-1 none); `x`, `y` the map position (-1 none).
+`role-traces.bin`: int8, 128 numbers per role in the same order (zero for a role without a vector).
+
+### role-trends.json (traces, copied by publish)
+
+`{version, weeks, regions, scopes, series}`: `weeks` are ISO weeks (`2026-W40`), `series[scope]` has `new`, `gone` and `open`, each a list
+per week of a count per region. `new`: first seen that week; `gone`: last seen that week and more than seven days before the run; `open`: on
+the board at the end of the week.
+
+### role-timeline.json and role-timeline.bin (traces, copied by publish)
+
+For the atlas's time scrubber: the roles last seen within 365 days of the run. `role-timeline.json`: `{version, t0, unit: "minute", n, scopes,
+fields, layout}`, `t0` the earliest first-seen time. `role-timeline.bin`: `n` records of 16 bytes, little-endian, struct format `<HHBBHII`:
+`x` uint16 (x * 65535; 65535 = none), `y` uint16 (the same), `c1` uint8 (255 = none), `sc` uint8 (scope bits), `tg` uint16 (field bits),
+`fa` uint32 and `la` uint32 (minutes since `t0`). No ids, URLs, locations or descriptions.
+
+### role-timeline-names-NNN.json (traces, copied by publish)
+
+`[[title, company], ...]` for the timeline records `NNN*2000` to `NNN*2000+1999`, in the order of `role-timeline.bin` (`names_shard` in its json).
 
 ### config.json (publish)
 
