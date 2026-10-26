@@ -11,6 +11,7 @@ COMMANDS = {
     "publish": "build the match files (keyword index, prefs, neighbours) and config.json for the web app",
     "neighbours": "build the neighbour lists into the vectors folder, so publish can copy them on a machine without numpy",
     "map": "build the atlas layout from the vectors (needs the map extra)",
+    "traces": "record each role's first and last seen time, the weekly trends and the atlas timeline (into --traces, default the vectors folder; needs numpy)",
 }
 
 
@@ -42,6 +43,7 @@ def build_parser():
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--text-from", metavar="DIR", help="build with the full descriptions of this site folder (its x), when SITE holds excerpts (demo)")
+            sp.add_argument("--traces", metavar="DIR", help="copy the trends and the timeline from this folder (jobcrawl traces --traces; default: the vectors folder)")
         if name == "neighbours":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors); role-nb.bin and role-graph.json go there")
@@ -50,6 +52,12 @@ def build_parser():
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder (map.*, scopes, labels_file)")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--labels-only", action="store_true", help="apply the profile's group names to the layout already built")
+        if name == "traces":
+            sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
+            sp.add_argument("--profile", metavar="DIR", help="profile folder (scope, field and level order; without it the board's order)")
+            sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
+            sp.add_argument("--traces", metavar="DIR", help="folder for role-traces.*, role-trends.json and the timeline (default: the vectors folder)")
+            sp.add_argument("--date", metavar="TIME", help="the run time, UTC: YYYY-MM-DD or YYYY-MM-DDTHH:MM (default: now)")
     return parser
 
 
@@ -127,7 +135,7 @@ def cmd_publish(args):
         return _usage_error("publish", e)
     vectors = args.vectors or default_vectors(args.site)
     try:
-        files = publish.publish(args.site, profile, vectors, text_from=args.text_from)
+        files = publish.publish(args.site, profile, vectors, text_from=args.text_from, traces=args.traces)
     except ImportError as e:
         return _usage_error("publish", f"{e}. Publishing with vectors needs numpy: pip install -r requirements-embed.txt")
     except (publish.PublishError, ValueError, OSError) as e:
@@ -173,13 +181,31 @@ def cmd_map(args):
     return 0
 
 
+def cmd_traces(args):
+    from jobcrawl.index import traces
+    if err := _check_site("traces", args.site):
+        return err
+    try:
+        profile = load_profile(args.profile) if args.profile else None
+    except (ProfileError, OSError) as e:
+        return _usage_error("traces", e)
+    vectors = args.vectors or default_vectors(args.site)
+    try:
+        traces.build(args.site, vectors, args.date, profile, traces=args.traces)
+    except ImportError as e:
+        return _usage_error("traces", f"{e}. The traces need numpy: pip install -r requirements-embed.txt")
+    except (traces.TraceError, ValueError, OSError) as e:
+        return _usage_error("traces", e)
+    return 0
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
         return 2
-    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map}
+    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "traces": cmd_traces}
     return handlers[args.command](args)
 
 
