@@ -1,4 +1,4 @@
-ONNX Runtime Web (onnxruntime-web), files in this folder: ort.wasm.min.mjs, ort-wasm-simd-threaded.mjs, ort-wasm-simd-threaded.wasm
+ONNX Runtime Web (onnxruntime-web), files in this folder: ort.wasm.min.js, ort-wasm-simd-threaded.js, ort-wasm-simd-threaded.wasm
 Copyright (c) Microsoft Corporation. All rights reserved.
 
 MIT License
