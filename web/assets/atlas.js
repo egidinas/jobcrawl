@@ -56,6 +56,15 @@ style.textContent = `
 .shape-save{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .shape-toggle{font-size:13px;display:flex;gap:6px;align-items:center}
 .atlas-note{font-size:12.5px;color:var(--muted)}
+.atlas-scrub{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--ink)}
+.atlas-scrub[hidden]{display:none}
+.atlas-scrub button{all:unset;cursor:pointer;width:28px;height:26px;text-align:center;line-height:26px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:12px}.atlas-scrub button:focus-visible{outline:2px solid var(--accent)}
+.atlas-scrub input[type=range]{flex:1 1 200px;min-width:120px;margin:0;accent-color:var(--accent)}
+.atlas-scrub label{display:flex;gap:5px;align-items:center;font-size:12.5px;color:var(--muted);white-space:nowrap}
+.tl-label{white-space:nowrap;font-variant-numeric:tabular-nums;min-width:12em}
+.atlas-stage:fullscreen .atlas-scrub,.atlas-stage:-webkit-full-screen .atlas-scrub{position:absolute;left:0;right:0;bottom:0;border-top:0;background:color-mix(in srgb,var(--panel) 72%,transparent)}
+.atlas-area .chg{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.atlas-chart{width:120px;height:24px;flex:none}
 `;
 document.head.appendChild(style);
 mount.innerHTML = `<div class="atlas-bar">
@@ -71,7 +80,7 @@ mount.innerHTML = `<div class="atlas-bar">
 <label class="shape-toggle"><input type="checkbox" id="atlas-taste" checked> ${L('Show how well each area fits me (bright: close to my profile, faint: far from it)', 'Zeigen, wie gut jeder Bereich zu mir passt (hell: nah an meinem Profil, blass: weit weg)')}</label>
 <label class="shape-toggle"><input type="checkbox" id="atlas-all"> ${L('Show every role (otherwise at most three per employer and neighbourhood, so big employers do not crowd the map)', 'Jede Stelle zeigen (sonst höchstens drei je Arbeitgeber und Nachbarschaft, damit große Arbeitgeber die Karte nicht füllen)')}</label></div></details>
 <div class="atlas-grid"><div>
-<div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-fs" aria-label="${esc(pick('Full screen', 'Vollbild'))}" title="${esc(pick('Full screen', 'Vollbild'))}">⛶</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div></div>
+<div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-fs" aria-label="${esc(pick('Full screen', 'Vollbild'))}" title="${esc(pick('Full screen', 'Vollbild'))}">⛶</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div><div class="atlas-scrub" id="atlas-scrub" hidden><button type="button" id="atlas-play" aria-label="${esc(pick('Play', 'Abspielen'))}" title="${esc(pick('Play through time', 'Durch die Zeit abspielen'))}">▶</button><input type="range" id="atlas-time" min="0" max="0" value="0" aria-label="${esc(pick('Time', 'Zeitpunkt'))}"><span class="tl-label" id="atlas-tlabel"></span><label><input type="checkbox" id="atlas-heat"> ${L('Hot and cold spots', 'Wo es wächst und schrumpft')}</label></div></div>
 <p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
 <div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong>${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
 <ul class="atlas-list" id="atlas-list"></ul>
@@ -103,7 +112,9 @@ const AGE = (() => { const a = new Float64Array(N).fill(Infinity), d = at.dates;
   const [y, m, dd] = d.base.split('-').map(Number), t = new Date(), days = Math.round((Date.UTC(t.getFullYear(), t.getMonth(), t.getDate()) - Date.UTC(y, m - 1, dd)) / 864e5);
   for (let i = 0; i < N; i++) { const g = d.ago[i]; if (g >= 0) a[i] = Math.max(0, days + g); } return a; })();
 // the weight of a new role: 1 today, 0.45 this week, 0.18 this month, 0 older (drawn as before)
-const wOf = (i) => (AGE[i] < 1 ? 1 : AGE[i] < 7 ? 0.45 : AGE[i] < 30 ? 0.18 : 0);
+const wAge = (a) => (a < 1 ? 1 : a < 7 ? 0.45 : a < 30 ? 0.18 : 0), wOf = (i) => wAge(AGE[i]);
+// the same for the timeline's layer (tlLayer): its entities carry their age (e.a) and weight (e.w) instead of a role index
+const wE = (e) => (e.past ? e.w : wOf(e.idx[0])), ageE = (e) => (e.past ? e.a : AGE[e.idx[0]]);
 function roleLayer(R = LAY.roles, scope = ANY) {
   const ents = [], mapped = [];
   R.ids.forEach((id, k) => { const i = idIndex.get(id); if (i !== undefined) { ents.push({ id, idx: [i], x: R.x[k], y: R.y[k], c1: R.c1[k], c2: R.c2[k], hidden: R.rep ? R.rep[k] >= 0 : false }); if (pos[i] >= 0) mapped.push(ents.length - 1); } });
@@ -139,6 +150,30 @@ function roleMapFor(scope) {
 }
 const layers = { roles: roleMapFor(defaultScope()), companies: companyLayer() };
 const coEnts = layers.companies.ents.filter((e) => e.vec);
+
+// ---- the role timeline (optional): when each role was on the board. match/role-timeline.json and .bin (16-byte records, little
+// endian: x, y, c1, sc, tg, fa, la; times in minutes after t0), the names in role-timeline-names-NNN.json. Without the files: as before.
+const DAY = 1440, EMBER = 30 * DAY;   // minutes; a role last seen this long before the scrubbed time still shows, fading
+const TLJ = cfg.timeline ? await fetch(dataUrl(cfg.timeline)).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;   // config.json names it when published
+const TLBIN = TLJ && TLJ.version === 1 ? await fetch(dataUrl('match/role-timeline.bin')).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null) : null;
+const TLN = TLBIN && TLBIN.byteLength === TLJ.n * 16 ? TLJ.n : 0;
+const TLX = new Uint16Array(TLN), TLY = new Uint16Array(TLN), TLC = new Uint8Array(TLN), TLS = new Uint8Array(TLN), TLG = new Uint16Array(TLN), TLF = new Uint32Array(TLN), TLL = new Uint32Array(TLN);
+if (TLN) { const dv = new DataView(TLBIN); for (let r = 0; r < TLN; r++) { const o = r * 16; TLX[r] = dv.getUint16(o, true); TLY[r] = dv.getUint16(o + 2, true); TLC[r] = dv.getUint8(o + 4); TLS[r] = dv.getUint8(o + 5); TLG[r] = dv.getUint16(o + 6, true); TLF[r] = dv.getUint32(o + 8, true); TLL[r] = dv.getUint32(o + 12, true); } }
+// the crawl rounds: the distinct first and last sighting times; times within 30 minutes of each other are one round (its last time)
+const TL = (() => { if (!TLN) return null; let end = 0, start = Infinity; for (let r = 0; r < TLN; r++) { end = Math.max(end, TLL[r]); start = Math.min(start, TLF[r]); }
+  const tv = new Uint32Array(2 * TLN); tv.set(TLF, 0); tv.set(TLL, TLN); tv.sort(); const rounds = [];
+  for (const t of tv) { if (!rounds.length || t - rounds[rounds.length - 1] > 30) rounds.push(t); else rounds[rounds.length - 1] = t; }
+  if (rounds.length < 2) return null;   // one crawl round: nothing to scrub
+  // the steps: the rounds (span up to 14 days, at most 200 rounds), else days (up to 60), every 2 days (180), weekly (400), monthly
+  const S = (end - start) / DAY, t0 = Date.parse(TLJ.t0), kind = S <= 14 && rounds.length <= 200 ? 'round' : S <= 60 || S <= 14 ? 'day' : S <= 180 ? 'day2' : S <= 400 ? 'week' : 'month', steps = [];
+  if (kind === 'round') steps.push(...rounds);
+  else if (kind === 'month') { const d = new Date(t0 + start * 60000); for (let y = d.getUTCFullYear(), m = d.getUTCMonth(); ; m++) { const t = (Date.UTC(y, m, 1) - t0) / 60000; if (t >= end) break; if (t >= start) steps.push(t); } }
+  else { const step = kind === 'day' ? DAY : kind === 'day2' ? 2 * DAY : 7 * DAY; for (let t = start; t < end; t += step) steps.push(t); }
+  if (steps[steps.length - 1] !== end) steps.push(end);   // the last step is now
+  return { n: TLN, t0, start, end, kind, steps, scopes: TLJ.scopes, fields: TLJ.fields, shard: TLJ.names_shard || 2000 }; })();
+// tm: the scrubbed time (minutes after t0); at the end (now) the map is the one without a timeline
+const scrub = { idx: TL ? TL.steps.length - 1 : 0, tm: TL ? TL.end : 0 };
+let tlLast = null, lastHeat = null, tlTimer = null;
 
 // ---- taste: marks, statements and a CV, shared with Match me through this browser's storage (numbers only, never the CV text)
 const prefDefs = (await fetch(dataUrl('match/match-prefs.json')).then((r) => (r.ok ? r.json() : { prefs: [] })).catch(() => ({ prefs: [] }))).prefs.map((p) => ({ ...p, v: Float32Array.from(p.v) }));
@@ -200,7 +235,7 @@ fitView();
 // the backing store follows the screen's pixel density (k = device pixel ratio, at most 3); everything is drawn in logical units
 function sizeCanvas() { const k = Math.min(3, window.devicePixelRatio || 1), w = Math.round(W * k), h = Math.round(H * k); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0); }
 sizeCanvas();
-const lay = () => layers[st.mode];
+const lay = () => (st.mode === 'roles' && TL && scrub.tm < TL.end ? tlLayer(scrub.tm) : layers[st.mode]);
 const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1));
 const visibleRoles = (e) => e.idx.filter(roleVisible);
 function tw(r) { if (r.vote !== undefined) return r.vote; const v = []; if (r.role) v.push((r.role - 3) / 2); if (r.interest) v.push((r.interest - 3) / 2); if (r.apply !== undefined) v.push(r.apply); return v.length ? Math.sign(v.reduce((a, b) => a + b, 0)) : null; }
@@ -334,22 +369,22 @@ function cutWords(s, n) {
 // with the one map: per region and neighbourhood, the visible roles in it (n) and their mean position (xy), so a filter moves a
 // label to where its roles are. A label needs at least `min` visible roles: 6, or 0.4 % of the visible roles.
 function visStats(Ly) {
-  const group = (key, groups) => { const G = groups.map(() => ({ n: 0, sx: 0, sy: 0 })); Ly.ents.forEach((e, k) => { if (!vis[k]) return; const g = G[e[key]]; g.n++; g.sx += e.x; g.sy += e.y; });
+  const group = (key, groups) => { const G = groups.map(() => ({ n: 0, sx: 0, sy: 0 })); Ly.ents.forEach((e, k) => { if (!vis[k]) return; const g = G[e[key]]; if (!g) return; g.n++; g.sx += e.x; g.sy += e.y; });
     return G.map((g, q) => ({ r: groups[q], n: g.n, xy: g.n ? [g.sx / g.n, g.sy / g.n] : groups[q].xy })); };
-  return { min: Math.max(6, 0.004 * vis.filter(Boolean).length), reg: group('c1', Ly.regions), hood: group('c2', Ly.hoods) };
+  return { min: Math.max(6, 0.004 * vis.filter(Boolean).length), reg: group('c1', Ly.regions), hood: Ly.past ? [] : group('c2', Ly.hoods) };
 }
 // ---- drawing. prepare(T) sets the visible points and the taste fit for the current view; paintMap(ctx, P, o) draws the view on
 // any context whose transform maps the logical W x H map onto it. o.screen: the lens, sample and zoom buttons are drawn and kept
 // clear (o.names 'few'); an exported image has none of them and names the areas and the role labels or company names ('many').
 // o.ff: the colour field's grid factor (finer when zoomed or exported big); o.ts: the text scale.
 function prepare(T) {
-  const Ly = lay(), roles = st.mode === 'roles', showTaste = !!(taste && $('atlas-taste').checked);
-  act = Ly.ents.map((e) => visibleRoles(e).length > 0); vis = roles ? act : Ly.ents.map(() => true);
+  const Ly = lay(), roles = st.mode === 'roles', showTaste = !!(taste && $('atlas-taste').checked) && !Ly.past;
+  act = Ly.past ? Ly.ents.map(() => true) : Ly.ents.map((e) => visibleRoles(e).length > 0); vis = roles ? act : Ly.ents.map(() => true);
   fit = showTaste ? fitOf(Ly) : null;
-  const stat = roles && !perScope ? visStats(Ly) : null;
+  const stat = roles && (!perScope || Ly.past) ? visStats(Ly) : null;
   // the visible roles by age: today, this week, this month (the legend under the map)
-  const fresh = { t: 0, w: 0, m: 0 }; if (roles) Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all)) return; const a = AGE[e.idx[0]]; if (a < 1) fresh.t++; else if (a < 7) fresh.w++; else if (a < 30) fresh.m++; });
-  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel'), stat, fresh };
+  const fresh = { t: 0, w: 0, m: 0 }; if (roles) Ly.ents.forEach((e, k) => { if (!vis[k] || e.ember || (e.hidden && !st.all)) return; const a = ageE(e); if (a < 1) fresh.t++; else if (a < 7) fresh.w++; else if (a < 30) fresh.m++; });
+  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel'), stat, fresh, heat: !!(roles && TL && $('atlas-heat').checked) };
 }
 function paintMap(ctx, P, o) {
   const { Ly, roles, T, ink, paper, stat } = P, screen = o.screen, many = o.names === 'many', zoomed = st.z.s >= 2.2, ts = o.ts || 1, ff = o.ff || 1, ks = Math.max(1, W * H / (900 * 640));   // ks: the label caps grow with the area
@@ -362,22 +397,25 @@ function paintMap(ctx, P, o) {
   // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
   if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
   else colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff });
+  // hot and cold spots: after the colour field, before the points; the field is dimmed first so the growth colours stand out
+  if (P.heat) { ctx.globalAlpha = T.glow ? 0.6 : 0.5; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; heatField(ctx, ff, T); }
   const dot = (roles ? 2 : 5) * Math.min(2.5, Math.sqrt(st.z.s)); let shown = 0; const hot = [];
-  Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (act[k]) shown++; if (e.hidden && !st.all) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
-    if (roles && wOf(e.idx[0]) > 0) { hot.push(k); return; }   // new roles are drawn after the others, on top
+  Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (act[k] && !e.ember) shown++; if (e.hidden && !st.all) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
+    if (e.ember) { ctx.globalAlpha = e.ea; ctx.fillStyle = 'rgb(190,120,60)'; ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }   // a role last seen before the scrubbed time: a dim warm ember
+    if (roles && wE(e) > 0) { hot.push(k); return; }   // new roles are drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
     const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
     if (roles) ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { ctx.beginPath(); ctx.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); } } });
   // the new roles, on top: radius dot x (1 + 1.6 w) at full strength; on the dark theme a glow in the region colour and a white core,
   // today's also a small sparkle; on the light theme the region colour with a thin ink ring
   if (hot.length) { const px = ctx.getTransform().a || 1; ctx.globalAlpha = 1;
-    for (const k of hot) { const e = Ly.ents[k], w = wOf(e.idx[0]), X0 = sx(e.x), Y0 = sy(e.y), R = dot * (1 + 1.6 * w), rgb = regionRgb(e.c1, T.pointL, T.C), c = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    for (const k of hot) { const e = Ly.ents[k], w = wE(e), X0 = sx(e.x), Y0 = sy(e.y), R = dot * (1 + 1.6 * w), rgb = regionRgb(e.c1, T.pointL, T.C), c = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
       ctx.fillStyle = c; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7);
       if (T.glow) { ctx.shadowBlur = 14 * w * px; ctx.shadowColor = c; ctx.fill(); ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; ctx.beginPath(); ctx.arc(X0, Y0, 0.45 * R, 0, 7); ctx.fillStyle = '#ffffff'; ctx.fill(); }
       else { ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.stroke(); }
       if (w >= 1) { const s = 1.6 * R; ctx.globalAlpha = 0.8; ctx.strokeStyle = T.glow ? '#ffffff' : ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X0 - s, Y0); ctx.lineTo(X0 + s, Y0); ctx.moveTo(X0, Y0 - s); ctx.lineTo(X0, Y0 + s); ctx.stroke(); ctx.globalAlpha = 1; } } }
   // the point whose card is open: a ring (on screen only)
-  if (screen && sel && sel.ly === Ly && vis[sel.k]) { const e = Ly.ents[sel.k], R = dot * (1 + 1.6 * (roles ? wOf(e.idx[0]) : 0)) + 4; ctx.globalAlpha = 1; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), R, 0, 7); ctx.stroke(); }
+  if (screen && sel && sel.ly === Ly && vis[sel.k]) { const e = Ly.ents[sel.k], R = dot * (1 + 1.6 * (roles ? wE(e) : 0)) + 4; ctx.globalAlpha = 1; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), R, 0, 7); ctx.stroke(); }
   Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.strokeStyle = halo; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke(); });
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
   // screen) and of every label already placed; otherwise it is left out. Areas first, then role labels or company names.
@@ -393,7 +431,7 @@ function paintMap(ctx, P, o) {
   const regs = stat ? stat.reg.filter((g) => g.n >= stat.min) : Ly.regions.map((r) => ({ r, n: r.n, xy: r.xy })), hoods = stat ? stat.hood.filter((g) => g.n >= stat.min) : Ly.hoods.map((r) => ({ r, n: r.n, xy: r.xy }));
   const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => b.n - a.n);
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
-  const areas = many ? [...byN(regs, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed ? hoods : regs, false);
+  const areas = many ? [...byN(regs, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regs, false);
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
   // roles first). On screen the other new roles follow, newest first. They come before the areas, so they win the collisions, and may lie
   // inside the lens. A role title is used once; in the lens the same title at the same company is skipped.
@@ -409,13 +447,13 @@ function paintMap(ctx, P, o) {
     if (!title) return false; const lines = roleLines(title, row, col, wOf(e.idx[0]) >= 1 ? '✦ ' : '');
     if (!place(lines, cand(X0, Y0, lines), free)) return false;
     seenT.add(title.toLowerCase()); labelled.add(k); ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); return true; };
-  if (roles) {
+  if (roles && !Ly.past) {
     const pool = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); }); pool.sort(byAge);
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], row = rows[e.idx[0]], title = cleanTitle(row[1]), tk = title.toLowerCase() + '|' + row[2];
       if (!title || !inMap(sx(e.x), sy(e.y)) || seenC.has(tk)) continue; if (roleLab(k, true)) { seenC.add(tk); counts.lens++; } }
     if (screen) { const fresh = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && wOf(e.idx[0]) > 0 && !labelled.has(k) && inMap(sx(e.x), sy(e.y))) fresh.push(k); }); fresh.sort(byAge);
       for (const k of fresh) { if (counts.fresh >= newCap) break; const t = cleanTitle(rows[Ly.ents[k].idx[0]][1]).toLowerCase(); if (!t || seenT.has(t)) continue; if (roleLab(k, false)) counts.fresh++; } }
-  } else {
+  } else if (!roles) {
     const pool = []; Ly.ents.forEach((e, k) => { if (vis[k] && e.name && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); });
     pool.sort((a, b) => Ly.ents[b].idx.length - Ly.ents[a].idx.length || d2(a) - d2(b));
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), nm = shortName(e.name);
@@ -432,7 +470,7 @@ function paintMap(ctx, P, o) {
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
   // title and its company in brackets, beside a small dot marker at the role's own position. A title is used once.
-  if (roles && (many || zoomed)) {
+  if (roles && !Ly.past && (many || zoomed)) {
     const cap = Math.round((many ? 120 : 14) * ks), lists = roleRounds(Ly), order = [...Ly.hoods.keys()].sort((x, y) => (stat ? stat.hood[y].n - stat.hood[x].n : Ly.hoods[y].n - Ly.hoods[x].n));
     rounds: for (let r = 0; ; r++) { let any = false;
       for (const h of order) { const list = lists[h]; if (r >= list.length) continue; any = true;
@@ -455,14 +493,14 @@ function paintMap(ctx, P, o) {
   }
   if (screen) {   // the lens and the sampled points
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle = ink; st.sample.forEach((k) => { const e = Ly.ents[k]; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), 4, 0, 7); ctx.fill(); });
+    ctx.fillStyle = ink; st.sample.forEach((k) => { const e = Ly.ents[k]; if (!e) return; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), 4, 0, 7); ctx.fill(); });
   }
   return { shown, counts };
 }
 function draw() {
   sizeCanvas(); const T = THEMES[themeFor()], ff = Math.min(3, Math.max(1, Math.sqrt(st.z.s))), P = prepare(T), res = paintMap(g, P, { screen: true, names: 'few', ff, ts: 1 }), Ly = P.Ly;
   const unitEn = P.roles ? 'roles' : 'companies', unitDe = P.roles ? 'Stellen' : 'Firmen', showTaste = P.showTaste;
-  buildHit(Ly); if (sel && (sel.ly !== Ly || !vis[sel.k] || (Ly.ents[sel.k].hidden && !st.all))) hidePop();
+  if (TL) tlShow(); buildHit(Ly); if (sel && (sel.ly !== Ly || !vis[sel.k] || (Ly.ents[sel.k].hidden && !st.all))) hidePop();
   if (sel) { const e = Ly.ents[sel.k], X = sx(e.x), Y = sy(e.y); if (X < 0 || Y < 0 || X > W || Y > H) hidePop(); else placePop(X, Y); }
   const fr = P.fresh, legend = P.roles && fr.t + fr.w + fr.m ? `  ✦ ${L('new today', 'neu heute')} ${fr.t} · ${L('this week', 'diese Woche')} ${fr.w} · ${L('this month', 'diesen Monat')} ${fr.m}` : '';
   $('atlas-status').innerHTML = L(`${res.shown.toLocaleString()} ${unitEn} shown${P.roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
@@ -567,20 +605,20 @@ function inLens() {
 }
 // what the lens is on: the neighbourhood most of its points belong to, with its words, fields and leanings
 function renderArea(pool) {
-  const Ly = lay(); if (!pool.length) { $('atlas-area').innerHTML = `<span class="atlas-note">${L('Move the lens onto the map.', 'Die Lupe auf die Karte ziehen.')}</span>`; return; }
+  const Ly = lay(); if (Ly.past && pool.length) return renderPastArea(pool, Ly); if (!pool.length) { $('atlas-area').innerHTML = `<span class="atlas-note">${L('Move the lens onto the map.', 'Die Lupe auf die Karte ziehen.')}</span>`; return; }
   const c = new Map(); pool.forEach((k) => c.set(Ly.ents[k].c2, (c.get(Ly.ents[k].c2) || 0) + 1)); const h = Ly.hoods[[...c].sort((a, b) => b[1] - a[1])[0][0]];
   const hk = [...c].sort((a, b) => b[1] - a[1])[0][0], total = Ly.ents.filter((e, k) => e.c2 === hk && (perScope || vis[k])).length;
   const reg = Ly.regions[Ly.ents[pool[0]].c1], lean = leanText(h.lean);
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}${st.mode === 'roles' && reg && reg !== h ? ' · ' + esc(nameOf(reg)) : ''}</span><b>${esc(nameOf(h))}</b><span class="atlas-note">${esc(h.words.join(' · '))}</span>`
     + `<span>${h.fields.length ? esc(h.fields.map(fieldLabel).join(', ')) + ' · ' : ''}${total.toLocaleString()} ${st.mode === 'roles' ? L('roles in the neighbourhood', 'Stellen in der Nachbarschaft') : L('companies in the group', 'Firmen in der Gruppe')}, ${pool.length} ${L('in the lens', 'in der Lupe')}</span>`
-    + (lean.length ? `<span class="lean">${L('Leans to: ', 'Neigt zu: ')}${esc(lean.join(' · '))}</span>` : '');
+    + (lean.length ? `<span class="lean">${L('Leans to: ', 'Neigt zu: ')}${esc(lean.join(' · '))}</span>` : '') + (TL ? tlAreaHtml(pool) : '');
 }
 let rngState = 7; const rnd = () => (rngState = (rngState * 16807) % 2147483647) / 2147483647;
 // the view on the visible roles (one map): the 2nd to 98th percentile of their positions (outliers left out), 6 % padding on each
 // side, zoomed so that box fills the map box; the lens moves to its centre. Fewer than 10 visible roles: the whole map
 function fitTo() {
   const Ly = lay(), xs = [], ys = [];
-  Ly.ents.forEach((e) => { if (visibleRoles(e).length) { xs.push(e.x); ys.push(e.y); } });
+  Ly.ents.forEach((e) => { if (Ly.past || visibleRoles(e).length) { xs.push(e.x); ys.push(e.y); } });
   if (xs.length < 10) { st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = { x: 0.5, y: 0.5 }; return; }
   const pct = (a, p) => { const q = [...a].sort((u, v) => u - v); return q[Math.min(q.length - 1, Math.floor(p * q.length))]; };
   const x0 = pct(xs, 0.02), x1 = pct(xs, 0.98), y0 = pct(ys, 0.02), y1 = pct(ys, 0.98);
@@ -591,12 +629,12 @@ function fitTo() {
 const fitOrWhole = () => { if (!perScope && st.mode === 'roles') fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
 function resample() {
   draw();   // refreshes which entities are visible under the current filters
-  const Ly = lay(), pool = inLens(), per = new Map(); pool.forEach((k) => { const c = st.mode === 'roles' ? rows[Ly.ents[k].idx[0]][2] : Ly.ents[k].name; per.set(c, (per.get(c) || 0) + 1); });
+  const Ly = lay(), pool = inLens(), per = new Map(); pool.forEach((k) => { const c = st.mode === 'roles' ? (Ly.past ? '' : rows[Ly.ents[k].idx[0]][2]) : Ly.ents[k].name; per.set(c, (per.get(c) || 0) + 1); });
   // weighted draw without replacement: roles by 1/sqrt(roles of that employer in the lens), at most 2 per employer; companies all alike
-  const out = [], taken = new Map(), w = pool.map((k) => (st.mode === 'roles' ? 1 / Math.sqrt(per.get(rows[Ly.ents[k].idx[0]][2])) : 1));
+  const out = [], taken = new Map(), w = pool.map((k) => (st.mode === 'roles' && !Ly.past ? 1 / Math.sqrt(per.get(rows[Ly.ents[k].idx[0]][2])) : 1));
   for (let n = 0, guard = 0; n < 8 && pool.length && guard < 200; n++, guard++) {
     let tot = 0; w.forEach((x) => { tot += x; }); if (tot <= 0) break; let t = rnd() * tot, q = 0; for (; q < w.length - 1; q++) { t -= w[q]; if (t <= 0) break; }
-    const c = st.mode === 'roles' ? rows[Ly.ents[pool[q]].idx[0]][2] : ''; if (st.mode === 'roles' && (taken.get(c) || 0) >= 2) { w[q] = 0; n--; continue; } taken.set(c, (taken.get(c) || 0) + 1); out.push(pool[q]); w[q] = 0;
+    const c = st.mode === 'roles' && !Ly.past ? rows[Ly.ents[pool[q]].idx[0]][2] : ''; if (st.mode === 'roles' && !Ly.past && (taken.get(c) || 0) >= 2) { w[q] = 0; n--; continue; } taken.set(c, (taken.get(c) || 0) + 1); out.push(pool[q]); w[q] = 0;
   }
   st.sample = out; renderArea(pool); renderList(); draw();
 }
@@ -610,6 +648,7 @@ const snip = (t, n) => { t = (t || '').replace(/\s+/g, ' ').trim(); return t.len
 const newBadge = (i) => { const a = AGE[i], t = a < 1 ? L('new today', 'neu heute') : a < 7 ? L('this week', 'diese Woche') : a < 30 ? L('this month', 'diesen Monat') : ''; return t ? ` <span class="atlas-new">${t}</span>` : ''; };
 function cardHtml(k) {
   const e = lay().ents[k], open = st.open.has(e.id);
+  if (e.past) return tlCardHtml(k, e);
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '';
     return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}${newBadge(i)}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div><div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
   const co = coRows[e.slug] || [e.about || ''], vr = visibleRoles(e), flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => fieldLabel(x[0]));
@@ -617,7 +656,7 @@ function cardHtml(k) {
 <div class="more"><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i])}">${esc(rows[i][1])}</a></li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12}</li>` : ''}</ul>${companyLink(e.slug) ? `<a class="link" href="${companyLink(e.slug)}">${L('Company page →', 'Firmenseite →')}</a>` : ''}</div>${voteHtml(e.id)}</li>`;
 }
 async function fillRole(li) {
-  const e = lay().ents[+li.dataset.k]; if (st.mode !== 'roles') return; const id = e.id, d = (await shard(id))[id], box = li.querySelector('.more'), i = e.idx[0], row = rows[i];
+  const e = lay().ents[+li.dataset.k]; if (e.past) return tlFill(li, e); if (st.mode !== 'roles') return; const id = e.id, d = (await shard(id))[id], box = li.querySelector('.more'), i = e.idx[0], row = rows[i];
   li.querySelector('.snip').textContent = d && d.x ? snip(d.x.replace(/^Back to all jobs\s*/i, ''), 200) : '';
   if (!li.classList.contains('open') || box.dataset.ready) return; box.dataset.ready = '1';
   const text = d && d.x ? d.x.replace(/\n{3,}/g, '\n\n').trim() : '';
@@ -632,6 +671,74 @@ function renderList() {
   $('atlas-list').innerHTML = st.sample.map(cardHtml).join('') || `<li class="atlas-note">${L('Nothing in the lens with these filters. Move it or make it larger.', 'Nichts in der Lupe mit diesen Filtern. Verschieben oder vergrößern Sie sie.')}</li>`;
   $('atlas-list').querySelectorAll('.atlas-item').forEach(fillRole);
 }
+// ---- the timeline: the scrubber, the map at a past time, the hot and cold spots, the cards of past roles
+const nameShards = new Map();
+// a record's title and company, from its names shard (loaded when first needed; the card fills in when it arrives)
+function tlNamesOf(r) { const s = Math.floor(r / TL.shard), k = String(s).padStart(3, '0'); if (!nameShards.has(k)) nameShards.set(k, fetch(dataUrl('match/role-timeline-names-' + k + '.json')).then((x) => (x.ok ? x.json() : [])).catch(() => [])); return nameShards.get(k).then((a) => a[r - s * TL.shard] || ['', '']); }
+const isoWeek = (d) => { const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7) + 3); const y = new Date(Date.UTC(t.getUTCFullYear(), 0, 4)); return 1 + Math.round(((t - y) / 864e5 - 3 + ((y.getUTCDay() + 6) % 7)) / 7); };
+// a time (minutes after t0) as a date, with the time of day when asked; UTC, like the data
+const tlDate = (t, time = false) => new Intl.DateTimeFormat(isDe() ? 'de-DE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', ...(time ? { hour: '2-digit', minute: '2-digit' } : {}), timeZone: 'UTC' }).format(new Date(TL.t0 + t * 60000));
+// the scrubber's label: "26 Oct 2026, 14:00" (rounds), "26 Oct 2026" (days), "Week 44, 2026", "October 2026"
+const tlLabel = (t) => { const d = new Date(TL.t0 + t * 60000), k = TL.kind; return k === 'week' ? `${pick('Week', 'KW')} ${isoWeek(d)}, ${d.getUTCFullYear()}` : k === 'month' ? new Intl.DateTimeFormat(isDe() ? 'de-DE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) : tlDate(t, k === 'round'); };
+const tlDates = (e) => `${pick('first seen', 'erstmals gesehen')} ${tlDate(e.fa)} · ${e.la >= TL.end ? pick('still listed', 'noch ausgeschrieben') : `${pick('last seen', 'zuletzt gesehen')} ${tlDate(e.la)}`}`;
+// the atlas's filters on a record: its scope bit (the Where filter) and its field bits (the chips; any of them)
+const tlFilt = () => { let m = 0; for (const f of st.fields) { const q = TL.fields.indexOf(f); if (q >= 0) m |= 1 << q; } const b = cfg.scopes[st.scope] ? TL.scopes.indexOf(cfg.scopes[st.scope].id) : -1; return { bit: b, on: st.fields.size > 0, mask: m }; };
+const tlOk = (r, f) => (f.bit < 0 || (TLS[r] >> f.bit & 1) === 1) && (!f.on || (TLG[r] & f.mask) !== 0);
+// the new and gone counts look back 4 weeks (or half the span when it is shorter)
+const tlWin = () => Math.min(28 * DAY, (TL.end - TL.start) / 2);
+// the map at a time: the records on the board then, and the embers (last seen up to 30 days before). A layer like the roles layer,
+// read from the timeline: its entities have no role index, carry their first and last seen times, their age and weight
+function tlLayer(tm) { const key = tm + '|' + st.scope + '|' + [...st.fields].join(), f = tlFilt(); if (tlLast && tlLast.key === key) return tlLast.ly;
+  const ents = []; for (let r = 0; r < TLN; r++) { const fa = TLF[r], la = TLL[r]; if (fa > tm || TLX[r] === 0xFFFF || la < tm - EMBER || !tlOk(r, f)) continue; const live = la >= tm, a = (tm - fa) / DAY;
+    ents.push({ id: 'tl:' + r, rec: r, past: true, idx: [], x: TLX[r] / 65535, y: TLY[r] / 65535, c1: TLC[r], c2: 0, fa, la, a, w: live ? wAge(a) : 0, ember: !live, ea: live ? 1 : 0.5 * (1 - (tm - la) / EMBER) }); }
+  const ly = { kind: 'roles', past: true, ents, n: ents.length, regions: LAY.roles.regions, hoods: [], links: [], placed: 0 }; tlLast = { key, ly }; return ly; }
+// the scrubber: a step is a time; setScrub moves the map there (the last step is now)
+function setScrub(i) { if (!TL) return; scrub.idx = Math.max(0, Math.min(TL.steps.length - 1, i)); scrub.tm = TL.steps[scrub.idx]; st.sample = []; rngState = 7; resample(); }
+function tlShow() { const sl = $('atlas-time'), n = TL.steps.length - 1; if (sl.max !== String(n)) sl.max = n; if (+sl.value !== scrub.idx) sl.value = scrub.idx; $('atlas-tlabel').textContent = tlLabel(scrub.tm) + (scrub.idx === n ? ' · ' + pick('Now', 'Jetzt') : ''); $('atlas-scrub').hidden = st.mode !== 'roles'; }
+function tlStop() { if (tlTimer) { clearInterval(tlTimer); tlTimer = null; } const b = $('atlas-play'); b.textContent = '▶'; b.setAttribute('aria-label', pick('Play', 'Abspielen')); }
+// play: one step every 800 ms until the end (from the start when it is at the end already)
+function tlPlay() { if (tlTimer) return tlStop(); const n = TL.steps.length - 1; if (scrub.idx >= n) setScrub(0); const b = $('atlas-play'); b.textContent = '❚❚'; b.setAttribute('aria-label', pick('Pause', 'Pause'));
+  tlTimer = setInterval(() => { setScrub(scrub.idx + 1); if (scrub.idx >= n) tlStop(); }, 800); }
+// the region most of the pool belongs to (-1: none)
+function domC1(pool) { const Ly = lay(), m = new Map(); pool.forEach((k) => { const c = Ly.ents[k].c1; m.set(c, (m.get(c) || 0) + 1); }); return m.size ? [...m].sort((a, b) => b[1] - a[1])[0][0] : -1; }
+// one region at the scrubbed time: new and gone in the window, and 12 weekly bins (newest first) of new minus gone
+function tlChange(c) { const f = tlFilt(), tm = scrub.tm, win = tlWin(), wk = 7 * DAY, bins = Array.from({ length: 12 }, () => ({ n: 0, g: 0 })); let nw = 0, gw = 0;
+  for (let r = 0; r < TLN; r++) { const fa = TLF[r], la = TLL[r]; if (TLC[r] !== c || fa > tm || !tlOk(r, f)) continue;
+    const kn = Math.floor((tm - fa) / wk); if (kn < 12) bins[kn].n++; if (tm - fa < win) nw++;
+    if (la <= tm && la < TL.end) { const kg = Math.floor((tm - la) / wk); if (kg < 12) bins[kg].g++; if (tm - la < win) gw++; } }
+  return { nw, gw, bins: bins.slice(0, Math.max(1, Math.min(12, Math.floor((TL.end - TL.start) / wk)))) }; }
+// the area panel's line for the lens region: the change over the last 4 weeks, and a small chart of the weekly change (oldest left)
+function tlAreaHtml(pool) { const c = domC1(pool); if (c < 0) return ''; const s = tlChange(c), days = Math.round(tlWin() / DAY), nb = s.bins.length, mx = Math.max(1, ...s.bins.map((b) => Math.abs(b.n - b.g))), sl = 120 / nb, bw = sl * 0.6;
+  const bars = s.bins.slice().reverse().map((b, i) => { const d = b.n - b.g, h = Math.abs(d) / mx * 11; return d ? `<rect x="${(i * sl + (sl - bw) / 2).toFixed(1)}" y="${(d > 0 ? 12 - h : 12).toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" style="fill:var(${d > 0 ? '--accent-text' : '--muted'})"/>` : ''; }).join('');
+  return `<div class="chg"><span>${L(`${days === 28 ? 'Last 4 weeks' : `Last ${days} days`}: +${s.nw} first seen, −${s.gw} no longer seen`, `${days === 28 ? 'Letzte 4 Wochen' : `Letzte ${days} Tage`}: +${s.nw} erstmals gesehen, −${s.gw} nicht mehr gesehen`)}</span><svg class="atlas-chart" viewBox="0 0 120 24" role="img" aria-label="${esc(pick('Weekly change', 'Wöchentliche Veränderung'))}"><line x1="0" y1="12" x2="120" y2="12" style="stroke:var(--line)" stroke-width="1"/>${bars}</svg></div>`; }
+// the lens on the past map: the region of most of its roles, and how many were on the board then
+function renderPastArea(pool, Ly) { const c = domC1(pool), rg = c < Ly.regions.length ? nameOf(Ly.regions[c]) : pick('Other', 'Andere');
+  $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area, then', 'Dieser Bereich, damals')}</span><b>${esc(rg)}</b><span>${pool.length} ${L('in the lens, on the board then', 'in der Lupe, damals ausgeschrieben')}</span>` + tlAreaHtml(pool); }
+// a past role in the lens list and on its card: the title and company come from the names shard, read-only (no marks)
+function tlCardHtml(k, e) { return `<li class="atlas-item" data-k="${k}" data-id="${e.id}"><div class="t tl-t">…</div><div class="m tl-c"></div><div class="m">${esc(tlDates(e))}</div></li>`; }
+function tlFill(host, e) { tlNamesOf(e.rec).then(([t, c]) => { if (host.dataset.id !== e.id) return; const a = host.querySelector('.tl-t'), b = host.querySelector('.tl-c'); if (a) a.textContent = t || pick('(no name saved)', '(kein Name gespeichert)'); if (b) b.textContent = c || ''; }); }
+// hot and cold spots: per cell of the colour field's grid, the roles first seen in the window minus those no longer seen, over the roles on
+// the board (+10 damps small areas), blurred like the colour field. Warm where the board grows, cool where it shrinks
+function heatField(ctx, ff, T) { const GW = Math.round(96 * ff * W / BW), GH = Math.round(68 * ff * H / BH), n = GW * GH, f = tlFilt(), tm = scrub.tm, win = tlWin();
+  const N = new Float32Array(n), G = new Float32Array(n), S = new Float32Array(n);
+  for (let r = 0; r < TLN; r++) { const fa = TLF[r], la = TLL[r]; if (fa > tm || TLX[r] === 0xFFFF) continue; const inS = la >= tm, inN = fa > tm - win, inG = la > tm - win && la <= tm && la < TL.end;
+    if (!(inS || inN || inG) || !tlOk(r, f)) continue;
+    const X0 = sx(TLX[r] / 65535) / W, Y0 = sy(TLY[r] / 65535) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) continue;
+    const q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW); if (inS) S[q]++; if (inN) N[q]++; if (inG) G[q]++; }
+  const passes = Math.max(1, Math.round((4 + Math.min(4, Math.round(Math.log2(st.z.s + 1)))) * ff * ff)); for (const X of [N, G, S]) blur(X, GW, GH, passes);
+  // the blurred counts are per cell; the blur's area (about (2 passes + 1)^2 cells) turns them into the roles around a cell, so k = 10
+  // damps the areas with few roles
+  const Ak = (2 * passes + 1) ** 2, sc = new Float32Array(n); for (let q = 0; q < n; q++) sc[q] = (N[q] - G[q]) / (S[q] + 10 / Ak); lastHeat = { GW, GH, sc };
+  const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH), dark = !!T.glow;
+  const warm = dark ? [[255, 170, 0], [255, 60, 20]] : [[235, 130, 0], [200, 40, 0]], cool = dark ? [[0, 200, 255], [40, 90, 255]] : [[0, 150, 220], [20, 60, 200]];
+  for (let q = 0; q < n; q++) { const m = Math.abs(sc[q]); if (m < 0.2) continue; const k = Math.min(1, (m - 0.2) / 0.5), [a, b] = sc[q] > 0 ? warm : cool;   // small changes stay neutral
+    for (let c = 0; c < 3; c++) img.data[q * 4 + c] = Math.round(a[c] + (b[c] - a[c]) * k); img.data[q * 4 + 3] = Math.round(255 * 0.8 * k); }
+  sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.drawImage(small, 0, 0, W, H); }
+// the mean hot-and-cold score (last drawn) over the roles of region c on the board at the scrubbed time
+function heatMeanOf(c) { if (!lastHeat || !TL) return null; const f = tlFilt(), tm = scrub.tm, { GW, GH, sc } = lastHeat; let s = 0, n = 0;
+  for (let r = 0; r < TLN; r++) { if (TLC[r] !== c || TLF[r] > tm || TLL[r] < tm || TLX[r] === 0xFFFF || !tlOk(r, f)) continue;
+    const X0 = sx(TLX[r] / 65535) / W, Y0 = sy(TLY[r] / 65535) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) continue; s += sc[Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW)]; n++; }
+  return n ? s / n : null; }
 // ---- interaction: drag the lens, drag elsewhere to move the map, tap to put the lens there; zoom with buttons or wheel
 let drag = null; const touches = new Map(); let pinch = null;
 const ptr = (e) => { const b = cv.getBoundingClientRect(); return [(e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * H]; };
@@ -644,19 +751,20 @@ function hitAt(px, py) { const h = hitG; if (!h) return -1; let best = -1, bd = 
   for (let y = Math.max(0, cy - 1); y <= Math.min(h.ny - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(h.nx - 1, cx + 1); x++) for (const k of h.cells[y * h.nx + x]) { const d = (h.X[k] - px) ** 2 + (h.Y[k] - py) ** 2; if (d < bd) { bd = d; best = k; } }
   return best; }
 // hover: a point within 10 px shows its title (the canvas tooltip) and a hand; inside the lens a move cursor, elsewhere a grab
-function hover(e) { const [px, py] = ptr(e), k = hitAt(px, py), t = k >= 0 ? (st.mode === 'roles' ? cleanTitle(rows[lay().ents[k].idx[0]][1]) : lay().ents[k].name) : '';
+function hover(e) { const [px, py] = ptr(e), k = hitAt(px, py), t = k >= 0 ? (st.mode === 'roles' ? (lay().ents[k].past ? '' : cleanTitle(rows[lay().ents[k].idx[0]][1])) : lay().ents[k].name) : '';
   cv.style.cursor = k >= 0 ? 'pointer' : Math.hypot(px - sx(st.lens.x), py - sy(st.lens.y)) <= st.size * BW + 8 ? 'move' : 'grab'; if (cv.title !== t) cv.title = t; }
 // the card of the selected point (on the stage, so it also works in full screen): a role with its title as a link, company, region,
 // level, age and the marks; or a company with its name, about text and open roles
 const pop = document.createElement('div'); pop.className = 'atlas-pop'; pop.hidden = true; stage.appendChild(pop);
 const ageText = (i) => { const a = AGE[i]; return !isFinite(a) ? '' : a < 1 ? pick('new today', 'neu heute') : a < 7 ? pick('new this week', 'neu diese Woche') : a < 30 ? pick('new this month', 'neu diesen Monat') : pick(`${Math.round(a)} days ago`, `vor ${Math.round(a)} Tagen`); };
 function popHtml(k) { const e = lay().ents[k], close = `<button type="button" class="atlas-pop-x" aria-label="${esc(pick('Close', 'Schließen'))}">×</button>`;
+  if (e.past) return close + `<div class="t tl-t">…</div><div class="m tl-c"></div><div class="m">${esc(tlDates(e))}</div>`;
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '', age = ageText(i);
     return close + `<a class="t link" href="${roleLink(e.id)}">${esc(r[1])}</a><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div>${age ? `<div class="m">${esc(age)}</div>` : ''}${voteHtml(e.id)}`; }
   const co = coRows[e.slug] || [e.about || ''], vr = visibleRoles(e), link = companyLink(e.slug), txt = snip(co[0], 160);
   return close + (link ? `<a class="t link" href="${link}">${esc(e.name)}</a>` : `<div class="t">${esc(e.name)}</div>`)
     + `<div class="m">${e.idx.length ? `${vr.length} ${L('open roles here', 'offene Stellen hier')}` : L('no open roles on the board right now', 'derzeit keine offenen Stellen auf der Börse')}</div>${txt ? `<div class="m">${esc(txt)}</div>` : ''}${voteHtml(e.id)}`; }
-function showPop(k) { const Ly = lay(), e = Ly.ents[k]; pop.innerHTML = popHtml(k); pop.dataset.id = e.id; pop.hidden = false; sel = { k, ly: Ly }; }
+function showPop(k) { const Ly = lay(), e = Ly.ents[k]; pop.innerHTML = popHtml(k); pop.dataset.id = e.id; pop.hidden = false; sel = { k, ly: Ly }; if (e.past) tlFill(pop, e); }
 function hidePop() { sel = null; pop.hidden = true; }
 // the card beside its point (to the right, or to the left when it does not fit), inside the stage
 function placePop(X, Y) { const sr = stage.getBoundingClientRect(), cr = cv.getBoundingClientRect(), f = cr.width / W, ox = cr.left - sr.left - stage.clientLeft, oy = cr.top - sr.top - stage.clientTop;
@@ -695,6 +803,7 @@ mount.addEventListener('click', (e) => {
   else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); st.open.clear(); st.sample = []; fitOrWhole(); resample(); }
   else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (!perScope && st.mode === 'roles') fitTo(); resample(); }
   else if (b.id === 'atlas-shuffle') resample();
+  else if (b.id === 'atlas-play') tlPlay();
   else if (b.classList.contains('hd')) { const li = b.closest('li'), id = li.dataset.id, on = li.classList.toggle('open'); b.setAttribute('aria-expanded', String(on)); if (on) st.open.add(id); else st.open.delete(id); fillRole(li); }
   else if (b.classList.contains('atlas-pop-x')) { hidePop(); draw(); }
   else if (b.closest('.atlas-vote')) {
@@ -730,16 +839,18 @@ mount.addEventListener('change', async (e) => {
   if (e.target.id === 'atlas-load' && e.target.files.length) { try { await PF.loadProfileFile(e.target.files[0]); ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); resample(); $('atlas-status').insertAdjacentHTML('afterbegin', L('Profile loaded. ', 'Profil geladen. ')); } catch (err) { $('atlas-status').textContent = err.message || String(err); } return; }
   if (e.target.id === 'atlas-all') { st.all = e.target.checked; draw(); return; }
   if (e.target.id === 'atlas-cv-on') { cvEmb.on = e.target.checked; setJ(K.cv, cvEmb); computeTaste(); draw(); }
-  if (e.target.id === 'atlas-taste') draw();
+  if (e.target.id === 'atlas-taste' || e.target.id === 'atlas-heat') draw();
 });
 $('atlas-scope').addEventListener('change', (e) => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope);
   if (perScope) { if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } }
   else if (st.mode === 'roles') fitTo();
   resample(); });
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; resample(); });
+if (TL) { $('atlas-time').addEventListener('input', (e) => { tlStop(); setScrub(+e.target.value); }); ['pointerdown', 'keydown'].forEach((ev) => $('atlas-time').addEventListener(ev, () => tlStop())); }
 window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); draw(); });
 fitOrWhole();
 resample();
 // for scripts (scripts/export_atlas.mjs): the image export and the view switch
 window.jobcrawlAtlas = { renderImage, setView, lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
-  lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; } };
+  lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; },
+  timeline: () => (TL ? { steps: TL.steps.length, kind: TL.kind, idx: scrub.idx, tm: scrub.tm, end: TL.end, records: TLN } : null), scrubTo: (i) => { tlStop(); setScrub(i); }, play: () => tlPlay(), heatMean: (c) => heatMeanOf(c), heatOn: (on) => { $('atlas-heat').checked = !!on; draw(); }, layer: () => { const Ly = lay(); return { n: Ly.ents.length, embers: Ly.ents.filter((e) => e.ember).length }; }, heatCells: () => { if (!lastHeat) return null; let mx = 0, big = 0, pos = 0, neg = 0; for (const v of lastHeat.sc) { const m = Math.abs(v); if (m > mx) mx = m; if (m >= 0.05) { big++; if (v > 0) pos++; else neg++; } } return { cells: lastHeat.sc.length, max: +mx.toFixed(3), warm: pos, cool: neg }; } };
