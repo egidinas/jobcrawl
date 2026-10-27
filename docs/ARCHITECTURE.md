@@ -38,7 +38,7 @@ and the neighbours), and once after `map` to copy the atlas layout into the matc
 | index | `jobcrawl/index/match_index.py` | site folder, profile `scopes`, `levels` | `match-bm25.json`, `match-attrs.json` | standard library |
 | statements and neighbours | `jobcrawl/index/prefs.py`, `jobcrawl/index/neighbours.py` | site folder, vectors, profile `statements` | `match-prefs.json`, `role-nb.bin`, `role-graph.json` | numpy (neighbours) |
 | publish | `jobcrawl/index/publish.py` (`jobcrawl publish`) | everything above, profile | `match/` folder, `config.json` | standard library, numpy with vectors |
-| map | `jobcrawl/map/atlas.py`, `jobcrawl/map/labels.py` (`jobcrawl map`) | vectors, site folder, match-prefs, profile `map`, `scopes` | `atlas-layout.json` (in the vectors folder) | `requirements-map.txt` |
+| map | `jobcrawl/map/atlas.py`, `jobcrawl/map/labels.py` (`jobcrawl map`) | vectors, site folder, match-prefs, profile `map`, `scopes`, and `company-graph.json` (the companies' groups, their links and, with `company-nb.bin`, their positions, if it covers the catalogue) | `atlas-layout.json` (in the vectors folder); `--companies-only` rebuilds its companies section | `requirements-map.txt` |
 | traces | `jobcrawl/index/traces.py` (`jobcrawl traces`) | site folder, vectors, `atlas-layout.json`, the earlier traces | `role-traces.*` (private), `role-trends.json`, `role-timeline.*` (in the vectors folder) | numpy |
 | web | `web/` (`index.html`, `match.html`, `atlas.html`), `scripts/serve.py` | `config.json`, `jobs-*.json`, `match/`, optional `models/` | the browser's own state only | a browser; a static server |
 
