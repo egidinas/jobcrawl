@@ -47,6 +47,10 @@ style.textContent = `
 .atlas-pop-x{all:unset;cursor:pointer;position:absolute;right:6px;top:4px;width:22px;height:22px;text-align:center;line-height:22px;font-size:16px;color:var(--muted)}.atlas-pop-x:focus-visible{outline:2px solid var(--accent)}
 .atlas-vote{display:inline-flex;gap:2px;margin-top:4px}.atlas-vote button{all:unset;cursor:pointer;font-size:13px;padding:2px 8px;border:1px solid var(--line);border-radius:5px;color:var(--muted)}.atlas-vote button.on{background:var(--accent);color:var(--btn-fg,#fff);border-color:var(--accent)}
 .atlas-item .hd{all:unset;cursor:pointer;font-weight:600;overflow-wrap:anywhere;font-size:14px;color:var(--ink);display:block}.atlas-item .hd:hover{color:var(--accent-text)}.atlas-item .hd::after{content:'▾';margin-left:6px;color:var(--muted);font-weight:400}.atlas-item.open .hd::after{content:'▴'}.atlas-item .snip{font-size:12.5px;color:var(--muted);margin-top:3px;overflow-wrap:anywhere}.atlas-item .more{display:none;flex-direction:column;gap:8px;margin-top:8px}.atlas-item.open .more{display:flex}.atlas-item.open .snip{display:none}.atlas-item .facts{display:flex;gap:4px 12px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}.atlas-item .txt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;line-height:1.5;max-height:22em;overflow:auto;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}.atlas-item .links{display:flex;gap:12px;flex-wrap:wrap;font-size:13.5px}.co-roles{margin:0;padding-left:18px;font-size:13.5px}
+.atlas-badge-tracked{display:inline-flex;align-items:center;font-size:11px;padding:1px 6px;border-radius:10px;background:rgba(46,160,67,0.15);color:#3fb950;font-weight:600;margin-left:6px;border:1px solid rgba(46,160,67,0.3);vertical-align:middle}
+.atlas-tag-tier{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;color:#fff;font-weight:600;margin-left:6px;vertical-align:middle}
+.co-has-roles{color:var(--accent-text);font-weight:600}
+.co-no-roles{color:var(--muted);font-style:italic}
 .atlas-shape{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:12px}.atlas-shape>summary{cursor:pointer;padding:10px 14px;list-style:none}.atlas-shape>summary::-webkit-details-marker{display:none}
 .shape-body{padding:0 14px 14px;display:flex;flex-direction:column;gap:12px}.prefs{display:grid;grid-template-columns:1fr auto 1fr;gap:6px 10px;align-items:center;font-size:13px}
 .prefs .pa{text-align:right}.prefs .pb{text-align:left}.pref5{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}.pref5 button{all:unset;cursor:pointer;width:26px;height:24px;text-align:center;border-right:1px solid var(--line);color:var(--muted);font-size:12px}.pref5 button:last-child{border-right:0}.pref5 button.on{background:var(--accent);color:var(--btn-fg,#fff)}.pref5 button:focus-visible{outline:2px solid var(--accent)}
@@ -379,7 +383,41 @@ function visStats(Ly) {
 // o.ff: the colour field's grid factor (finer when zoomed or exported big); o.ts: the text scale.
 function prepare(T) {
   const Ly = lay(), roles = st.mode === 'roles', showTaste = !!(taste && $('atlas-taste').checked) && !Ly.past;
-  act = Ly.past ? Ly.ents.map(() => true) : Ly.ents.map((e) => visibleRoles(e).length > 0); vis = roles ? act : Ly.ents.map(() => true);
+  const SCOPE_RANKS = { bavaria: 0, germany: 1, europe: 2, worldwide: 3 };
+  if (roles) {
+    act = Ly.past ? Ly.ents.map(() => true) : Ly.ents.map((e) => visibleRoles(e).length > 0);
+    vis = act;
+  } else {
+    act = Ly.ents.map((e) => visibleRoles(e).length > 0);
+    vis = Ly.ents.map((e) => {
+      if (st.fields.size > 0) {
+        const matchesVec = ix.fields.some((f, q) => st.fields.has(f) && e.f[q] >= 0.15);
+        if (matchesVec) return true;
+        const fldStr = (e.field || '').toLowerCase();
+        for (const f of st.fields) { if (fldStr.includes(f.toLowerCase())) return true; }
+        const co = coRows[e.slug];
+        if (co && co[9]) {
+          const tags = co[9];
+          for (const f of st.fields) {
+            const fl = f.toLowerCase();
+            if (tags.some((t) => t.toLowerCase().includes(fl))) return true;
+          }
+        }
+        return false;
+      }
+      return true;
+    });
+    if (st.scope < cfg.scopes.length - 1) {
+      const maxRank = st.scope;
+      vis = vis.map((v, k) => {
+        if (!v) return false;
+        const co = coRows[Ly.ents[k].slug];
+        if (!co) return true;
+        const r = SCOPE_RANKS[co[12]] ?? 3;
+        return r <= maxRank;
+      });
+    }
+  }
   fit = showTaste ? fitOf(Ly) : null;
   const stat = roles && (!perScope || Ly.past) ? visStats(Ly) : null;
   // the visible roles by age: today, this week, this month (the legend under the map)
@@ -404,8 +442,25 @@ function paintMap(ctx, P, o) {
     if (e.ember) { ctx.globalAlpha = e.ea; ctx.fillStyle = 'rgb(190,120,60)'; ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }   // a role last seen before the scrubbed time: a dim warm ember
     if (roles && wE(e) > 0) { hot.push(k); return; }   // new roles are drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.4) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-    if (roles) ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); else { ctx.beginPath(); ctx.arc(X0, Y0, dot / 2, 0, 7); if (act[k]) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); } } });
+    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.45) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    if (roles) {
+      ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot);
+    } else {
+      ctx.beginPath();
+      ctx.arc(X0, Y0, (act[k] ? dot * 0.6 : dot * 0.42), 0, 7);
+      if (act[k]) {
+        ctx.fill();
+        ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.4)`;
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      } else {
+        ctx.globalAlpha *= 0.6;
+        ctx.fill();
+        ctx.strokeStyle = ctx.fillStyle;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    } });
   // the new roles, on top: radius dot x (1 + 1.6 w) at full strength; on the dark theme a glow in the region colour and a white core,
   // today's also a small sparkle; on the light theme the region colour with a thin ink ring
   if (hot.length) { const px = ctx.getTransform().a || 1; ctx.globalAlpha = 1;
@@ -415,7 +470,10 @@ function paintMap(ctx, P, o) {
       else { ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.stroke(); }
       if (w >= 1) { const s = 1.6 * R; ctx.globalAlpha = 0.8; ctx.strokeStyle = T.glow ? '#ffffff' : ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X0 - s, Y0); ctx.lineTo(X0 + s, Y0); ctx.moveTo(X0, Y0 - s); ctx.lineTo(X0, Y0 + s); ctx.stroke(); ctx.globalAlpha = 1; } } }
   // the point whose card is open: a ring (on screen only)
-  if (screen && sel && sel.ly === Ly && vis[sel.k]) { const e = Ly.ents[sel.k], R = dot * (1 + 1.6 * (roles ? wE(e) : 0)) + 4; ctx.globalAlpha = 1; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), R, 0, 7); ctx.stroke(); }
+  if (screen && sel && sel.ly === Ly && vis[sel.k]) {
+    const e = Ly.ents[sel.k], R = (roles ? dot * (1 + 1.6 * wE(e)) : (act[sel.k] ? dot * 0.6 : dot * 0.42)) + 4;
+    ctx.globalAlpha = 1; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), R, 0, 7); ctx.stroke();
+  }
   Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.strokeStyle = halo; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke(); });
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
   // screen) and of every label already placed; otherwise it is left out. Areas first, then role labels or company names.
@@ -620,15 +678,15 @@ let rngState = 7; const rnd = () => (rngState = (rngState * 16807) % 2147483647)
 // side, zoomed so that box fills the map box; the lens moves to its centre. Fewer than 10 visible roles: the whole map
 function fitTo() {
   const Ly = lay(), xs = [], ys = [];
-  Ly.ents.forEach((e) => { if (Ly.past || visibleRoles(e).length) { xs.push(e.x); ys.push(e.y); } });
-  if (xs.length < 10) { st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = { x: 0.5, y: 0.5 }; return; }
+  Ly.ents.forEach((e, k) => { if (Ly.past || (st.mode === 'roles' ? visibleRoles(e).length : (vis && vis[k]))) { xs.push(e.x); ys.push(e.y); } });
+  if (xs.length < 5) { st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = { x: 0.5, y: 0.5 }; return; }
   const pct = (a, p) => { const q = [...a].sort((u, v) => u - v); return q[Math.min(q.length - 1, Math.floor(p * q.length))]; };
   const x0 = pct(xs, 0.02), x1 = pct(xs, 0.98), y0 = pct(ys, 0.02), y1 = pct(ys, 0.98);
   const bw = (x1 - x0) * 1.12, bh = (y1 - y0) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: cx, y: cy };
 }
-// the view after a filter or a switch: fitted to the visible roles (one map, roles), else the whole map (as per_scope always did)
-const fitOrWhole = () => { if (!perScope && st.mode === 'roles') fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
+// the view after a filter or a switch: fitted to the visible roles or companies (one map), else the whole map (as per_scope always did)
+const fitOrWhole = () => { if (!perScope) fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
 function resample() {
   draw();   // refreshes which entities are visible under the current filters
   const Ly = lay(), pool = inLens(), per = new Map(); pool.forEach((k) => { const c = st.mode === 'roles' ? (Ly.past ? '' : rows[Ly.ents[k].idx[0]][2]) : Ly.ents[k].name; per.set(c, (per.get(c) || 0) + 1); });
@@ -653,9 +711,29 @@ function cardHtml(k) {
   if (e.past) return tlCardHtml(k, e);
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '';
     return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}${newBadge(i)}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div><div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
-  const co = coRows[e.slug] || [e.about || ''], vr = visibleRoles(e), flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => fieldLabel(x[0]));
-  return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(e.name)}</button><div class="m">${e.idx.length ? `${vr.length} ${L('open roles here', 'offene Stellen hier')}` : L('no open roles on the board right now', 'derzeit keine offenen Stellen auf der Börse')}${flds.length ? ' · ' + esc(flds.join(', ')) : e.field ? ' · ' + esc(e.field) : ''}</div><div class="snip">${esc(snip(co[0], 170))}</div>
-<div class="more"><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i])}">${esc(rows[i][1])}</a></li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12}</li>` : ''}</ul>${companyLink(e.slug) ? `<a class="link" href="${companyLink(e.slug)}">${L('Company page →', 'Firmenseite →')}</a>` : ''}</div>${voteHtml(e.id)}</li>`;
+  const co = coRows[e.slug] || [e.about || ''];
+  const desc = (isDe() && co[1]) ? co[1] : (co[0] || co[2] || e.about || '');
+  const archName = (isDe() && co[4]) ? co[4] : (co[3] || '');
+  const archCol = co[5] || '#64748b';
+  const loc = co[6] || '';
+  const carUrl = co[7] || '';
+  const webUrl = co[8] || '';
+  const tags = co[9] || [];
+  const tracked = !!co[11];
+  const vr = visibleRoles(e);
+  const flds = ix.fields.map((f, q) => [f, e.f[q]]).filter((x) => x[1] >= 0.25).sort((a, b) => b[1] - a[1]).slice(0, 3).map((x) => fieldLabel(x[0]));
+  const facts = [loc && `📍 ${loc}`, archName && `🏛 ${archName}`, tracked && `✓ ${L('Tracked ATS', 'Überwachtes Portal')}`, ...tags.slice(0, 3).map((t) => `#${t}`)].filter(Boolean);
+
+  return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}">`
+    + `<button type="button" class="hd" aria-expanded="${open}">${esc(e.name)}${archName ? ` <span class="atlas-tag-tier" style="background:${archCol}">${esc(archName)}</span>` : ''}${tracked ? ` <span class="atlas-badge-tracked">● ${L('Tracked', 'Überwacht')}</span>` : ''}</button>`
+    + `<div class="m">${loc ? esc(loc) + ' · ' : ''}${vr.length ? `<span class="co-has-roles">${vr.length} ${L('open roles', 'offene Stellen')}</span>` : `<span class="co-no-roles">${L('No current vacancies', 'Keine aktuellen Vakanzen')}</span>`}${flds.length ? ' · ' + esc(flds.join(', ')) : (e.field ? ' · ' + esc(e.field) : '')}</div>`
+    + `<div class="snip">${esc(snip(desc, 170))}</div>`
+    + `<div class="more">`
+    + (facts.length ? `<div class="facts">${facts.map((f) => `<span>${esc(f)}</span>`).join('')}</div>` : '')
+    + (desc ? `<div class="txt" tabindex="0">${esc(desc)}</div>` : '')
+    + `<div class="links">${companyLink(e.slug) ? `<a class="link" href="${companyLink(e.slug)}">${L('Company page →', 'Firmenseite →')}</a>` : ''}${carUrl ? `<a class="link" href="${esc(carUrl)}" target="_blank" rel="noopener">${L('Careers page ↗', 'Karriereseite ↗')}</a>` : (webUrl ? `<a class="link" href="${esc(webUrl)}" target="_blank" rel="noopener">${L('Website ↗', 'Webseite ↗')}</a>` : '')}</div>`
+    + (vr.length ? `<div class="atlas-note" style="margin-top:6px;"><strong>${L('Open roles here:', 'Offene Stellen hier:')}</strong><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i])}">${esc(rows[i][1])}</a>${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12} ${L('more roles', 'weitere Stellen')}</li>` : ''}</ul></div>` : `<p class="atlas-note" style="margin-top:6px;">${L('No open roles on the board right now.', 'Derzeit keine offenen Stellen auf dem Board.')}</p>`)
+    + `</div>${voteHtml(e.id)}</li>`;
 }
 async function fillRole(li) {
   const e = lay().ents[+li.dataset.k]; if (e.past) return tlFill(li, e); if (st.mode !== 'roles') return; const id = e.id, d = (await shard(id))[id], box = li.querySelector('.more'), i = e.idx[0], row = rows[i];
@@ -770,9 +848,22 @@ function popHtml(k) { const e = lay().ents[k], close = `<button type="button" cl
   if (e.past) return close + `<div class="t tl-t">…</div><div class="m tl-c"></div><div class="m">${esc(tlDates(e))}</div>`;
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '', age = ageText(i);
     return close + `<a class="t link" href="${roleLink(e.id)}">${esc(r[1])}</a><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div>${age ? `<div class="m">${esc(age)}</div>` : ''}${voteHtml(e.id)}`; }
-  const co = coRows[e.slug] || [e.about || ''], vr = visibleRoles(e), link = companyLink(e.slug), txt = snip(co[0], 160);
-  return close + (link ? `<a class="t link" href="${link}">${esc(e.name)}</a>` : `<div class="t">${esc(e.name)}</div>`)
-    + `<div class="m">${e.idx.length ? `${vr.length} ${L('open roles here', 'offene Stellen hier')}` : L('no open roles on the board right now', 'derzeit keine offenen Stellen auf der Börse')}</div>${txt ? `<div class="m">${esc(txt)}</div>` : ''}${voteHtml(e.id)}`; }
+  const co = coRows[e.slug] || [e.about || ''];
+  const desc = (isDe() && co[1]) ? co[1] : (co[0] || co[2] || e.about || '');
+  const archName = (isDe() && co[4]) ? co[4] : (co[3] || '');
+  const archCol = co[5] || 'var(--accent-text)';
+  const loc = co[6] || '';
+  const carUrl = co[7] || '';
+  const webUrl = co[8] || '';
+  const vr = visibleRoles(e);
+  const link = companyLink(e.slug);
+  return close
+    + (link ? `<a class="t link" href="${link}">${esc(e.name)}</a>` : `<div class="t">${esc(e.name)}</div>`)
+    + (archName || loc ? `<div class="m" style="margin-top:2px;">${archName ? `<span style="color:${archCol};font-weight:600;">${esc(archName)}</span>` : ''}${loc ? (archName ? ' · ' : '') + esc(loc) : ''}</div>` : '')
+    + `<div class="m">${e.idx.length ? `<span class="co-has-roles">${vr.length} ${L('open roles here', 'offene Stellen hier')}</span>` : `<span class="co-no-roles">${L('No open roles on the board right now', 'Derzeit keine offenen Stellen auf der Börse')}</span>`}</div>`
+    + (desc ? `<div class="m" style="margin-top:4px;">${esc(snip(desc, 150))}</div>` : '')
+    + `<div class="links" style="margin-top:6px;display:flex;gap:12px;font-size:12.5px;">${link ? `<a class="link" href="${link}">${L('Company page →', 'Firmenseite →')}</a>` : ''}${carUrl ? `<a class="link" href="${esc(carUrl)}" target="_blank" rel="noopener">${L('Careers ↗', 'Karriere ↗')}</a>` : (webUrl ? `<a class="link" href="${esc(webUrl)}" target="_blank" rel="noopener">${L('Website ↗', 'Webseite ↗')}</a>` : '')}</div>`
+    + voteHtml(e.id); }
 function showPop(k) { const Ly = lay(), e = Ly.ents[k]; pop.innerHTML = popHtml(k); pop.dataset.id = e.id; pop.hidden = false; sel = { k, ly: Ly }; if (e.past) tlFill(pop, e); }
 function hidePop() { sel = null; pop.hidden = true; }
 // the card beside its point (to the right, or to the left when it does not fit), inside the stage
@@ -805,12 +896,32 @@ cv.addEventListener('wheel', (e) => { e.preventDefault(); const [px, py] = ptr(e
 $('atlas-zin').addEventListener('click', () => zoom(1.5, sx(st.lens.x), sy(st.lens.y)));
 $('atlas-zout').addEventListener('click', () => zoom(1 / 1.5, sx(st.lens.x), sy(st.lens.y)));
 $('atlas-zreset').addEventListener('click', () => { fitOrWhole(); resample(); });
+function updateModeHeader() {
+  const eyebrow = document.querySelector('.section.atlas .eyebrow');
+  const h2 = document.querySelector('.section.atlas h2');
+  const intro = document.querySelector('.section.atlas .intro');
+  if (st.mode === 'companies') {
+    if (eyebrow) eyebrow.textContent = L('ATLAS · COMPANIES BY DOMAIN & CAPABILITIES', 'ATLAS · FIRMEN NACH FACHGEBIET & KOMPETENZEN');
+    if (h2) h2.textContent = L('The company atlas', 'Der Firmen-Atlas');
+    if (intro) intro.textContent = L(
+      'Every employer in the Bavarian aerospace and deep-tech ecosystem is a point. Companies with similar engineering capabilities, subsystems, and focus areas sit together. Move the lens over an area, inspect company profiles, and explore the ecosystem.',
+      'Jeder Arbeitgeber im bayerischen Luft- und Raumfahrt- sowie Deep-Tech-Ökosystem ist ein Punkt. Firmen mit ähnlichen technischen Fähigkeiten, Subsystemen und Schwerpunkten liegen beieinander. Verschieben Sie die Lupe, sehen Sie Firmenprofile und entdecken Sie Akteure im Ökosystem.'
+    );
+  } else {
+    if (eyebrow) eyebrow.textContent = L('ATLAS · ROLES BY MEANING', 'ATLAS · STELLEN NACH BEDEUTUNG');
+    if (h2) h2.textContent = L('The role atlas', 'Der Stellen-Atlas');
+    if (intro) intro.textContent = L(
+      'Every open role is a point. Roles with similar work are linked, and that network is relaxed onto the plane, the way maps of science are drawn: regions are groups of closely linked roles, named by what they have in common. Move the lens, see a sample and mark what you like; it feeds Match me. Everything runs in your browser.',
+      'Jede offene Stelle ist ein Punkt. Stellen mit ähnlicher Arbeit sind miteinander verbunden, und dieses Netz wird auf die Fläche entspannt, so wie Karten der Wissenschaften gezeichnet werden: Regionen sind Gruppen eng verbundener Stellen, benannt nach dem, was sie gemeinsam haben. Verschieben Sie die Lupe, sehen Sie eine Stichprobe und markieren Sie, was Ihnen gefällt; das fließt in „Passende Stellen für mich“ ein. Alles läuft in Ihrem Browser.'
+    );
+  }
+}
 mount.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'atlas-save-img') { saveImage().catch((err) => { $('atlas-status').textContent = err.message || String(err); }); }
   else if (b.id === 'atlas-fs') toggleFs();
-  else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); st.open.clear(); st.sample = []; fitOrWhole(); resample(); }
-  else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (!perScope && st.mode === 'roles') fitTo(); resample(); }
+  else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); updateModeHeader(); st.open.clear(); st.sample = []; fitOrWhole(); resample(); }
+  else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (!perScope) fitTo(); resample(); }
   else if (b.id === 'atlas-shuffle') resample();
   else if (b.id === 'atlas-play') tlPlay();
   else if (b.classList.contains('hd')) { const li = b.closest('li'), id = li.dataset.id, on = li.classList.toggle('open'); b.setAttribute('aria-expanded', String(on)); if (on) st.open.add(id); else st.open.delete(id); fillRole(li); }
@@ -852,7 +963,7 @@ mount.addEventListener('change', async (e) => {
 });
 $('atlas-scope').addEventListener('change', (e) => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope);
   if (perScope) { if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } }
-  else if (st.mode === 'roles') fitTo();
+  else fitTo();
   resample(); });
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; resample(); });
 if (TL) { $('atlas-time').addEventListener('input', (e) => { tlStop(); setScrub(+e.target.value); }); ['pointerdown', 'keydown'].forEach((ev) => $('atlas-time').addEventListener(ev, () => tlStop())); }
