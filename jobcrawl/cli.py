@@ -52,6 +52,7 @@ def build_parser():
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder (map.*, scopes, labels_file)")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--labels-only", action="store_true", help="apply the profile's group names to the layout already built")
+            sp.add_argument("--companies-only", action="store_true", help="rebuild only the companies section of the layout already built (roles and scopes stay as they are)")
         if name == "traces":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", help="profile folder (scope, field and level order; without it the board's order)")
@@ -170,8 +171,12 @@ def cmd_map(args):
         return _usage_error("map", e)
     vectors = args.vectors or default_vectors(args.site)
     try:
+        if args.labels_only and args.companies_only:
+            return _usage_error("map", "--labels-only and --companies-only do not go together")
         if args.labels_only:
             atlas.labels_only(vectors, profile)
+        elif args.companies_only:
+            atlas.companies_only(args.site, vectors, profile)
         else:
             atlas.build(args.site, vectors, profile)
     except ImportError as e:
