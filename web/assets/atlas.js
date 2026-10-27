@@ -515,8 +515,16 @@ function paintMap(ctx, P, o) {
   const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => b.n - a.n);
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
   const areas = many ? [...byN(regs, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regs, false);
+  // area names first: they win over any single role or company label
+  const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
+  for (const { r, n, xy, sub } of areas) {
+    if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
+    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
+    const lines = wrapText(nameOf(r), roles ? 16 : 20, roles ? 2 : 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
+    if (place(lines, [[sx(xy[0]), sy(xy[1]), 'center']])) counts.areas++;
+  }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
-  // roles first). On screen the other new roles follow, newest first. They come before the areas, so they win the collisions, and may lie
+  // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
   // inside the lens. A role title is used once; in the lens the same title at the same company is skipped.
   const rL = st.size * BW, ccx = sx(st.lens.x), ccy = sy(st.lens.y), lensCap = many ? 40 : Math.round(12 * ks), newCap = Math.round(8 * ks);
   const d2 = (k) => (sx(Ly.ents[k].x) - ccx) ** 2 + (sy(Ly.ents[k].y) - ccy) ** 2, inMap = (X0, Y0) => X0 >= 0 && Y0 >= 0 && X0 <= W && Y0 <= H;
@@ -543,13 +551,6 @@ function paintMap(ctx, P, o) {
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), nm = shortName(e.name);
       if (!nm || !inMap(X0, Y0) || seenC.has(nm)) continue; const col = T.tintL ? tintOf(e.c1) : ink, lines = wrapText(coLabel(nm, cn[k]), 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
       if (place(lines, cand(X0, Y0, lines), true)) { seenC.add(nm); counts.lens++; } }
-  }
-  const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
-  for (const { r, n, xy, sub } of areas) {
-    if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
-    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
-    const lines = wrapText(nameOf(r), 16, 2).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));
-    if (place(lines, [[sx(xy[0]), sy(xy[1]), 'center']])) counts.areas++;
   }
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
@@ -758,7 +759,9 @@ function fitTo() {
   const pct = (a, p) => { const q = [...a].sort((u, v) => u - v); return q[Math.min(q.length - 1, Math.floor(p * q.length))]; };
   const x0 = pct(xs, 0.02), x1 = pct(xs, 0.98), y0 = pct(ys, 0.02), y1 = pct(ys, 0.98);
   const bw = (x1 - x0) * 1.12, bh = (y1 - y0) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: cx, y: cy };
+  // the lens goes to the visible point nearest the middle: on a map of separate islands the middle itself can be empty
+  let best = 0, bd = Infinity; xs.forEach((x, i) => { const d = (x - cx) ** 2 + (ys[i] - cy) ** 2; if (d < bd) { bd = d; best = i; } });
+  st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: xs[best], y: ys[best] };
 }
 // the view after a filter or a switch: fitted to the visible roles or companies (one map), else the whole map (as per_scope always did)
 const fitOrWhole = () => { if (!perScope) fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
