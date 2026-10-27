@@ -533,15 +533,34 @@ function paintMap(ctx, P, o) {
   // the regions and neighbourhoods as { r, n, xy }: with the one map, the visible roles and their mean position (see visStats)
   const regs = stat ? stat.reg.filter((g) => g.n >= stat.min) : Ly.regions.map((r) => ({ r, n: r.n, xy: r.xy })), hoods = stat ? stat.hood.filter((g) => g.n >= stat.min) : Ly.hoods.map((r) => ({ r, n: r.n, xy: r.xy }));
   const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => b.n - a.n);
+  // an area can lie in several separate patches, and its mean position then falls between them: each area is named at its dense
+  // patches instead (local maxima of its points on a coarse screen grid, up to 3, well apart; the main patch at full size)
+  const patches = (list, key, groups) => { if (!stat) return list; const GW = 32, GH = Math.max(8, Math.round(32 * H / W)), byG = new Map();
+    Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 >= W || Y0 >= H) return; let g = byG.get(e[key]);
+      if (!g) { g = { c: new Float32Array(GW * GH), x: new Float32Array(GW * GH), y: new Float32Array(GW * GH) }; byG.set(e[key], g); }
+      const q = Math.floor(Y0 / H * GH) * GW + Math.floor(X0 / W * GW); g.c[q]++; g.x[q] += X0; g.y[q] += Y0; });
+    const out = []; for (const g0 of list) { const g = byG.get(groups.indexOf(g0.r)); if (!g) { out.push(g0); continue; }
+      const S = new Float32Array(GW * GH), at = (x, y) => (x < 0 || y < 0 || x >= GW || y >= GH ? 0 : g.c[y * GW + x]);
+      for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let t = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) t += at(x + dx, y + dy); S[y * GW + x] = t; }
+      const pk = []; for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { const v = S[y * GW + x]; if (v < Math.max(stat.min, 0.15 * g0.n)) continue; let top = true;
+        for (let dy = -1; dy <= 1 && top; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if ((dx || dy) && xx >= 0 && yy >= 0 && xx < GW && yy < GH && S[yy * GW + xx] > v) { top = false; break; } }
+        if (top) pk.push([v, x, y]); }
+      pk.sort((a, b) => b[0] - a[0]); const kept = []; for (const p of pk) { if (kept.length >= 3) break; if (kept.every((o) => Math.hypot(o[1] - p[1], o[2] - p[2]) >= 6)) kept.push(p); }
+      if (!kept.length) { out.push(g0); continue; }
+      kept.forEach(([v, x, y], i) => { let n = 0, X = 0, Y = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= GW || yy >= GH) continue; const q = yy * GW + xx; n += g.c[q]; X += g.x[q]; Y += g.y[q]; }
+        out.push({ ...g0, n: i ? v : g0.n, xy: [ux(X / n), uy(Y / n)] }); }); }
+    return out; };
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
-  const areas = many ? [...byN(regs, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regs, false);
+  const regP = patches(regs, 'c1', Ly.regions);
+  const areas = many ? [...byN(regP, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regP, false);
   // area names first: they win over any single role or company label
   const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
   for (const { r, n, xy, sub } of areas) {
     if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
     const lines = wrapText(nameOf(r), roles ? 16 : 20, roles ? 2 : 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
-    const ab = place(lines, [[sx(xy[0]), sy(xy[1]), 'center']]); if (ab) { ab.area = true; counts.areas++; }
+    const X0 = sx(xy[0]), Y0 = sy(xy[1]), dy = 1.4 * fs * ts * lines.length;   // the patch centre, else just above or below it
+    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center']]); if (ab) { ab.area = true; counts.areas++; }
   }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
   // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
