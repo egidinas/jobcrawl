@@ -5,6 +5,7 @@ The labels tests need nothing beyond the standard library and numpy-free data, s
 """
 import importlib.util
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -124,6 +125,110 @@ class AtlasOnSynthetic(unittest.TestCase):
         with open(self.path, encoding='utf-8') as fh:
             again = json.load(fh)
         self.assertEqual(again['roles']['regions'][0].get('label'), ['Named', 'Benannt'])
+
+
+
+@need_map
+class CompanyGraphOnSynthetic(unittest.TestCase):
+    """company-graph.json (the madenetwork company graph) takes the company groups, their names and their links; --companies-only keeps the rest."""
+    GROUP_IDS = [4, 7, 9]           # the graph's own group ids (not 0..2), so the renumbering is exercised
+    NAMES = ['Alpha', 'Beta', 'Gamma']
+
+    @classmethod
+    def setUpClass(cls):
+        from jobcrawl.map import atlas
+        cls.atlas = atlas
+        cls.tmp = tempfile.mkdtemp(prefix='jc-cgraph-')
+        cls.site = os.path.join(cls.tmp, 'site')
+        cls.vectors = os.path.join(cls.tmp, 'vectors')
+        profile = load_profile(PROFILE)
+        cls.index, pairs = board_for(make_catalog(300, seed=11, companies=COMPANIES), profile, cls.site)
+        write_match_vectors(cls.vectors, pairs, dim=16)
+        write_company_vectors(cls.vectors, sorted({r[4] for r in cls.index if r[4]}), dim=16)
+        with open(os.path.join(cls.vectors, 'company-vec.json'), encoding='utf-8') as fh:
+            cls.slugs = json.load(fh)['slugs']
+        n = len(cls.slugs)
+        cls.gid = [cls.GROUP_IDS[i % 3] for i in range(n)]
+        # a ring i -> i+1 (every group meets the others) and a chord i -> i+3 inside a group
+        cls.edges = [(i, (i + 1) % n) for i in range(n)] + [(i, i + 3) for i in range(n - 3)]
+        cls.write_graph(cls.vectors, cls.slugs, cls.gid, cls.edges)
+        import numpy as np     # the graph's neighbour lists (company-nb.bin: 8 per company, uint16), here the next 8 in slug order
+        np.array([[(i + d) % n for d in range(1, 9)] for i in range(n)], np.uint16).tofile(os.path.join(cls.vectors, 'company-nb.bin'))
+        with open(os.path.join(cls.tmp, 'labels.json'), 'w', encoding='utf-8') as fh:
+            json.dump({'roles': {}, 'companies': [
+                {'en': 'Alpha', 'de': 'Alpha DE', 'sample': [s_ for s_, g in zip(cls.slugs, cls.gid) if g == 4][:5]},
+                {'en': 'Beta renamed', 'de': 'Beta DE', 'sample': [s_ for s_, g in zip(cls.slugs, cls.gid) if g == 7][:5]},   # no group has this name: its sample finds the group
+                {'en': 'Gamma', 'de': 'Gamma DE', 'sample': [s_ for s_, g in zip(cls.slugs, cls.gid) if g == 9][:5]}]}, fh)
+        cls.profile = dict(profile, _dir=cls.tmp, map=dict(profile['map'], min_scope=60, labels_file='labels.json'))
+        cls.path = atlas.build(cls.site, cls.vectors, cls.profile, log=lambda m: None)
+        with open(cls.path, encoding='utf-8') as fh:
+            cls.out = json.load(fh)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @staticmethod
+    def write_graph(folder, slugs, gid, edges, extra=None):
+        nodes = [{'idx': i, 'slug': s_, 'group_id': g, 'name': s_} for i, (s_, g) in enumerate(zip(slugs, gid))]
+        if extra:
+            nodes.append({'idx': len(nodes), 'slug': extra, 'group_id': 4, 'name': extra})
+        groups = [{'id': g, 'en': nm, 'de': nm + ' DE', 'size': gid.count(g)} for g, nm in zip(sorted(set(gid)), ['Alpha', 'Beta', 'Gamma'])]
+        payload = {'version': 1, 'k': 8, 'groups': groups, 'nodes': nodes,
+                   'edges': [{'source': a, 'target': b, 'weight': 0.5, 'similarity': 50} for a, b in edges]}
+        with open(os.path.join(folder, 'company-graph.json'), 'w', encoding='utf-8') as fh:
+            json.dump(payload, fh)
+
+    def test_groups_are_the_graph_groups(self):
+        C = self.out['companies']
+        self.assertEqual(C['slugs'], self.slugs)
+        self.assertEqual(C['c1'], [{4: 0, 7: 1, 9: 2}[g] for g in self.gid])
+        self.assertEqual(len(C['regions']), 3)
+        self.assertEqual([r['n'] for r in C['regions']], [7, 7, 6])
+
+    def test_every_region_is_named_by_the_labels_file(self):
+        self.assertEqual([r['label'] for r in self.out['companies']['regions']],
+                         [['Alpha', 'Alpha DE'], ['Beta renamed', 'Beta DE'], ['Gamma', 'Gamma DE']])
+
+    def test_links_are_the_edge_counts_between_groups(self):
+        C = self.out['companies']; size = {0: 7, 1: 7, 2: 6}; cnt = {}
+        for a, b in self.edges:
+            ga, gb = {4: 0, 7: 1, 9: 2}[self.gid[a]], {4: 0, 7: 1, 9: 2}[self.gid[b]]
+            if ga != gb:
+                key = tuple(sorted((ga, gb))); cnt[key] = cnt.get(key, 0) + 1
+        expected = [[a, b, round(c / math.sqrt(size[a] * size[b]) / 8, 4)] for (a, b), c in sorted(cnt.items())]
+        self.assertEqual(C['links'], expected)
+        self.assertEqual(len(C['links']), 3)
+
+    def test_positions_are_the_same_layout_method(self):
+        C = self.out['companies']
+        self.assertEqual(len(C['x']), len(self.slugs))
+        self.assertTrue(all(0 <= v <= 1 for v in C['x'] + C['y']))
+
+    def test_a_graph_for_other_companies_is_not_used(self):
+        vectors = os.path.join(self.tmp, 'other')
+        shutil.copytree(self.vectors, vectors)
+        self.write_graph(vectors, self.slugs, self.gid, self.edges, extra='Company extra GmbH')
+        logged = []
+        self.atlas.build(self.site, vectors, self.profile, log=logged.append)
+        self.assertTrue(any('keep their own groups' in m for m in logged))
+        with open(os.path.join(vectors, 'atlas-layout.json'), encoding='utf-8') as fh:
+            other = json.load(fh)
+        self.assertEqual(len(other['companies']['slugs']), len(self.slugs))
+
+    def test_companies_only_keeps_roles_and_scopes(self):
+        with open(self.path, encoding='utf-8') as fh:
+            before = json.load(fh)
+        broken = dict(before, companies=dict(self.atlas.EMPTY_COMPANIES, links=[]))
+        with open(self.path, 'w', encoding='utf-8') as fh:
+            json.dump(broken, fh, ensure_ascii=False, separators=(',', ':'))
+        self.atlas.companies_only(self.site, self.vectors, self.profile, log=lambda m: None)
+        with open(self.path, encoding='utf-8') as fh:
+            after = json.load(fh)
+        self.assertEqual(json.dumps(after['roles'], ensure_ascii=False), json.dumps(before['roles'], ensure_ascii=False))
+        self.assertEqual(json.dumps(after['scopes'], ensure_ascii=False), json.dumps(before['scopes'], ensure_ascii=False))
+        self.assertEqual(after['companies'], before['companies'])
+
 
 
 if __name__ == '__main__':
