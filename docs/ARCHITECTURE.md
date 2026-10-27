@@ -39,6 +39,7 @@ and the neighbours), and once after `map` to copy the atlas layout into the matc
 | statements and neighbours | `jobcrawl/index/prefs.py`, `jobcrawl/index/neighbours.py` | site folder, vectors, profile `statements` | `match-prefs.json`, `role-nb.bin`, `role-graph.json` | numpy (neighbours) |
 | publish | `jobcrawl/index/publish.py` (`jobcrawl publish`) | everything above, profile | `match/` folder, `config.json` | standard library, numpy with vectors |
 | map | `jobcrawl/map/atlas.py`, `jobcrawl/map/labels.py` (`jobcrawl map`) | vectors, site folder, match-prefs, profile `map`, `scopes`, and `company-graph.json` (the companies' groups, their links and, with `company-nb.bin`, their positions, if it covers the catalogue) | `atlas-layout.json` (in the vectors folder); `--companies-only` rebuilds its companies section | `requirements-map.txt` |
+| geomap | `jobcrawl/map/geomap.py` (`jobcrawl geomap`), `jobcrawl/map/geo_base.py` | site folder, profile `scopes`, companies catalogue, Natural Earth files (cache) | `geo-map.json` (in the vectors folder; publish copies it) | numpy |
 | traces | `jobcrawl/index/traces.py` (`jobcrawl traces`) | site folder, vectors, `atlas-layout.json`, the earlier traces | `role-traces.*` (private), `role-trends.json`, `role-timeline.*` (in the vectors folder) | numpy |
 | web | `web/` (`index.html`, `match.html`, `atlas.html`), `scripts/serve.py` | `config.json`, `jobs-*.json`, `match/`, optional `models/` | the browser's own state only | a browser; a static server |
 
@@ -127,6 +128,20 @@ duplicate group); 65535 means none. `role-graph.json`: `{k, ids_from, sim, dup}`
 `{dim, prefs: [{id, a, b, v, mu, sd, auc, n}]}`. `a` and `b` are the two poles (`[en, de]`), `v` the direction in the vector space,
 `mu` and `sd` the mean and spread of all roles along it (for the z-score in the browser), `auc` how well it separates held-out roles,
 `n` the number of labelled roles at each pole. Only statements with `auc` of at least 0.75 are published.
+
+### geo-map.json (geomap, copied by publish)
+
+`{version, source, scopes}`; `scopes` is keyed by scope id, each `{extent, w, h, shapes, places, companies, error}`. `extent` is
+`[lon0, lat0, lon1, lat1]`; `w` and `h` the plane's size, normalised so the longer side is 1 (y counts from the north edge). Every position is
+in those units: `x, y` the true position, `cx, cy` the cartogram position (the role mass decides the area; both are kept so the web view can morph).
+* `shapes`: `{id, name, kind ('country' | 'state'), roles, rings}`; `rings` is a list of rings of `[x, y, cx, cy]` points (no repeated first point).
+  `roles` is the number of roles that name a place in the shape (any place, not only those inside the extent).
+* `places`: `{id ('CC|City', or 'CC|State', or 'CC'), name, n (roles naming it), x, y, cx, cy}`, inside the extent.
+* `companies`: `{slug, x, y, cx, cy}` for the companies with coordinates inside the extent.
+* `error`: the largest relative area error of the cartogram over its grid (cell area against the role share).
+
+Built with Natural Earth polygons (public domain) and the gazetteer's places; the cartogram itself is a Gastner-Newman (2004) diffusion
+followed by Gauss-Newton corrections of the cell areas (see the module's docstring).
 
 ### match/atlas-layout.json (map)
 
