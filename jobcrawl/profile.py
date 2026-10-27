@@ -361,8 +361,8 @@ def _validate(raw, file):
     out['embed'] = {
         'model_repo': c.text(e.get('model_repo', DEFAULT_EMBED['model_repo']), 'embed.model_repo'),
         'prompt': c.text(e.get('prompt', DEFAULT_EMBED['prompt']), 'embed.prompt'),
-        'max_tokens': c.integer(e.get('max_tokens', DEFAULT_EMBED['max_tokens']), 'embed.max_tokens', 1),
-        'text_chars': c.integer(e.get('text_chars', DEFAULT_EMBED['text_chars']), 'embed.text_chars', 1),
+        'max_tokens': c.integer(e.get('max_tokens', DEFAULT_EMBED['max_tokens']), 'embed.max_tokens', 0),
+        'text_chars': c.integer(e.get('text_chars', DEFAULT_EMBED['text_chars']), 'embed.text_chars', 0),
     }
     return out
 

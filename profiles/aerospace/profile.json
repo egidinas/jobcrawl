@@ -1185,8 +1185,8 @@
   "embed": {
     "model_repo": "onnx-community/embeddinggemma-2-ONNX",
     "prompt": "search-query",
-    "max_tokens": 256,
-    "text_chars": 700
+    "max_tokens": 0,
+    "text_chars": 0
   },
   "accent": "#2563eb",
   "links": {

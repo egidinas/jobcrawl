@@ -170,14 +170,20 @@ def embed_all(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=
         images.append(p if os.path.exists(p) else None)
 
     max_tokens = max(max_tokens, 384)
+    texts_jobonly = None
+    if encode_jobonly:
+        texts_jobonly = [full_text(clean_title(r[1]), role_jobonly_text(r, b, max_body_chars=text_chars), prompt) for r, d, b in keep]
+
     if text_chars == 0:
         try:
             from tokenizers import Tokenizer
             tok_path = os.path.join(model_dir, 'tokenizer.json')
             if os.path.exists(tok_path):
                 tok = Tokenizer.from_file(tok_path)
-                sample_texts = [full_text(clean_title(r[1]), role_jobonly_text(r, b, max_body_chars=0), prompt) for r, d, b in keep]
-                tok_lens = [len(tok.encode(t).ids) for t in sample_texts]
+                check_texts = list(texts_rich)
+                if texts_jobonly:
+                    check_texts.extend(texts_jobonly)
+                tok_lens = [len(tok.encode(t).ids) for t in check_texts]
                 max_tokens = max(max(tok_lens), max_tokens)
                 log(f'Dynamic maxlen set to {max_tokens} tokens (zero cutoff across all {len(keep)} roles)')
         except Exception:
@@ -191,7 +197,7 @@ def embed_all(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=
     os.makedirs(vectors, exist_ok=True)
     bin_path, json_path = vector_paths(vectors)
     write_int8(bin_path, M_rich)
-    meta_rich = {'dim': DIM, 'mean': [round(float(x), 5) for x in mean_rich], 'ids': [r[0] for r, _, _ in keep], 'prompt': PROMPTS[prompt][0],
+    meta_rich = {'dim': DIM, 'max_tokens': max_tokens, 'text_chars': text_chars, 'mean': [round(float(x), 5) for x in mean_rich], 'ids': [r[0] for r, _, _ in keep], 'prompt': PROMPTS[prompt][0],
                  'text': f'rich standardized role text (title, level, employer, sector, location, tags, mission up to {text_chars} chars) + multimodal logo',
                  'lang_dirs': [[round(float(x), 6) for x in d] for d in D_rich], 'lang_dirs_from': {l: int((langs == l).sum()) for l in ('en', 'de', 'fr', 'es')}}
     with open(json_path, 'w', encoding='utf-8') as fh:
@@ -200,14 +206,15 @@ def embed_all(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=
 
     # 2. Sanitized Job-Only Description Encoding (Clean Title + Substantive Mission ONLY, no employer, no logo)
     if encode_jobonly:
-        texts_jobonly = [full_text(clean_title(r[1]), role_jobonly_text(r, b, max_body_chars=text_chars), prompt) for r, d, b in keep]
+        if texts_jobonly is None:
+            texts_jobonly = [full_text(clean_title(r[1]), role_jobonly_text(r, b, max_body_chars=text_chars), prompt) for r, d, b in keep]
         E_jobonly = np.asarray(store.get(texts_jobonly, max_tokens, 'roles (sanitized job-only)', images=None, log=log), np.float32)
         M_jobonly = E_jobonly[:, :DIM]; mean_jobonly = M_jobonly.mean(0); M_jobonly = unit_rows(M_jobonly - mean_jobonly)
         D_jobonly = langfix.directions(M_jobonly, langs); M_jobonly = langfix.project(M_jobonly, D_jobonly)
 
         bin_jobonly, json_jobonly = vector_paths(vectors, variant='jobonly')
         write_int8(bin_jobonly, M_jobonly)
-        meta_jobonly = {'dim': DIM, 'mean': [round(float(x), 5) for x in mean_jobonly], 'ids': [r[0] for r, _, _ in keep], 'prompt': PROMPTS[prompt][0],
+        meta_jobonly = {'dim': DIM, 'max_tokens': max_tokens, 'text_chars': text_chars, 'mean': [round(float(x), 5) for x in mean_jobonly], 'ids': [r[0] for r, _, _ in keep], 'prompt': PROMPTS[prompt][0],
                         'text': f'sanitized job description only (title + mission up to {text_chars} chars, no company metadata, no logo)',
                         'lang_dirs': [[round(float(x), 6) for x in d] for d in D_jobonly], 'lang_dirs_from': {l: int((langs == l).sum()) for l in ('en', 'de', 'fr', 'es')}}
         with open(json_jobonly, 'w', encoding='utf-8') as fh:
@@ -247,7 +254,7 @@ def embed_missing(site, prompt, text_chars, max_tokens, model_dir, vectors, thre
     with open(json_path, encoding='utf-8') as fh:
         vj = json.load(fh)
     have = set(vj['ids']); dim = vj['dim']; mean = np.array(vj['mean'], np.float32)
-    texts, keep, images, todo = [], [], [], 0
+    texts, keep_roles, images, todo = [], [], [], 0
     base_assets = os.path.join(site, 'assets', 'company')
     if not os.path.exists(base_assets):
         base_assets = os.path.join(os.path.dirname(site), 'site', 'assets', 'company')
@@ -257,7 +264,8 @@ def embed_missing(site, prompt, text_chars, max_tokens, model_dir, vectors, thre
         todo += 1
         if len(body) < MIN_CHARS:
             continue                                   # too little work text: keywords only, as in the main run
-        texts.append(full_text(clean_title(r[1]), role_rich_text(r, d, body, max_body_chars=text_chars), prompt)); keep.append(r[0])
+        texts.append(full_text(clean_title(r[1]), role_rich_text(r, d, body, max_body_chars=text_chars), prompt))
+        keep_roles.append((r, body))
         slug = (d or {}).get('cs') or (r[4] if len(r) > 4 and r[4] else '')
         if not slug:
             slug = re.sub(r'[^a-z0-9]+', '-', r[2].lower()).strip('-')
@@ -265,29 +273,80 @@ def embed_missing(site, prompt, text_chars, max_tokens, model_dir, vectors, thre
         if not os.path.exists(p):
             p = os.path.join(base_assets, f"{slug}.webp")
         images.append(p if os.path.exists(p) else None)
+
+    keep = [r[0] for r, _ in keep_roles]
     log(f'{todo} roles without a vector, {len(keep)} with enough text to embed')
     if not keep:
         return 0
-    max_tokens = max(max_tokens, 384)
-    E = Store(os.path.join(vectors, '.embed-cache.npz'), model_dir, threads).get(texts, max_tokens, 'missing roles', images=images, log=log)
+
+    max_tokens = max(max_tokens, vj.get('max_tokens', 384))
+    if text_chars == 0:
+        try:
+            from tokenizers import Tokenizer
+            tok_path = os.path.join(model_dir, 'tokenizer.json')
+            if os.path.exists(tok_path):
+                tok = Tokenizer.from_file(tok_path)
+                tok_lens = [len(tok.encode(t).ids) for t in texts]
+                max_tokens = max([vj.get('max_tokens', 384)] + tok_lens)
+                log(f'Dynamic maxlen set to {max_tokens} tokens for missing roles')
+        except Exception:
+            pass
+
+    store = Store(os.path.join(vectors, '.embed-cache.npz'), model_dir, threads)
+    E = store.get(texts, max_tokens, 'missing roles (rich multimodal)', images=images, log=log)
     M = np.asarray(E, np.float32)[:, :dim] - mean; M = unit_rows(M)
     if vj.get('lang_dirs'):                          # the stored vectors are language-neutral: so are the new ones
         M = langfix.project(M, np.array(vj['lang_dirs'], np.float32))
     write_int8(bin_path, M, mode='ab')
     vj['ids'] += keep
+    vj['max_tokens'] = max_tokens
     with open(json_path, 'w', encoding='utf-8') as fh:
         json.dump(vj, fh, separators=(',', ':'))
     log(f'added {len(keep)} vectors; {len(vj["ids"])} rows in total')
+
+    # Job-only variant update if match-vec-jobonly.json exists
+    bin_jobonly, json_jobonly = vector_paths(vectors, variant='jobonly')
+    if os.path.exists(json_jobonly):
+        with open(json_jobonly, encoding='utf-8') as fh:
+            vj_jobonly = json.load(fh)
+        dim_jobonly = vj_jobonly['dim']
+        mean_jobonly = np.array(vj_jobonly['mean'], np.float32)
+        texts_jobonly = [full_text(clean_title(r[1]), role_jobonly_text(r, body, max_body_chars=text_chars), prompt) for r, body in keep_roles]
+
+        max_tokens_jobonly = max(max_tokens, vj_jobonly.get('max_tokens', 384))
+        if text_chars == 0:
+            try:
+                from tokenizers import Tokenizer
+                tok_path = os.path.join(model_dir, 'tokenizer.json')
+                if os.path.exists(tok_path):
+                    tok = Tokenizer.from_file(tok_path)
+                    tok_lens_jobonly = [len(tok.encode(t).ids) for t in texts_jobonly]
+                    max_tokens_jobonly = max([vj_jobonly.get('max_tokens', max_tokens)] + tok_lens_jobonly)
+            except Exception:
+                pass
+
+        E_jobonly = store.get(texts_jobonly, max_tokens_jobonly, 'missing roles (sanitized job-only)', images=None, log=log)
+        M_jobonly = np.asarray(E_jobonly, np.float32)[:, :dim_jobonly] - mean_jobonly
+        M_jobonly = unit_rows(M_jobonly)
+        if vj_jobonly.get('lang_dirs'):
+            M_jobonly = langfix.project(M_jobonly, np.array(vj_jobonly['lang_dirs'], np.float32))
+        write_int8(bin_jobonly, M_jobonly, mode='ab')
+        vj_jobonly['ids'] += keep
+        vj_jobonly['max_tokens'] = max_tokens_jobonly
+        with open(json_jobonly, 'w', encoding='utf-8') as fh:
+            json.dump(vj_jobonly, fh, separators=(',', ':'))
+        log(f'added {len(keep)} job-only vectors; {len(vj_jobonly["ids"])} rows in total')
+
     return len(keep)
 
 
 def embed_roles(site, profile, model_dir, vectors, only_missing=False, threads=4, log=print):
-    """profile: a loaded profile, or None for the schema defaults (embed.prompt "search-query", 2000 characters, 384 tokens)."""
+    """profile: a loaded profile, or None for the schema defaults (embed.prompt "search-query", zero cutoff, dynamic maxlen)."""
     e = (profile or {}).get('embed') or {}
     prompt = e.get('prompt', 'search-query')
-    raw_chars = e.get('text_chars', 2000)
+    raw_chars = e.get('text_chars', 0)
     text_chars = 0 if raw_chars == 0 else max(raw_chars, 2000)
-    max_tokens = max(e.get('max_tokens', 256), 384)
+    max_tokens = max(e.get('max_tokens', 0), 0)
     if prompt not in PROMPTS:
         raise RoleVectorError(f'embed.prompt {prompt!r}: unknown prompt')
     if only_missing:
