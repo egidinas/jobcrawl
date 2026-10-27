@@ -38,6 +38,8 @@ def full_text(title, text, prompt):
     return prefix + (title + '. ' if title else '') + text
 
 
+# Gemma-family multimodal tokens (EmbeddingGemma 2 vocabulary): begin-of-image, one image placeholder per vision patch,
+# end-of-image. __call__ wraps each image as [BOI, IMAGE x k, EOI] in front of the text tokens.
 BOI_TOKEN_ID = 255999
 IMAGE_TOKEN_ID = 258880
 EOI_TOKEN_ID = 258882

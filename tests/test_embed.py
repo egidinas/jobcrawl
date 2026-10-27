@@ -73,7 +73,7 @@ class Cache(unittest.TestCase):
             def __init__(self, model_dir, threads=4):
                 pass
 
-            def __call__(self, texts, maxlen=320, batch=16, log=None):
+            def __call__(self, texts, images=None, maxlen=320, batch=8, log=None):
                 return np.full((len(texts), 768), 2.0, np.float32)
         with mock.patch.object(embedder, 'Embedder', Stub):
             store = embedder.Store(self.path, '/x')
@@ -88,7 +88,7 @@ class FakeModel:
     def __init__(self, model_dir, threads=4):
         pass
 
-    def __call__(self, texts, maxlen=320, batch=16, log=None):
+    def __call__(self, texts, images=None, maxlen=320, batch=8, log=None):
         import numpy as np
         out = np.zeros((len(texts), 768), np.float32)
         for i, t in enumerate(texts):
@@ -117,7 +117,7 @@ class RoleVectorsOnTheFixture(unittest.TestCase):
     def test_board_texts_have_work_text_for_four_roles(self):
         rows = roles.board_texts(self.site)
         self.assertEqual(len(rows), 5)
-        self.assertEqual(sum(1 for _, _, b in rows if len(b) >= roles.MIN_CHARS), 4)
+        self.assertEqual(sum(1 for _, _, b, _ in rows if len(b) >= roles.MIN_CHARS), 4)
 
     def test_full_run_writes_int8_rows_with_mean_and_directions(self):
         with mock.patch.object(embedder, 'Embedder', FakeModel):
