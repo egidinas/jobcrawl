@@ -23,7 +23,7 @@ from jobcrawl.index import match_index, neighbours, prefs
 from jobcrawl.site import read_site
 
 VECTOR_FILES = ('match-vec.bin', 'match-vec.json')
-COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json')
+COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json', 'match-vec-jobonly.bin', 'match-vec-jobonly.json', 'rich_vs_jobonly_analysis.json')
 NEIGHBOUR_FILES = ('role-nb.bin', 'role-graph.json')
 TRENDS = ('role-trends.json', 'role-timeline.json', 'role-timeline.bin')     # built by jobcrawl traces; copied when present
 NAMES = re.compile(r'^role-timeline-names-\d{3}\.json$')

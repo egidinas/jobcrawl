@@ -6,7 +6,9 @@
 import { isDuplicate } from './fingerprint.mjs';
 import { postingKey, textPostingKeys, keysMatch } from './postingkey.mjs';
 
-const norm = (s) => String(s ?? '').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+const UMLAUT_RE = /[äöüßÄÖÜ]/g;
+const UMLAUT_MAP = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss', 'Ä': 'ae', 'Ö': 'oe', 'Ü': 'ue' };
+const norm = (s) => String(s ?? '').replace(UMLAUT_RE, (ch) => UMLAUT_MAP[ch] || ch).replace(/[\u2011\u2013\u2014]/g, '-').replace(/\u00a0/g, ' ').toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
 
 const GENDER_TAGS = /\(?\b(?:[mwfdxg]\s*\/\s*){1,3}[mwfdxgn]\b\)?|\(?\ball genders\)?|\(?\bgn\b\)?|\(?\bdiv(?:erse)?\b\)?/g;
 export const canonTitle = (t) => norm(t).replace(GENDER_TAGS, ' ').replace(/[^a-z0-9]+/g, ' ').trim().replace(/ {2,}/g, ' ');
@@ -41,6 +43,14 @@ const EMPLOYER_ALIAS = new Map([
   ['mda space', 'mda'], ['mda space ltd', 'mda'],
   ['national university of singapore nus', 'national university of singapore'],
   ['nanyang technological university ntu', 'nanyang technological university'],
+  ['pangea propulsion', 'pangea aerospace'],
+  ['sii germany', 'sii deutschland'],
+  ['dsi aerospace technologie', 'dsi aerospace'],
+  ['vast space', 'vast'],
+  ['magazino jungheinrich robotics', 'magazino'],
+  ['bundesamt fuer kartographie und geodaesie bkg', 'bundesamt fuer kartographie und geodaesie'],
+  ['deutsches zentrum fuer luft und raumfahrt', 'dlr'],
+  ['euspa european union agency for the space programme', 'euspa'],
 ]);
 function canonCompanyUncached(c) {
   const t = norm(String(c ?? '').replace(/\s*\(via [^)]*\)\s*$/i, '')).replace(/&/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w && !LEGAL.has(w)).join(' ');
