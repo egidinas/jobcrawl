@@ -21,8 +21,7 @@ let ratings = loadRatings();
 
 const style = document.createElement('style');
 style.textContent = `
-.atlas-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:18px;align-items:start;margin-inline:calc(50% - min(820px,50vw - 24px))}
-@media(max-width:900px){.atlas-grid{grid-template-columns:1fr}}
+.atlas-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;margin-inline:calc(50% - min(820px,50vw - 24px))}
 .atlas-bar{display:flex;gap:10px 16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
 .atlas-bar label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .atlas-bar select{padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:14px}
@@ -34,9 +33,9 @@ style.textContent = `
 .atlas-stage:fullscreen{border-radius:0;border:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
 .atlas-stage:-webkit-full-screen{border-radius:0;border:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
 .atlas-zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:4px}.atlas-zoom button{all:unset;cursor:pointer;width:30px;height:30px;text-align:center;line-height:30px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:16px}.atlas-zoom button:focus-visible{outline:2px solid var(--accent)}
-.atlas-area{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel);font-size:13px;display:flex;flex-direction:column;gap:3px}.atlas-area b{font-size:14px}.atlas-area .lean{color:var(--muted)}
+.atlas-area{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--panel);font-size:13px;display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 16px}.atlas-area b{font-size:14px}.atlas-area .lean{color:var(--muted)}
 .atlas-side{display:flex;flex-direction:column;gap:10px;min-width:0}
-.atlas-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.atlas-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}.atlas-list>li:not(.atlas-item){grid-column:1/-1}
 .atlas-item{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--paper);min-width:0}
 .atlas-item .t{font-weight:600;overflow-wrap:anywhere;font-size:14px;color:var(--ink);text-decoration:none}.atlas-item .t:hover{color:var(--accent-text);text-decoration:underline}
 .atlas-item .m{font-size:12.5px;color:var(--muted)}
@@ -67,8 +66,9 @@ style.textContent = `
 .atlas-scrub label{display:flex;gap:5px;align-items:center;font-size:12.5px;color:var(--muted);white-space:nowrap}
 .tl-label{white-space:nowrap;font-variant-numeric:tabular-nums;min-width:12em}
 .atlas-stage:fullscreen .atlas-scrub,.atlas-stage:-webkit-full-screen .atlas-scrub{position:absolute;left:0;right:0;bottom:0;border-top:0;background:color-mix(in srgb,var(--panel) 72%,transparent)}
-.atlas-area .chg{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted);flex-wrap:wrap}
+.atlas-area .chg{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted);flex-wrap:wrap;width:100%}
 .atlas-chart{width:120px;height:24px;flex:none}
+.co-logo{height:28px;width:auto;max-width:84px;object-fit:contain;vertical-align:middle;margin-right:8px;border-radius:4px}
 `;
 document.head.appendChild(style);
 mount.innerHTML = `<div class="atlas-bar">
@@ -140,7 +140,7 @@ function companyLayer() {
     if (idx.length) { const sum = new Float32Array(D); idx.forEach((i) => { const v = vecOf(i); for (let d = 0; d < D; d++) sum[d] += v[d]; }); vec = unit(sum); } else vec = cv0.get(slug) || null;
     return { id: 'co:' + slug, slug, name: C.names ? C.names[k] : (idx.length ? rows[idx[0]][2] : slug), about: C.about ? C.about[k] : '', field: C.field ? C.field[k] : '', idx, vec, x: C.x[k], y: C.y[k], c1: C.c1[k], c2: C.c1[k] }; });
   ents.forEach((e) => { e.f = new Float32Array(ix.fields.length); e.idx.forEach((i) => ix.fields.forEach((f, q) => { if (ix.attrs[i][4] >> q & 1) e.f[q] += 1 / e.idx.length; })); });
-  return { kind: 'companies', ents, n: ents.length, regions: C.regions, hoods: C.regions, links: [] };
+  return { kind: 'companies', ents, n: ents.length, regions: C.regions, hoods: C.regions, links: C.links || [] };
 }
 // per_scope only: one role map per region filter with enough roles (built separately, so a smaller area spreads over the whole map);
 // filters without a map of their own use the next larger one and only hide what is outside
@@ -229,9 +229,9 @@ const cv = $('atlas-cv'), g = cv.getContext('2d'), css = (n, fb = '#888') => get
 const stage = cv.parentElement, fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
 // the largest 900:640 box inside W x H, centred: the map is drawn in it, undistorted
 function setMap(w, h) { W = w; H = h; const u0 = Math.min(W / 900, H / 640); BW = 900 * u0; BH = 640 * u0; }
-// W x H follows the stage: the height is 0.72 x the width, at least 420, at most the window less 120 and 0.9 x the width; in full screen the stage's own size
+// W x H follows the stage: the height is clamp(420 px, the window's height less 140 px, 0.62 x the width); in full screen the stage's own size
 function fitView() { const w = Math.round(stage.clientWidth); if (!w) return; const full = fsEl() === stage;
-  const h = full ? Math.round(stage.clientHeight) : Math.min(Math.round(w * 0.9), Math.min(Math.max(Math.round(w * 0.72), 420), window.innerHeight - 120));
+  const h = full ? Math.round(stage.clientHeight) : Math.max(420, Math.min(window.innerHeight - 140, Math.round(w * 0.62)));
   setMap(w, Math.max(1, h)); cv.style.height = H + 'px'; }
 // a size change: relayout and redraw; the zoom and the centre stay
 let relaid = 0; const relayout = () => { cancelAnimationFrame(relaid); relaid = requestAnimationFrame(() => { const w0 = W, h0 = H; fitView(); if (W !== w0 || H !== h0) draw(); }); };
@@ -292,9 +292,9 @@ function paint(ctx, A, GW, GH, rgb, alphaOf) {
 }
 // the colour themes. fieldL / pointL / dimL: the lightness bands of the field, the points and the points out of the filter (see
 // vivid()); C: the chroma cap. 'light': vivid colour on the page. 'neon': aggressive colour on near black; a wider, fainter
-// pass is added on top (so overlapping regions glow) and gives a halo
+// pass is added on top (so overlapping regions glow) and gives a halo. light: the field multiplied on the page (deep hues on white), dark ink labels on a white halo
 const THEMES = {
-  light: { C: 0.32, fieldL: [0.55, 0.74], pointL: [0.50, 0.70], dimL: [0.62, 0.80], pointA: 0.95, fieldStrength: 0.62 },
+  light: { C: 0.32, fieldL: [0.42, 0.62], pointL: 0.40, dimL: 0.65, pointA: 0.85, dimA: 0.35, fieldStrength: 1.0, multiply: true, halo: '#ffffff' },
   neon: { C: 0.37, fieldL: [0.52, 0.80], pointL: [0.62, 0.88], dimL: [0.45, 0.65], pointA: 1, fieldStrength: 0.62, glow: { strength: 0.16, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
 };
 // the theme on screen: neon on a dark page, light otherwise. The page decides in this order: data-theme="light|dark" on the
@@ -325,7 +325,7 @@ function labelLayout(ctx, lines, x, y, align, p = 1) {
 }
 function labelDraw(ctx, lay, halo) {
   ctx.textBaseline = 'middle'; ctx.textAlign = lay.align; ctx.globalCompositeOperation = 'source-over'; ctx.lineJoin = 'round';
-  for (const ln of lay.lines) { ctx.font = `${ln.face} ${ln.F}px system-ui, sans-serif`; ctx.globalAlpha = ln.alpha ?? 1; ctx.lineWidth = 4 * lay.p; ctx.strokeStyle = halo; ctx.fillStyle = ln.color;
+  for (const ln of lay.lines) { ctx.font = `${ln.face} ${ln.F}px system-ui, sans-serif`; ctx.globalAlpha = (ln.alpha ?? 1) * labA; ctx.lineWidth = 4 * lay.p; ctx.strokeStyle = halo; ctx.fillStyle = ln.color;
     ctx.strokeText(ln.t, ln.cx, ln.cy); ctx.fillText(ln.t, ln.cx, ln.cy); }
 }
 // text wrapped at word boundaries to lines of about `width` characters; at most maxLines: a text that needs more is cut on its
@@ -419,64 +419,90 @@ function prepare(T) {
     }
   }
   fit = showTaste ? fitOf(Ly) : null;
-  const stat = roles && (!perScope || Ly.past) ? visStats(Ly) : null;
+  // a company's open roles in the filter (cn), their weight (cw: the sum of the roles' age weights) and whether one is new today (cNew)
+  const cn = new Int32Array(Ly.n), cw = new Float32Array(Ly.n), cNew = new Uint8Array(Ly.n); let cwMax = 0;
+  if (!roles) Ly.ents.forEach((e, k) => { for (const i of visibleRoles(e)) { cn[k]++; cw[k] += wOf(i); if (AGE[i] < 1) cNew[k] = 1; } cwMax = Math.max(cwMax, cw[k]); });
+  coN = cn;
+  const stat = !roles || !perScope || Ly.past ? visStats(Ly) : null;   // companies: the regions' means over their visible companies, as the roles' neighbourhoods
   // the visible roles by age: today, this week, this month (the legend under the map)
   const fresh = { t: 0, w: 0, m: 0 }; if (roles) Ly.ents.forEach((e, k) => { if (!vis[k] || e.ember || (e.hidden && !st.all)) return; const a = ageE(e); if (a < 1) fresh.t++; else if (a < 7) fresh.w++; else if (a < 30) fresh.m++; });
-  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel'), stat, fresh, heat: !!(roles && TL && $('atlas-heat').checked) };
+  return { Ly, roles, showTaste, T, ink: css('--ink'), paper: css('--panel'), stat, fresh, heat: !!(roles && TL && $('atlas-heat').checked), cn, cw, cNew, cwMax };
 }
+// the label scale on screen: up to 1.5 x with the map's width, up to 1.35 x with the zoom, so the text grows with the map
+const fsk = () => Math.max(1, Math.min(1.5, BW / 900)) * Math.min(1.35, st.z.s ** 0.15);
+// a new role's star, or a company's star (strength w: a role's age weight, a company's log weight against the heaviest). R: the radius,
+// spark: a sparkle. Neon: the region colour with a glow and a white core. Light: a dark core in the region colour, a soft shadow in the
+// region colour and an ink ring. a: the alpha (the points fade in and out with a change of view)
+function star(ctx, X0, Y0, R, w, c1, spark, T, ink, a) {
+  const rgb = regionRgb(c1, T.pointL, T.C), c = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, hc = T.glow ? rgb : regionRgb(c1, 0.45, T.C);
+  ctx.globalAlpha = a;
+  // the glow: a soft radial halo in the region colour (a gradient is far cheaper than a canvas shadow on every star)
+  const gr = R * (1 + 2.2 * w), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, gr), hs = `${hc[0]},${hc[1]},${hc[2]}`;
+  gd.addColorStop(0, `rgba(${hs},${T.glow ? 0.9 : 0.6})`); gd.addColorStop(1, `rgba(${hs},0)`);
+  ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, gr, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7);
+  if (T.glow) { ctx.fillStyle = c; ctx.fill(); ctx.beginPath(); ctx.arc(X0, Y0, 0.45 * R, 0, 7); ctx.fillStyle = '#ffffff'; ctx.fill(); }   // neon: the region colour with a white core
+  else { const core = regionRgb(c1, 0.48, T.C); ctx.fillStyle = `rgb(${core[0]},${core[1]},${core[2]})`; ctx.fill(); ctx.strokeStyle = spark ? ink : '#ffffff'; ctx.lineWidth = spark ? 1.2 : 1; ctx.stroke(); }   // light: a deep region-colour core with a white ring (an ink ring for today's)
+  if (spark) { const s = 1.6 * R; ctx.globalAlpha = 0.8 * a; ctx.strokeStyle = T.glow ? '#ffffff' : ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X0 - s, Y0); ctx.lineTo(X0 + s, Y0); ctx.moveTo(X0, Y0 - s); ctx.lineTo(X0, Y0 + s); ctx.stroke(); }
+  ctx.globalAlpha = a;
+}
+// the company label: its name and, when it has open roles in the filter, their number: "Name (4)"
+const coLabel = (nm, n) => (n ? `${nm} (${n})` : nm);
 function paintMap(ctx, P, o) {
-  const { Ly, roles, T, ink, paper, stat } = P, screen = o.screen, many = o.names === 'many', zoomed = st.z.s >= 2.2, ts = o.ts || 1, ff = o.ff || 1, ks = Math.max(1, W * H / (900 * 640));   // ks: the label caps grow with the area
+  const { Ly, roles, T, ink, paper, stat, cn, cw } = P, screen = o.screen, many = o.names === 'many', zoomed = st.z.s >= 2.2, ff = o.ff || 1, ks = Math.max(1, W * H / (900 * 640));   // ks: the label caps grow with the area
+  const light = !!o.noLabels;   // a frame kept for a change of view: the field and the points, no labels
+  const ts = screen ? fsk() : (o.ts || 1), zf = Math.min(2.5, Math.sqrt(st.z.s)), dot = 2 * zf;
   const bg = T.bg || paper, halo = T.halo || paper, tintOf = (c) => { const r = regionRgb(c, T.tintL, T.C); return `rgb(${r[0]},${r[1]},${r[2]})`; };
   ctx.globalCompositeOperation = 'source-over';
-  if (screen && !T.bg) ctx.clearRect(0, 0, W, H); else { ctx.globalAlpha = 1; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
-  // links between neighbourhoods (share of neighbour links that cross)
-  if (roles && Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1; const HX = stat ? stat.hood : Ly.hoods;
-    for (const [a, b, w] of Ly.links) { if (stat && (!HX[a].n || !HX[b].n)) continue; const A = HX[a].xy, B = HX[b].xy; ctx.globalAlpha = T.linkInk ? 0.04 + 0.12 * (w / mx) : 0.05 + 0.25 * (w / mx); ctx.beginPath(); ctx.moveTo(sx(A[0]), sy(A[1])); ctx.lineTo(sx(B[0]), sy(B[1])); ctx.stroke(); } }
+  if (screen && !T.bg && !T.multiply) ctx.clearRect(0, 0, W, H); else { ctx.globalAlpha = 1; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
+  // links between neighbourhoods (roles) or between regions (companies): the share of neighbour links that cross
+  if (Ly.links.length) { const mx = Math.max(...Ly.links.map((l) => l[2])); ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1; const HX = stat ? stat.hood : Ly.hoods;
+    for (const [a, b, w] of Ly.links) { if (stat && (!HX[a].n || !HX[b].n)) continue; const pa = HX[a].xy, pb = HX[b].xy; ctx.globalAlpha = T.linkInk ? 0.04 + 0.12 * (w / mx) : 0.05 + 0.25 * (w / mx); ctx.beginPath(); ctx.moveTo(sx(pa[0]), sy(pa[1])); ctx.lineTo(sx(pb[0]), sy(pb[1])); ctx.stroke(); } }
   // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense
-  if (T.glow) { colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff }); colourField(ctx, Ly, { strength: T.glow.strength, L: T.fieldL, C: T.C, ff, extra: T.glow.extra, additive: true }); }
-  else colourField(ctx, Ly, { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff });
+  const fo = { strength: T.fieldStrength, L: T.fieldL, C: T.C, ff, op: T.multiply ? 'multiply' : 'source-over' };
+  if (T.glow) { colourField(ctx, Ly, fo); colourField(ctx, Ly, { ...fo, strength: T.glow.strength, extra: T.glow.extra, additive: true }); }
+  else colourField(ctx, Ly, fo);
   // hot and cold spots: after the colour field, before the points; an area keeps its colour and only gets brighter or dimmer
   if (P.heat) heatField(ctx, ff, T, bg);
-  const dot = (roles ? 2 : 5) * Math.min(2.5, Math.sqrt(st.z.s)); let shown = 0; const hot = [];
-  Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (act[k] && !e.ember) shown++; if (e.hidden && !st.all) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
+  let shown = 0; const hot = [], buckets = new Map();
+  // a company's dot: by its open roles (1.6 + 1.1 sqrt(n), at most 5.5), 1.3 for a company with none
+  const rcOf = (k) => (cn[k] ? Math.min(5.5, 1.6 + 1.1 * Math.sqrt(cn[k])) : 1.3) * zf;
+  // a star's strength: a role's age weight; a company's log weight against the heaviest company
+  const starOf = (k) => (roles ? wE(Ly.ents[k]) : cw[k] > 0 ? Math.log1p(cw[k]) / Math.log1p(P.cwMax) : 0);
+  // companies with no open role in the filter: small faint dots, drawn first, no rings
+  if (!roles) Ly.ents.forEach((e, k) => { if (cn[k] || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
+    const rgb = regionRgb(e.c1, T.dimL, T.C); ctx.globalAlpha = T.dimA ?? 0.28; ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; ctx.beginPath(); ctx.arc(X0, Y0, rcOf(k), 0, 7); ctx.fill(); });
+  Ly.ents.forEach((e, k) => { if (!roles && !cn[k]) return; if (!vis[k]) return; if (act[k] && !e.ember) shown++; if (e.hidden && !st.all) return;
+    const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     if (e.ember) { ctx.globalAlpha = e.ea; ctx.fillStyle = 'rgb(190,120,60)'; ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }   // a role last seen before the scrubbed time: a dim warm ember
-    if (roles && wE(e) > 0) { hot.push(k); return; }   // new roles are drawn after the others, on top
+    const sv = starOf(k);
+    if (sv > 0) { hot.push([k, sv]); return; }   // new roles, and companies with some: drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C); ctx.globalAlpha = (act[k] ? T.pointA : 0.45) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1); ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-    if (roles) {
-      ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot);
-    } else {
-      ctx.beginPath();
-      ctx.arc(X0, Y0, (act[k] ? dot * 0.6 : dot * 0.42), 0, 7);
-      if (act[k]) {
-        ctx.fill();
-        ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.4)`;
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-      } else {
-        ctx.globalAlpha *= 0.6;
-        ctx.fill();
-        ctx.strokeStyle = ctx.fillStyle;
-        ctx.lineWidth = 1;
-        ctx.stroke();
-      }
-    } });
-  // the new roles, on top: radius dot x (1 + 1.6 w) at full strength; on the dark theme a glow in the region colour and a white core,
-  // today's also a small sparkle; on the light theme the region colour with a thin ink ring
-  if (hot.length) { const px = ctx.getTransform().a || 1; ctx.globalAlpha = 1;
-    for (const k of hot) { const e = Ly.ents[k], w = wE(e), X0 = sx(e.x), Y0 = sy(e.y), R = dot * (1 + 1.6 * w), rgb = regionRgb(e.c1, T.pointL, T.C), c = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
-      ctx.fillStyle = c; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7);
-      if (T.glow) { ctx.shadowBlur = 14 * w * px; ctx.shadowColor = c; ctx.fill(); ctx.shadowBlur = 0; ctx.shadowColor = 'transparent'; ctx.beginPath(); ctx.arc(X0, Y0, 0.45 * R, 0, 7); ctx.fillStyle = '#ffffff'; ctx.fill(); }
-      else { ctx.fill(); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.stroke(); }
-      if (w >= 1) { const s = 1.6 * R; ctx.globalAlpha = 0.8; ctx.strokeStyle = T.glow ? '#ffffff' : ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X0 - s, Y0); ctx.lineTo(X0 + s, Y0); ctx.moveTo(X0, Y0 - s); ctx.lineTo(X0, Y0 + s); ctx.stroke(); ctx.globalAlpha = 1; } } }
+    const a = (act[k] ? T.pointA : 0.45) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
+    if (a <= 0.003) return;
+    const rgb = regionRgb(e.c1, act[k] ? T.pointL : T.dimL, T.C);
+    if (roles) {   // the role points go into one path per colour and alpha (a fill each, not one per point)
+      const q = Math.round(a * 20), key = `${e.c1}|${act[k] ? 1 : 0}|${q}`; let b = buckets.get(key);
+      if (!b) buckets.set(key, b = { q, rgb, p: new Path2D() }); b.p.rect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }
+    // a company with open roles: a dot by its number of roles; on neon a thin ring in its colour, on light none
+    ctx.globalAlpha = a; ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`;
+    ctx.beginPath(); ctx.arc(X0, Y0, rcOf(k), 0, 7); ctx.fill();
+    if (!T.multiply) { ctx.strokeStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.4)`; ctx.lineWidth = 1.2; ctx.stroke(); } });
+  for (const b of buckets.values()) { if (!b.q) continue; ctx.globalAlpha = b.q / 20; ctx.fillStyle = `rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})`; ctx.fill(b.p); }
+  // the new roles and the companies with some, on top
+  if (hot.length) for (const [k, sv] of hot) { const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), base = roles ? dot : rcOf(k); star(ctx, X0, Y0, base * (1 + 1.6 * sv), sv, e.c1, roles ? sv >= 1 : !!P.cNew[k], T, ink, 1); }
   // the point whose card is open: a ring (on screen only)
   if (screen && sel && sel.ly === Ly && vis[sel.k]) {
-    const e = Ly.ents[sel.k], R = (roles ? dot * (1 + 1.6 * wE(e)) : (act[sel.k] ? dot * 0.6 : dot * 0.42)) + 4;
+    const e = Ly.ents[sel.k], R = (roles ? dot * (1 + 1.6 * wE(e)) : rcOf(sel.k) * (1 + 1.6 * starOf(sel.k))) + 4;
     ctx.globalAlpha = 1; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), R, 0, 7); ctx.stroke();
   }
   Ly.ents.forEach((e) => { const v = voteOf(e.id); if (!v) return; const col = v > 0 ? '#2fb36b' : '#d9534f', x = sx(e.x), y = sy(e.y); ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.strokeStyle = halo; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.stroke(); });
+  // keep: the frame so far (the field and the points, no labels) is copied for a change of view: it is that change's frame before
+  if (o.keep) { const k = base || (base = { c: document.createElement('canvas') }); k.c.width = ctx.canvas.width; k.c.height = ctx.canvas.height; k.c.getContext('2d').drawImage(ctx.canvas, 0, 0); k.z = { ...st.z }; }
+  const counts = { areas: 0, roles: 0, companies: 0, lens: 0, fresh: 0 };
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
   // screen) and of every label already placed; otherwise it is left out. Areas first, then role labels or company names.
+  if (!light) {
   const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW + 6, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
   const place = (lines, cands, free) => { for (const [x, y, a] of cands) { const lay = labelLayout(ctx, lines, x, y, a, ts), b = lay.box;
       if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
@@ -484,14 +510,21 @@ function paintMap(ctx, P, o) {
       if (boxes.some((q) => !(b[2] < q[0] || b[0] > q[2] || b[3] < q[1] || b[1] > q[3]))) continue;
       boxes.push(b); labelDraw(ctx, lay, halo); return b; } return false; };
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
-  const counts = { areas: 0, roles: 0, companies: 0, lens: 0, fresh: 0 };
   // the regions and neighbourhoods as { r, n, xy }: with the one map, the visible roles and their mean position (see visStats)
   const regs = stat ? stat.reg.filter((g) => g.n >= stat.min) : Ly.regions.map((r) => ({ r, n: r.n, xy: r.xy })), hoods = stat ? stat.hood.filter((g) => g.n >= stat.min) : Ly.hoods.map((r) => ({ r, n: r.n, xy: r.xy }));
   const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => b.n - a.n);
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
   const areas = many ? [...byN(regs, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regs, false);
+  // area names first: they win over any single role or company label
+  const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
+  for (const { r, n, xy, sub } of areas) {
+    if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
+    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
+    const lines = wrapText(nameOf(r), roles ? 16 : 20, roles ? 2 : 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
+    if (place(lines, [[sx(xy[0]), sy(xy[1]), 'center']])) counts.areas++;
+  }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
-  // roles first). On screen the other new roles follow, newest first. They come before the areas, so they win the collisions, and may lie
+  // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
   // inside the lens. A role title is used once; in the lens the same title at the same company is skipped.
   const rL = st.size * BW, ccx = sx(st.lens.x), ccy = sy(st.lens.y), lensCap = many ? 40 : Math.round(12 * ks), newCap = Math.round(8 * ks);
   const d2 = (k) => (sx(Ly.ents[k].x) - ccx) ** 2 + (sy(Ly.ents[k].y) - ccy) ** 2, inMap = (X0, Y0) => X0 >= 0 && Y0 >= 0 && X0 <= W && Y0 <= H;
@@ -512,18 +545,12 @@ function paintMap(ctx, P, o) {
     if (screen) { const fresh = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && wOf(e.idx[0]) > 0 && !labelled.has(k) && inMap(sx(e.x), sy(e.y))) fresh.push(k); }); fresh.sort(byAge);
       for (const k of fresh) { if (counts.fresh >= newCap) break; const t = cleanTitle(rows[Ly.ents[k].idx[0]][1]).toLowerCase(); if (!t || seenT.has(t)) continue; if (roleLab(k, false)) counts.fresh++; } }
   } else if (!roles) {
+    // the companies in the lens, with their open roles in brackets (a company with none: its name only)
     const pool = []; Ly.ents.forEach((e, k) => { if (vis[k] && e.name && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); });
-    pool.sort((a, b) => Ly.ents[b].idx.length - Ly.ents[a].idx.length || d2(a) - d2(b));
+    pool.sort((a, b) => cn[b] - cn[a] || d2(a) - d2(b));
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), nm = shortName(e.name);
-      if (!nm || !inMap(X0, Y0) || seenC.has(nm)) continue; const col = T.tintL ? tintOf(e.c1) : ink, lines = wrapText(nm, 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
+      if (!nm || !inMap(X0, Y0) || seenC.has(nm)) continue; const col = T.tintL ? tintOf(e.c1) : ink, lines = wrapText(coLabel(nm, cn[k]), 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
       if (place(lines, cand(X0, Y0, lines), true)) { seenC.add(nm); counts.lens++; } }
-  }
-  const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
-  for (const { r, n, xy, sub } of areas) {
-    if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
-    const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
-    const lines = wrapText(nameOf(r), 16, 2).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));
-    if (place(lines, [[sx(xy[0]), sy(xy[1]), 'center']])) counts.areas++;
   }
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
@@ -541,13 +568,15 @@ function paintMap(ctx, P, o) {
         if (place(lines, [[X0 + 6 * ts, Y0, 'left'], [X0 - 6 * ts, Y0, 'right']])) { seenT.add(key); counts.roles++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); } }
       if (!any) break; }
   }
-  // companies (companies map): next to their dot, right of it or else left, the companies with most open roles first
+  // companies (companies map): next to their dot, right of it or else left, the companies with most open roles first; the companies
+  // with none are labelled in the lens only
   if (!roles && (many || zoomed)) {
-    const order = Ly.ents.map((e, k) => k).filter((k) => vis[k] && Ly.ents[k].name).sort((a, b) => Ly.ents[b].idx.length - Ly.ents[a].idx.length), rr = dot / 2 + 3;
+    const order = Ly.ents.map((e, k) => k).filter((k) => vis[k] && Ly.ents[k].name && cn[k] > 0).sort((a, b) => cn[b] - cn[a]);
     for (const k of order) { if (counts.companies >= Math.round((many ? 300 : 15) * ks)) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) continue;
       const nm = shortName(e.name); if (seenC.has(nm)) continue; seenC.add(nm);
-      const col = T.tintL ? tintOf(e.c1) : ink, lines = wrapText(nm, 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
+      const col = T.tintL ? tintOf(e.c1) : ink, rr = rcOf(k) + 3, lines = wrapText(coLabel(nm, cn[k]), 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
       if (place(lines, [[X0 + rr, Y0, 'left'], [X0 - rr, Y0, 'right']])) counts.companies++; }
+  }
   }
   if (screen) {   // the lens and the sampled points
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
@@ -555,8 +584,12 @@ function paintMap(ctx, P, o) {
   }
   return { shown, counts };
 }
+
 function draw() {
-  sizeCanvas(); const T = THEMES[themeFor()], ff = Math.min(3, Math.max(1, Math.sqrt(st.z.s))), P = prepare(T), res = paintMap(g, P, { screen: true, names: 'few', ff, ts: 1 }), Ly = P.Ly;
+  sizeCanvas();
+  if (anim && anim.setting) { prepare(THEMES[themeFor()]); return; }   // a change of view is setting the view: its frames come from the bitmaps (see viewChange)
+  if (anim && anim.light) { tweenDraw(); return; }
+  const T = THEMES[themeFor()], P = prepare(T), ff = Math.min(3, Math.max(1, Math.sqrt(st.z.s))), res = paintMap(g, P, { screen: true, names: 'few', ff, ts: 1, keep: true }), Ly = P.Ly;
   const unitEn = P.roles ? 'roles' : 'companies', unitDe = P.roles ? 'Stellen' : 'Firmen', showTaste = P.showTaste;
   if (TL) tlShow(); buildHit(Ly); if (sel && (sel.ly !== Ly || !vis[sel.k] || (Ly.ents[sel.k].hidden && !st.all))) hidePop();
   if (sel) { const e = Ly.ents[sel.k], X = sx(e.x), Y = sy(e.y); if (X < 0 || Y < 0 || X > W || Y > H) hidePop(); else placePop(X, Y); }
@@ -564,6 +597,46 @@ function draw() {
   $('atlas-status').innerHTML = L(`${res.shown.toLocaleString()} ${unitEn} shown${P.roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
     `${res.shown.toLocaleString('de-DE')} ${unitDe} gezeigt${P.roles && Ly.placed ? ` (${Ly.placed} neuere Stellen neben ihren nächsten Nachbarn platziert)` : ''}. Farben sind Regionen eng verbundener ${unitDe}; Linien verbinden Nachbarschaften mit vielen gemeinsamen Verbindungen. Die gestrichelte Lupe ziehen, um einen Bereich zu sehen, daneben ziehen, um die Karte zu verschieben, mit + und − oder dem Mausrad zoomen.${showTaste ? '  Die Helligkeit zeigt, wie gut ein Bereich zu Ihrem Profil passt; solange wenig bekannt ist, ist der Kontrast gering.' : ''}`) + legend;
 }
+// ---- motion. A change of view (fit, zoom, reset, scope, field, mode) is shown as two bitmaps: the frame before and the frame after, each
+// drawn once without labels (snapshot). Over 300 ms the new one fades in over the old; over 420 ms the zoom tweens (a frame of the tween
+// only draws the two bitmaps under the current transform). At the end the full draw with its labels. Reduced motion: at once. setView
+// (the export) never animates.
+const MOTION = { view: 420, fade: 300 }, noMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+const easeIO = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
+function stopAnim() { if (!anim) return; cancelAnimationFrame(animRaf); if (anim.z1) st.z = { ...anim.z1 }; anim = null; }
+// the frame as it is at zoom z: the field and the points (no labels), on a canvas of the stage's pixel size; the state is the current one
+function snapshot(z) { const c = document.createElement('canvas'), keep = { ...st.z }; c.width = cv.width; c.height = cv.height; const x = c.getContext('2d');
+  st.z = { ...z }; x.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  try { const T = THEMES[themeFor()], P = prepare(T); paintMap(x, P, { screen: true, names: 'few', ff: Math.min(3, Math.max(1, Math.sqrt(z.s))), ts: 1, noLabels: true }); }
+  finally { st.z = keep; }
+  return { c, z: { ...z } }; }
+// set() changes the view and the filters (its redraws only prepare, the frames come from the bitmaps); then the zoom tweens from the view
+// before to the new one, and the two frames cross-fade
+// the filters that decide the points: a change of them needs the frame after (a zoom alone does not)
+const stateKey = () => [st.mode, st.scope, [...st.fields].sort().join(), layers.roles];
+function viewChange(set) {
+  const z0 = { ...st.z }, wasAnim = !!anim; stopAnim(); st.z = z0;
+  if (noMotion()) { set(); return; }
+  // the frame before: the last full frame when it is at this zoom (no new render), else rendered now
+  const old = !wasAnim && base && base.z.s === z0.s && base.z.cx === z0.cx && base.z.cy === z0.cy ? base : snapshot(z0), k0 = stateKey();
+  anim = { setting: true, z0, z1: null, old, nw: null, t0: 0, f: 0, light: true };
+  set(); anim.z1 = { ...st.z }; if (stateKey().some((v, i) => v !== k0[i])) anim.nw = snapshot(anim.z1); st.z = { ...z0 };
+  anim.setting = false; anim.t0 = performance.now(); animRaf = requestAnimationFrame(tweenStep); draw();
+}
+function tweenStep(now) {
+  const A = anim; if (!A || A.setting) return;
+  const t = now - A.t0, p = Math.min(1, t / MOTION.view), e = easeIO(p);
+  st.z = { s: A.z0.s * (A.z1.s / A.z0.s) ** e, cx: A.z0.cx + (A.z1.cx - A.z0.cx) * e, cy: A.z0.cy + (A.z1.cy - A.z0.cy) * e };
+  A.f = Math.min(1, t / MOTION.fade); A.light = p < 1;
+  if (!A.light) { anim = null; st.z = { ...A.z1 }; draw(); return; }
+  draw(); animRaf = requestAnimationFrame(tweenStep);
+}
+// a frame of the tween: the old bitmap, then the new one fading in over it, each under the current view (a bitmap made at zoom q is drawn
+// at the scale and the offset that take its zoom and centre to the current ones)
+function tweenDraw() { const A = anim; g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.clearRect(0, 0, cv.width, cv.height); g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
+  blit(A.old, 1); if (A.nw && A.f > 0) blit(A.nw, A.f); g.globalAlpha = 1; }
+function blit(S, alpha) { const a = st.z.s / S.z.s, ox = W / 2 * (1 - a) + (S.z.cx - st.z.cx) * st.z.s * BW, oy = H / 2 * (1 - a) + (S.z.cy - st.z.cy) * st.z.s * BH;
+  g.globalAlpha = alpha; g.imageSmoothingEnabled = true; g.drawImage(S.c, ox, oy, a * W, a * H); }
 // the current view as a PNG Blob, on the theme's background with a margin of 4 % of the width on every side; the logical W x H
 // frame (the stage's size, or frame: [w, h] for a fixed one) is fitted into the rest at one uniform scale. The image is 900 * scale
 // wide. Fonts are drawn at scale * textScale px (default 0.6 for the 'many' names).
@@ -597,7 +670,7 @@ new ResizeObserver(relayout).observe(stage); window.addEventListener('resize', r
 document.addEventListener('fullscreenchange', relayout); document.addEventListener('webkitfullscreenchange', relayout);
 // switch the view (for the export script and the page): mode 'roles' or 'companies', scope the index of config.json's scopes
 function setView({ mode = st.mode, scope = st.scope } = {}) {
-  st.mode = mode; st.scope = scope; st.open.clear(); st.sample = [];
+  stopAnim(); st.mode = mode; st.scope = scope; st.open.clear(); st.sample = [];
   mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.m === mode)));
   $('atlas-scope').value = String(scope); layers.roles = roleMapFor(scope); fitOrWhole(); resample();
 }
@@ -618,30 +691,33 @@ function fitOf(Ly) {
 }
 // a soft colour field behind the points: each region's colour, blended where regions meet, stronger where points are dense.
 // o.strength; o.L and o.C: the colours' lightness and chroma target; o.ff: the grid factor (the grid is ff times finer and the blur
-// passes ff*ff more, so the softness stays the same in map units); o.extra: more blur passes (a wider glow); o.additive: 'lighter'
-let lastField = null;
+// passes ff*ff more, so the softness stays the same in map units); o.extra: more blur passes (a wider glow); o.additive: 'lighter'; o.op: the blend mode; o.alpha: the layer's alpha (a change of view cross-fades it)
+let lastField = null, coN = null, anim = null, animRaf = 0, labA = 1, base = null;   // base: the last full frame without labels (see paintMap's keep)   // coN: the open roles of each company in the filter (prepare)
 function colourField(ctx, Ly, o) {
   const f = o.ff || 1, GW = Math.round(96 * f * W / BW), GH = Math.round(68 * f * H / BH);
   // regions are mixed as hue directions (unit vectors around the OKLCH wheel), not as RGB: an RGB average of two hues is greyer
   // than either. Each cell then takes the vivid colour of its mixed hue, so borders between regions stay saturated.
-  const A = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH);
+  const A = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH), W0 = new Float32Array(GW * GH);   // W0: the weighted count
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x) / W, Y0 = sy(e.y) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) return;
-    const h = hue(e.c1) * Math.PI / 180, q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), w = fit ? 0.08 + fit[k] * fit[k] : 1;
-    A[q] += Math.cos(h) * w; B[q] += Math.sin(h) * w; N[q] += w; C0[q]++; });
+    const h = hue(e.c1) * Math.PI / 180, q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), w = fit ? 0.08 + fit[k] * fit[k] : 1, wt = Ly.kind === 'companies' ? 0.25 + Math.sqrt(coN[k]) : 1;   // a company weighs 0.25 + sqrt(its open roles), a role 1
+    A[q] += Math.cos(h) * w; B[q] += Math.sin(h) * w; N[q] += w; C0[q]++; W0[q] += wt; });
   const raw = Float32Array.from(C0), nz = [...raw].filter((x) => x > 0).sort((a, b) => a - b), typical = nz.length ? nz[Math.floor(nz.length / 2)] : 1;
   densAt = (px, py) => { const q = Math.min(GH - 1, Math.max(0, Math.floor(py / H * GH))) * GW + Math.min(GW - 1, Math.max(0, Math.floor(px / W * GW))); return Math.max(1, raw[q] / typical); };
-  const passes = Math.max(1, Math.round((4 + Math.min(4, Math.round(Math.log2(st.z.s + 1))) + (o.extra || 0)) * f * f)); for (const X of [A, B, N, C0]) blur(X, GW, GH, passes);
-  const cov = [...C0].filter((x) => x > 1e-3).sort((a, b) => a - b); if (!cov.length) return; const full = cov[Math.floor(cov.length * 0.3)] || 1e-3;
+  const passes = Math.max(1, Math.round((4 + Math.min(4, Math.round(Math.log2(st.z.s + 1))) + (o.extra || 0)) * f * f)); for (const X of [A, B, N, C0, W0]) blur(X, GW, GH, passes);
+  // the soft coverage: the weighted density against its 95th percentile (d = 1 is a dense area), coverage = 1 - exp(-2.5 d): dense areas are rich,
+  // sparse ones thin, with no flat plateau
+  const ramp = Ly.kind === 'companies' ? [2.5, 1.2] : [10, 0.7];   // roles: dense areas saturate, only the sparse edges thin; companies: the steeper ramp
+  const dz = [...W0].filter((x) => x > 1e-3).sort((a, b) => a - b); if (!dz.length) return; const q95 = dz[Math.min(dz.length - 1, Math.floor(dz.length * 0.95))] || 1e-3;
   const band = Array.isArray(o.L) ? o.L : [o.L, o.L];
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);
   for (let q = 0; q < N.length; q++) { const n = N[q]; if (n < 1e-4) continue;
-    const coverage = Math.min(1, C0[q] / full), match = fit ? Math.min(1, 0.15 + 1.2 * n / Math.max(C0[q], 1e-6)) : 1;
+    const coverage = 1 - Math.exp(-ramp[0] * W0[q] / q95), match = fit ? Math.min(1, 0.15 + 1.2 * n / Math.max(C0[q], 1e-6)) : 1;
     // where opposite hues cancel out (the mixed direction is short) the cell fades instead of turning grey
     const len = Math.hypot(A[q], B[q]) / n, h = (Math.atan2(B[q], A[q]) * 180 / Math.PI + 360) % 360, c = vivid(h, band[0], band[1], o.C);
-    img.data[q * 4] = c[0]; img.data[q * 4 + 1] = c[1]; img.data[q * 4 + 2] = c[2]; img.data[q * 4 + 3] = Math.round(255 * o.strength * coverage * coverage * match * Math.min(1, 0.35 + len)); }
-  sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = 1;
-  ctx.globalCompositeOperation = o.additive ? 'lighter' : 'source-over'; ctx.drawImage(small, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over';
-  if (!o.additive) lastField = { small, GW, GH };      // the main layer, which the hot and cold spots brighten
+    img.data[q * 4] = c[0]; img.data[q * 4 + 1] = c[1]; img.data[q * 4 + 2] = c[2]; img.data[q * 4 + 3] = Math.round(255 * o.strength * coverage ** ramp[1] * match * Math.min(1, 0.35 + len)); }
+  sg.putImageData(img, 0, 0); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalAlpha = o.alpha ?? 1;
+  ctx.globalCompositeOperation = o.additive ? 'lighter' : (o.op || 'source-over'); ctx.drawImage(small, 0, 0, W, H); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  if (!o.additive) lastField = { small, GW, GH, z: { ...st.z } };      // the main layer, which the hot and cold spots brighten
 }
 // favoured / pushed-away field: per screen cell, the share of entities in the top of your taste (green) and under a penalty (red);
 // the fewer signals there are, the more it is blurred, so a thin profile shows as a soft haze and sharpens as you mark more
@@ -683,7 +759,9 @@ function fitTo() {
   const pct = (a, p) => { const q = [...a].sort((u, v) => u - v); return q[Math.min(q.length - 1, Math.floor(p * q.length))]; };
   const x0 = pct(xs, 0.02), x1 = pct(xs, 0.98), y0 = pct(ys, 0.02), y1 = pct(ys, 0.98);
   const bw = (x1 - x0) * 1.12, bh = (y1 - y0) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: cx, y: cy };
+  // the lens goes to the visible point nearest the middle: on a map of separate islands the middle itself can be empty
+  let best = 0, bd = Infinity; xs.forEach((x, i) => { const d = (x - cx) ** 2 + (ys[i] - cy) ** 2; if (d < bd) { bd = d; best = i; } });
+  st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: xs[best], y: ys[best] };
 }
 // the view after a filter or a switch: fitted to the visible roles or companies (one map), else the whole map (as per_scope always did)
 const fitOrWhole = () => { if (!perScope) fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
@@ -725,7 +803,7 @@ function cardHtml(k) {
   const facts = [loc && `📍 ${loc}`, archName && `🏛 ${archName}`, tracked && `✓ ${L('Tracked ATS', 'Überwachtes Portal')}`, ...tags.slice(0, 3).map((t) => `#${t}`)].filter(Boolean);
 
   return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}">`
-    + `<button type="button" class="hd" aria-expanded="${open}">${esc(e.name)}${archName ? ` <span class="atlas-tag-tier" style="background:${archCol}">${esc(archName)}</span>` : ''}${tracked ? ` <span class="atlas-badge-tracked">● ${L('Tracked', 'Überwacht')}</span>` : ''}</button>`
+    + `<button type="button" class="hd" aria-expanded="${open}"><img class="co-logo" src="assets/company/${esc(e.slug)}.png" alt="" loading="lazy" onerror="this.remove()">${esc(e.name)}${archName ? ` <span class="atlas-tag-tier" style="background:${archCol}">${esc(archName)}</span>` : ''}${tracked ? ` <span class="atlas-badge-tracked">● ${L('Tracked', 'Überwacht')}</span>` : ''}</button>`
     + `<div class="m">${loc ? esc(loc) + ' · ' : ''}${vr.length ? `<span class="co-has-roles">${vr.length} ${L('open roles', 'offene Stellen')}</span>` : `<span class="co-no-roles">${L('No current vacancies', 'Keine aktuellen Vakanzen')}</span>`}${flds.length ? ' · ' + esc(flds.join(', ')) : (e.field ? ' · ' + esc(e.field) : '')}</div>`
     + `<div class="snip">${esc(snip(desc, 170))}</div>`
     + `<div class="more">`
@@ -872,7 +950,7 @@ function placePop(X, Y) { const sr = stage.getBoundingClientRect(), cr = cv.getB
   let l = x + 14; if (l + pw > sw - 6) l = x - 14 - pw; l = Math.max(6, Math.min(l, sw - pw - 6)); const t = Math.max(6, Math.min(y - ph / 2, sh - ph - 6));
   pop.style.left = l + 'px'; pop.style.top = t + 'px'; }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sel) { hidePop(); draw(); } });
-cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); touches.set(e.pointerId, ptr(e));
+cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); stopAnim(); touches.set(e.pointerId, ptr(e));
   if (touches.size === 2) { const [a1, b1] = [...touches.values()]; pinch = { d: Math.hypot(a1[0] - b1[0], a1[1] - b1[1]), s: st.z.s }; drag = null; return; }
   const [px, py] = ptr(e), dx = px - sx(st.lens.x), dy = py - sy(st.lens.y);
   drag = Math.hypot(dx, dy) <= st.size * BW + 8 ? { kind: 'lens', px, py, moved: 0 } : { kind: 'pan', px, py, cx: st.z.cx, cy: st.z.cy, moved: 0 }; });
@@ -893,9 +971,9 @@ function zoom(f, px = W / 2, py = H / 2) { zoomTo(st.z.s * f, px, py); }
 cv.addEventListener('mousedown', (e) => { if (e.detail > 1) e.preventDefault(); });      // a double click zooms; it should not select page text
 cv.addEventListener('dblclick', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(2, px, py); });
 cv.addEventListener('wheel', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
-$('atlas-zin').addEventListener('click', () => zoom(1.5, sx(st.lens.x), sy(st.lens.y)));
-$('atlas-zout').addEventListener('click', () => zoom(1 / 1.5, sx(st.lens.x), sy(st.lens.y)));
-$('atlas-zreset').addEventListener('click', () => { fitOrWhole(); resample(); });
+$('atlas-zin').addEventListener('click', () => viewChange(() => zoom(1.5, sx(st.lens.x), sy(st.lens.y))));
+$('atlas-zout').addEventListener('click', () => viewChange(() => zoom(1 / 1.5, sx(st.lens.x), sy(st.lens.y))));
+$('atlas-zreset').addEventListener('click', () => viewChange(() => { fitOrWhole(); resample(); }));
 function updateModeHeader() {
   const eyebrow = document.querySelector('.section.atlas .eyebrow');
   const h2 = document.querySelector('.section.atlas h2');
@@ -920,8 +998,8 @@ mount.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'atlas-save-img') { saveImage().catch((err) => { $('atlas-status').textContent = err.message || String(err); }); }
   else if (b.id === 'atlas-fs') toggleFs();
-  else if (b.closest('#atlas-mode')) { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); updateModeHeader(); st.open.clear(); st.sample = []; fitOrWhole(); resample(); }
-  else if (b.closest('#atlas-fields')) { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (!perScope) fitTo(); resample(); }
+  else if (b.closest('#atlas-mode')) viewChange(() => { st.mode = b.dataset.m; mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x === b))); updateModeHeader(); st.open.clear(); st.sample = []; fitOrWhole(); resample(); });
+  else if (b.closest('#atlas-fields')) viewChange(() => { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (!perScope) fitTo(); resample(); });
   else if (b.id === 'atlas-shuffle') resample();
   else if (b.id === 'atlas-play') tlPlay();
   else if (b.classList.contains('hd')) { const li = b.closest('li'), id = li.dataset.id, on = li.classList.toggle('open'); b.setAttribute('aria-expanded', String(on)); if (on) st.open.add(id); else st.open.delete(id); fillRole(li); }
@@ -961,10 +1039,10 @@ mount.addEventListener('change', async (e) => {
   if (e.target.id === 'atlas-cv-on') { cvEmb.on = e.target.checked; setJ(K.cv, cvEmb); computeTaste(); draw(); }
   if (e.target.id === 'atlas-taste' || e.target.id === 'atlas-heat') draw();
 });
-$('atlas-scope').addEventListener('change', (e) => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope);
+$('atlas-scope').addEventListener('change', (e) => viewChange(() => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope);
   if (perScope) { if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } }
   else fitTo();
-  resample(); });
+  resample(); }));
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; resample(); });
 if (TL) { $('atlas-time').addEventListener('input', (e) => { tlStop(); setScrub(+e.target.value); }); ['pointerdown', 'keydown'].forEach((ev) => $('atlas-time').addEventListener(ev, () => tlStop())); }
 window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); draw(); });

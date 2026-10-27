@@ -1,6 +1,6 @@
 """Atlas layout: a network map of the board's roles and companies, in the way maps of science are drawn.
 
-    jobcrawl map --profile P --site SITE [--vectors DIR] [--labels-only]     (needs the map extra: umap-learn, leidenalg, igraph, scipy)
+    jobcrawl map --profile P --site SITE [--vectors DIR] [--labels-only | --companies-only]     (needs the map extra: umap-learn, leidenalg, igraph, scipy)
 
 Port of the reference implementation's build_atlas.py. Algorithms and constants are the reference's; the values that belong to a field come from the
 profile's map block (k, layout_k, min_dist, even, reps, signature, min_scope, resolution, labels_file) and the profile's scopes.
@@ -17,9 +17,14 @@ profile's map block (k, layout_k, min_dist, even, reps, signature, min_scope, re
 7. Links: for the finer groups, the share of neighbour links that cross from one group to another.
 Big employers are represented by at most map.reps roles per company and group; the others sit next to their representative.
 Scopes with at least map.min_scope roles get a map of their own; the worldwide map always covers every role.
-Companies (from the companies_catalogue, embedded by jobcrawl embed) get their own map from the centre of their roles.
+Companies (from the companies_catalogue, embedded by jobcrawl embed) get their own map from the centre of their roles. When
+VECTORS/company-graph.json exists and covers the same companies (the madenetwork company graph), its groups are the company regions
+(no new Leiden run), named by the labels file's companies section (matched by group id), and the links are the edge counts between
+groups. Their positions are graph_layout(): a UMAP on the company vectors with the graph's own neighbours (company-nb.bin) and the
+groups as a semi-supervised target.
 
-Output: VECTORS/atlas-layout.json (publish copies it into SITE/match/).
+Output: VECTORS/atlas-layout.json (publish copies it into SITE/match/). --companies-only rebuilds just the companies section of that
+file and keeps its roles and scopes sections as they are.
 """
 import ast
 import collections
@@ -47,6 +52,8 @@ LAYOUT_NEIGHBOURS_COMPANIES = 20    # UMAP neighbours for the company map (the r
 COMPANY_KNN = 8                     # neighbours in the company grouping graph (optimized for modularity & separation)
 COMPANY_RESOLUTION = 1.8            # optimized resolution parameter separating EO and Consulting
 COMPANY_MIN_GROUP = 5
+COMPANY_GRAPH_WEIGHT = 0.3          # the company graph's groups pull the positions (UMAP target_weight); 0.3 keeps the most graph neighbours among the
+                                    # settings with 0.75+ coherence (sweep on madenetwork: 0.975 mean coherence, 0.39 of the 8 graph neighbours in the 15 nearest)
 EMPLOYER_RESOLUTION = 4.0           # the coarse neighbourhoods that pick the representatives
 EMPLOYER_MIN_GROUP = 12
 REGION_EXPONENT = 0.35              # regions ~ n^0.35 (23 for 8,000 representatives, 11 for 900), neighbourhoods three times as many
@@ -155,6 +162,20 @@ def links(memb, idx, k, top=3):
         for b in idx[a]:
             if memb[a] != memb[b]:
                 cnt[tuple(sorted((int(memb[a]), int(memb[b]))))] += 1
+    return top_links(cnt, size, k, top)
+
+
+def group_links(memb, pairs, k, top=3):
+    """Links from an edge list (pairs of member indices) instead of neighbour lists: the same weights as links()."""
+    cnt = collections.Counter(); size = collections.Counter(memb.tolist())
+    for a, b in pairs:
+        if memb[a] != memb[b]:
+            cnt[tuple(sorted((int(memb[a]), int(memb[b]))))] += 1
+    return top_links(cnt, size, k, top)
+
+
+def top_links(cnt, size, k, top):
+    """Per group, its `top` strongest links; a link's weight is its count over the groups' sizes and k."""
     best = collections.defaultdict(list)
     for (a, b), c in cnt.items():
         w = c / math.sqrt(size[a] * size[b]) / k
@@ -333,20 +354,97 @@ def role_map_excerpt(sel, global_roles, cfg):
     }
 
 
-def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=print):
-    """The companies' own map: each company's catalogue vector, moved towards the centre of its open roles where it has any."""
+def company_graph(vectors, slugs, log=print):
+    """The companies' groups and edges from VECTORS/company-graph.json (madenetwork's tools/embed/build_company_network.py), or None.
+
+    Used only when its nodes are the same companies as the company vectors (same slugs, no duplicates); otherwise logged and None.
+    Returns {'memb': group index per slug (0..G-1, in the order of the graph's group ids), 'orig': the graph's group id per index,
+    'pairs': edges as (slug index, slug index), 'groups': the graph's group records by id, 'group_of': the graph's group id per slug}."""
+    path = os.path.join(vectors, 'company-graph.json')
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding='utf-8') as fh:
+        g = json.load(fh)
+    nodes = g.get('nodes') or []
+    if len(set(slugs)) != len(slugs) or sorted(n['slug'] for n in nodes) != sorted(slugs):
+        log(f'  company-graph.json covers {len(nodes)} companies, not the {len(slugs)} company vectors: the companies keep their own groups')
+        return None
+    pos = {s_: i for i, s_ in enumerate(slugs)}
+    slug_of = {int(n['idx']): n['slug'] for n in nodes}
+    group_of = {n['slug']: int(n['group_id']) for n in nodes}
+    orig = sorted(set(group_of.values())); new = {o: j for j, o in enumerate(orig)}
+    memb = np.array([new[group_of[s_]] for s_ in slugs], np.int64)
+    pairs = []
+    for e in g.get('edges') or []:
+        a, b = pos[slug_of[int(e['source'])]], pos[slug_of[int(e['target'])]]
+        if a != b:
+            pairs.append((a, b))
+    nb = None
+    nb_path = os.path.join(vectors, 'company-nb.bin')
+    if os.path.exists(nb_path) and os.path.getsize(nb_path) == len(slugs) * COMPANY_KNN * 2:      # the graph's own neighbour lists, in slug order
+        with open(nb_path, 'rb') as fh:
+            nb = np.frombuffer(fh.read(), np.uint16).reshape(len(slugs), COMPANY_KNN).astype(np.int64)
+    return {'memb': memb, 'orig': orig, 'pairs': pairs, 'groups': {int(x['id']): x for x in g.get('groups') or []}, 'group_of': group_of, 'nb': nb}
+
+
+def company_group_names(graph, lab):
+    """[en, de] per group (in the order of graph['orig']): the labels file's companies entry for the group, else the graph's own names.
+    An entry belongs to a group by its "id" if it has one, else by its "en" name, else by the group most of its sample holds."""
+    entries = {}
+    for entry in (lab or {}).get('companies') or []:
+        gid = entry.get('id')
+        if gid is None:
+            gid = next((x['id'] for x in graph['groups'].values() if x.get('en') == entry.get('en')), None)
+        if gid is None:
+            votes = collections.Counter(graph['group_of'][sl] for sl in entry.get('sample') or [] if sl in graph['group_of'])
+            gid = votes.most_common(1)[0][0] if votes else None
+        if gid is not None:
+            entries.setdefault(int(gid), entry)
+    names = []
+    for gid in graph['orig']:
+        e = entries.get(gid) or graph['groups'].get(gid) or {}
+        names.append([e.get('en') or f'Group {gid}', e.get('de') or f'Gruppe {gid}'])
+    return names
+
+
+def graph_layout(C, P, groups, graph, cfg, seed=1):
+    """The company positions when the company graph is used: UMAP on the company vectors, with the graph's own 8 neighbours (company-nb.bin,
+    cosine distances on the company vectors) and the graph's groups as a semi-supervised target (COMPANY_GRAPH_WEIGHT), then relax().
+    Without company-nb.bin UMAP builds its own 8 neighbours."""
+    import umap
+    kw = dict(n_neighbors=COMPANY_KNN, min_dist=cfg['min_dist'], metric='cosine', random_state=seed, init='spectral',
+              target_metric='categorical', target_weight=COMPANY_GRAPH_WEIGHT)
+    if graph.get('nb') is not None:
+        nb = graph['nb']
+        dist = np.clip(1 - np.sum(P[:, None, :] * P[nb], axis=2), 0, 2).astype(np.float32)
+        kw['precomputed_knn'] = (nb.astype(np.int32), dist, None)
+    Y = umap.UMAP(**kw).fit_transform(C, y=np.asarray(groups))
+    return relax(Y, dmin=0.6 / math.sqrt(len(Y)), even=cfg['even'])
+
+
+def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=print, graph=None):
+    """The companies' own map: each company's catalogue vector, moved towards the centre of its open roles where it has any.
+    With a graph (company_graph) the groups and links come from it, and the positions from graph_layout."""
     C = P.copy(); nroles = []
     for kk, slug in enumerate(slugs):
         l = by.get(slug, []); nroles.append(len(l))
         if l:
             rc = X0[l].mean(0); rc /= np.linalg.norm(rc); C[kk] = P[kk] + min(1.5, len(l) / 3) * rc      # more roles, more say: up to 1.5 times the profile
     C /= np.linalg.norm(C, axis=1, keepdims=True)
-    cidx, csim = knn(C, COMPANY_KNN)
-    cm = relabel_small(leiden(cidx, csim, COMPANY_RESOLUTION), cidx, COMPANY_MIN_GROUP)
+    if graph is None:
+        cidx, csim = knn(C, COMPANY_KNN)
+        cm = relabel_small(leiden(cidx, csim, COMPANY_RESOLUTION), cidx, COMPANY_MIN_GROUP)
+        cl = links(cm, cidx, COMPANY_KNN)
+    else:
+        cm = graph['memb']
+        cl = group_links(cm, graph['pairs'], COMPANY_KNN)
     ctexts = [' '.join([(cat.get(s_) or {}).get('field') or '', (cat.get(s_) or {}).get('arch_name') or ''] + [titles[i] for i in by.get(s_, [])[:40]]).lower()
               for s_ in slugs]
     cfields = [[f for i in by.get(s_, []) for f in fields_of[i]] for s_ in slugs]
-    CY = layout(C, LAYOUT_NEIGHBOURS_COMPANIES, cfg['min_dist'], cfg['even'])
+    if graph is None:
+        CY = layout(C, LAYOUT_NEIGHBOURS_COMPANIES, cfg['min_dist'], cfg['even'])
+    else:
+        CY = graph_layout(C, P, cm, graph, cfg)
 
     def about(c):
         pr = c.get('profile')
@@ -361,15 +459,15 @@ def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=
             'field': [(cat.get(s_) or {}).get('field') or '' for s_ in slugs], 'slugs': slugs,
             'x': [round(float(v), 4) for v in CY[:, 0]], 'y': [round(float(v), 4) for v in CY[:, 1]], 'c1': cm.tolist(), 'roles': nroles,
             'regions': [dict(d, xy=c) for d, c in zip(describe(cm, ctexts, cfields, C, prefs, 3), centres(CY, cm))],
-            'links': links(cm, cidx, COMPANY_KNN)}
+            'links': cl}
 
 
 EMPTY_COMPANIES = {'names': [], 'about': [], 'field': [], 'slugs': [], 'x': [], 'y': [], 'c1': [], 'roles': [], 'regions': []}
 
 
-def build(site, vectors, profile, log=print):
-    """Builds the layout and writes VECTORS/atlas-layout.json. Returns the file's path."""
-    from jobcrawl.embed.companies import catalogue_path, load_catalogue
+def prepare(site, vectors, profile):
+    """The inputs of the layout, read from the site and the vectors: (cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of).
+    X is the role vectors without the employer signature (the worldwide map), X0 the language-neutral ones (the company centres)."""
     m = profile['map']
     cfg = {'k': m['k'], 'layout_k': m['layout_k'], 'min_dist': m['min_dist'], 'even': m['even'], 'reps': m['reps'], 'signature': m['signature']}
     keep, X, desc, vj = load(site, vectors)
@@ -389,6 +487,50 @@ def build(site, vectors, profile, log=print):
     titles = [r[1].lower() for r in keep]
     fields_of = [(desc.get(r[0]) or {}).get('tg') or [] for r in keep]
     scope_of = [set((desc.get(r[0]) or {}).get('sc') or []) for r in keep]
+    return cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of
+
+
+def companies_layout(vectors, profile, keep, X0, titles, fields_of, prefs, cfg, lab, log=print):
+    """(companies section, region names or None). The names are None unless company-graph.json groups the companies (then the names
+    are the labels file's, by group id, and must be set on the regions after apply_labels)."""
+    from jobcrawl.embed.companies import catalogue_path, load_catalogue
+    cpath = os.path.join(vectors, 'company-vec.json')
+    if not os.path.exists(cpath):
+        return dict(EMPTY_COMPANIES), None
+    with open(cpath, encoding='utf-8') as fh:
+        cj = json.load(fh)
+    with open(os.path.join(vectors, 'company-vec.bin'), 'rb') as fh:
+        P = np.frombuffer(fh.read(), np.int8).reshape(-1, cj['dim']).astype(np.float32)
+    P /= np.linalg.norm(P, axis=1, keepdims=True)
+    cat_path = catalogue_path(profile)
+    cat = {c['slug']: c for c in load_catalogue(cat_path)} if cat_path and os.path.exists(cat_path) else {}
+    by = collections.defaultdict(list)
+    for i, r in enumerate(keep):
+        if r[4]:
+            by[r[4]].append(i)
+    slugs = cj['slugs']
+    if len(slugs) <= COMPANY_KNN + 1:
+        log(f'  {len(slugs)} companies: too few for a companies map')
+        return dict(EMPTY_COMPANIES), None
+    graph = company_graph(vectors, slugs, log)
+    if graph is None:
+        return company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log), None
+    names = company_group_names(graph, lab)
+    log(f'  companies: {len(graph["orig"])} groups from company-graph.json')
+    return company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log, graph=graph), names
+
+
+def name_companies(companies, names):
+    """Sets each company region's label to its name from the companies_layout (the labels file's, by group id)."""
+    if names:
+        for r, nm in zip(companies['regions'], names):
+            r['label'] = nm
+
+
+def build(site, vectors, profile, log=print):
+    """Builds the layout and writes VECTORS/atlas-layout.json. Returns the file's path."""
+    cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of = prepare(site, vectors, profile)
+    m = profile['map']
     any_scopes = {s['id'] for s in profile['scopes'] if (s.get('match') or {}).get('any')}
     roles = role_map(keep, X, employer, titles, fields_of, prefs, cfg, log)
     global_coords = np.column_stack([roles['x'], roles['y']])
@@ -404,33 +546,43 @@ def build(site, vectors, profile, log=print):
         log(f'{sid}: {len(sel)} roles (reshaping with relaxed coordinates, preserving global cluster relationships)')
         maps[sid] = role_map_excerpt(sel, roles, cfg)
     # companies: every catalogue company, from its own vector (companies.py), combined with the centre of its open roles where it has any
-    companies = dict(EMPTY_COMPANIES)
-    cpath = os.path.join(vectors, 'company-vec.json')
-    if os.path.exists(cpath):
-        with open(cpath, encoding='utf-8') as fh:
-            cj = json.load(fh)
-        with open(os.path.join(vectors, 'company-vec.bin'), 'rb') as fh:
-            P = np.frombuffer(fh.read(), np.int8).reshape(-1, cj['dim']).astype(np.float32)
-        P /= np.linalg.norm(P, axis=1, keepdims=True)
-        cat_path = catalogue_path(profile)
-        cat = {c['slug']: c for c in load_catalogue(cat_path)} if cat_path and os.path.exists(cat_path) else {}
-        by = collections.defaultdict(list)
-        for i, r in enumerate(keep):
-            if r[4]:
-                by[r[4]].append(i)
-        slugs = cj['slugs']
-        if len(slugs) > COMPANY_KNN + 1:
-            companies = company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log)
-        else:
-            log(f'  {len(slugs)} companies: too few for a companies map')
+    lab = load_labels(profile, log)
+    companies, names = companies_layout(vectors, profile, keep, X0, titles, fields_of, prefs, cfg, lab, log)
     out = {'version': 2, 'k': cfg['k'], 'layout_k': cfg['layout_k'], 'scopes': maps, 'resolution': m['resolution'], 'language_removed': ['de', 'fr', 'es'],
            'reps_per_company_and_group': cfg['reps'], 'roles': roles, 'companies': companies}
-    named = apply_labels(out, load_labels(profile, log))
+    named = apply_labels(out, lab)
+    name_companies(companies, names)
     log(f'  {named} groups named from the labels file')
     path = os.path.join(vectors, 'atlas-layout.json')
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
     log(f'  wrote {path} ({os.path.getsize(path) / 1e6:.2f} MB)')
+    return path
+
+
+def companies_only(site, vectors, profile, log=print):
+    """Rebuilds only the companies section of VECTORS/atlas-layout.json (roles and scopes stay as they are, byte for byte)."""
+    path = os.path.join(vectors, 'atlas-layout.json')
+    if not os.path.exists(path):
+        raise MapError(f'no atlas-layout.json in {vectors}: run jobcrawl map first')
+    with open(path, encoding='utf-8') as fh:
+        out = json.load(fh)
+    cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of = prepare(site, vectors, profile)
+    # the company centres use the roles the kept roles section has (the board may have moved on since): the same roles on both sides
+    ids = set(out['roles']['ids']); sel = [i for i, r in enumerate(keep) if r[0] in ids]
+    if len(sel) != len(keep):
+        log(f'  {len(keep) - len(sel)} board roles are not in the layout and are left out of the company centres; '
+            f'{len(ids) - len(sel)} layout roles are not on the board')
+    keep = [keep[i] for i in sel]; X0 = X0[sel]; titles = [titles[i] for i in sel]; fields_of = [fields_of[i] for i in sel]
+    lab = load_labels(profile, log)
+    companies, names = companies_layout(vectors, profile, keep, X0, titles, fields_of, prefs, cfg, lab, log)
+    out['companies'] = companies
+    # names for the companies only: the roles and scopes are left out of apply_labels, so their labels stay as they are
+    apply_labels({'roles': {'ids': [], 'c1': [], 'c2': [], 'regions': [], 'hoods': []}, 'scopes': {}, 'companies': companies}, lab)
+    name_companies(companies, names)
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
+    log(f'  companies: {len(companies["slugs"])} companies, {len(companies["regions"])} regions, {len(companies["links"])} links; wrote {path}')
     return path
 
 
