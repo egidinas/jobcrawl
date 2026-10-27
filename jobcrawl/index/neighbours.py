@@ -22,14 +22,23 @@ def title_words(t):
     return set(re.findall(r'[a-zäöüß0-9]+', GENDER.sub('', t.lower())))
 
 
-def build(site, vectors, out, log=print):
-    """Reads match-vec.bin/json from vectors and the board from site; writes role-nb.bin and role-graph.json into out."""
+def build(site, vectors, out, log=print, use_jobonly=True):
+    """Reads match-vec.bin/json (or match-vec-jobonly.bin/json) from vectors and the board from site; writes role-nb.bin and role-graph.json into out."""
     import numpy as np
     from jobcrawl.site import read_site
-    with open(os.path.join(vectors, 'match-vec.json'), encoding='utf-8') as fh:
+    jobonly_json = os.path.join(vectors, 'match-vec-jobonly.json')
+    jobonly_bin = os.path.join(vectors, 'match-vec-jobonly.bin')
+    if use_jobonly and os.path.exists(jobonly_json) and os.path.exists(jobonly_bin):
+        log("neighbours: using sanitized job-only vectors (compensating for company brand bias)")
+        json_file, bin_file = jobonly_json, jobonly_bin
+    else:
+        json_file = os.path.join(vectors, 'match-vec.json')
+        bin_file = os.path.join(vectors, 'match-vec.bin')
+
+    with open(json_file, encoding='utf-8') as fh:
         vj = json.load(fh)
     ids = vj['ids']; n = len(ids)
-    with open(os.path.join(vectors, 'match-vec.bin'), 'rb') as fh:
+    with open(bin_file, 'rb') as fh:
         V = np.frombuffer(fh.read(), np.int8).reshape(n, vj['dim']).astype(np.float32)
     V /= np.maximum(np.linalg.norm(V, axis=1, keepdims=True), 1e-9)
     index, desc = read_site(site)
