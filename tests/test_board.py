@@ -6,7 +6,12 @@ import json
 import os
 import shutil
 import tempfile
+import sys
 import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+if os.path.dirname(HERE) not in sys.path:
+    sys.path.insert(0, os.path.dirname(HERE))
 
 from jobcrawl import board
 from jobcrawl.cli import main

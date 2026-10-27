@@ -77,7 +77,7 @@ def role_rich_text(r, d, work_body, max_body_chars=2500):
         parts.append(f"Technical Fields: {', '.join(tags)}")
 
     body = (work_body or '').strip()
-    if len(body) > max_body_chars:
+    if max_body_chars and max_body_chars > 0 and len(body) > max_body_chars:
         body = body[:max_body_chars].rsplit(' ', 1)[0] + '…'
     if body:
         parts.append(f"Mission: {body}")
@@ -91,7 +91,7 @@ def role_jobonly_text(r, work_body, max_body_chars=2500):
     """
     title = clean_title(r[1])
     body = (work_body or '').strip()
-    if len(body) > max_body_chars:
+    if max_body_chars and max_body_chars > 0 and len(body) > max_body_chars:
         body = body[:max_body_chars].rsplit(' ', 1)[0] + '…'
     return f"{title}. {body}" if body else title
 
@@ -107,14 +107,11 @@ def board_texts(site):
     for r in index:
         d = desc.get(r[0]) or {}
         x = d.get('x') or ''
-        # Non-circular extraction: prioritize explicit mission markers
-        if d.get('job_description_raw'):
-            body = d['job_description_raw']
-        elif '=== JOB MISSION START ===' in x:
-            m = re.search(r'=== JOB MISSION START ===\s*(.*?)\s*=== JOB MISSION END ===', x, re.DOTALL)
-            body = m.group(1).strip() if m else x
-        else:
-            body = wt.work_text(r[1], x, boiler.get(r[2], frozenset()), segment_sections)
+        raw = d.get('job_description_raw') or x
+        if '=== JOB MISSION START ===' in raw:
+            m = re.search(r'=== JOB MISSION START ===\s*(.*?)\s*=== JOB MISSION END ===', raw, re.DOTALL)
+            raw = m.group(1).strip() if m else raw
+        body = wt.work_text(r[1], raw, boiler.get(r[2], frozenset()), segment_sections)
         out.append((r, x, body, d))
     return out
 
@@ -173,6 +170,18 @@ def embed_all(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=
         images.append(p if os.path.exists(p) else None)
 
     max_tokens = max(max_tokens, 384)
+    if text_chars == 0:
+        try:
+            from tokenizers import Tokenizer
+            tok_path = os.path.join(model_dir, 'tokenizer.json')
+            if os.path.exists(tok_path):
+                tok = Tokenizer.from_file(tok_path)
+                sample_texts = [full_text(clean_title(r[1]), role_jobonly_text(r, b, max_body_chars=0), prompt) for r, d, b in keep]
+                tok_lens = [len(tok.encode(t).ids) for t in sample_texts]
+                max_tokens = max(max(tok_lens), max_tokens)
+                log(f'Dynamic maxlen set to {max_tokens} tokens (zero cutoff across all {len(keep)} roles)')
+        except Exception:
+            pass
     store = Store(os.path.join(vectors, '.embed-cache.npz'), model_dir, threads)
     E_rich = np.asarray(store.get(texts_rich, max_tokens, 'roles (rich multimodal)', images=images, log=log), np.float32)
     M_rich = E_rich[:, :DIM]; mean_rich = M_rich.mean(0); M_rich = unit_rows(M_rich - mean_rich)
@@ -276,7 +285,8 @@ def embed_roles(site, profile, model_dir, vectors, only_missing=False, threads=4
     """profile: a loaded profile, or None for the schema defaults (embed.prompt "search-query", 2000 characters, 384 tokens)."""
     e = (profile or {}).get('embed') or {}
     prompt = e.get('prompt', 'search-query')
-    text_chars = max(e.get('text_chars', 700), 2000)
+    raw_chars = e.get('text_chars', 2000)
+    text_chars = 0 if raw_chars == 0 else max(raw_chars, 2000)
     max_tokens = max(e.get('max_tokens', 256), 384)
     if prompt not in PROMPTS:
         raise RoleVectorError(f'embed.prompt {prompt!r}: unknown prompt')

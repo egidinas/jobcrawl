@@ -73,7 +73,7 @@ class PublishFixture(unittest.TestCase):
         for name in MATCH_FILES:
             self.assertTrue(os.path.exists(os.path.join(site, 'match', name)), name)
         self.assertTrue(os.path.exists(os.path.join(site, 'config.json')))
-        self.assertIn('match/role-nb.bin', files)
+        self.assertIn(os.path.join('match', 'role-nb.bin'), files)
         self.assertIn('config.json', files)
         self.assertEqual(os.path.getsize(os.path.join(site, 'match', 'role-nb.bin')), len(rows) * 10 * 2)
 
@@ -218,8 +218,8 @@ class PublishFixture(unittest.TestCase):
             publish.publish(empty, self.profile, None, log=silent)
 
     def test_default_vectors_is_the_sibling_folder(self):
-        self.assertEqual(default_vectors('/a/b/site'), '/a/b/vectors')
-        self.assertEqual(default_vectors('/a/b/out/'), '/a/b/vectors')
+        self.assertEqual(default_vectors('/a/b/site'), os.path.join(os.path.dirname(os.path.abspath('/a/b/site')), 'vectors'))
+        self.assertEqual(default_vectors('/a/b/out/'), os.path.join(os.path.dirname(os.path.abspath('/a/b/out')), 'vectors'))
         self.assertEqual(default_vectors('demo/site'), os.path.join(os.path.dirname(os.path.abspath('demo/site')), 'vectors'))
 
 
@@ -245,7 +245,7 @@ class Commands(unittest.TestCase):
         shutil.copytree(self.site, site)
         code, out, _ = self.run_cli(['publish', '--site', site, '--profile', PROFILE, '--vectors', os.path.join(self.tmp, 'none')])
         self.assertEqual(code, 0)
-        self.assertIn('match/match-bm25.json', out)
+        self.assertTrue('match/match-bm25.json' in out or 'match\\match-bm25.json' in out)
         self.assertIn('config.json', out)
 
     def test_embed_without_a_model_is_a_usage_error(self):

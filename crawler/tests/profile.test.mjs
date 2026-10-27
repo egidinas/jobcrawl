@@ -70,7 +70,7 @@ test('--profile and JOBCRAWL_PROFILE', () => {
 
 test('data folder: --data, then the profile data_dir, then ./data', () => {
   const p = loadProfile(join(ROOT, 'profiles/minimal'));
-  assert.equal(resolveDataDir('/abs/elsewhere', p), '/abs/elsewhere');
+  assert.equal(resolveDataDir('/abs/elsewhere', p), resolve('/abs/elsewhere'));
   assert.equal(resolveDataDir(undefined, p), join(ROOT, 'profiles/minimal/data'));
   assert.equal(resolveDataDir(undefined, null), resolve('data'));
 });

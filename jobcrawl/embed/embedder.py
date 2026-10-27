@@ -57,8 +57,9 @@ class Embedder:
         self.model_dir = model_dir
         self.tok = Tokenizer.from_file(os.path.join(model_dir, 'tokenizer.json'))
         so = ort.SessionOptions()
-        so.intra_op_num_threads = min(threads, 4)
+        so.intra_op_num_threads = threads
         so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        self._img_cache = {}
         split_model = os.path.join(model_dir, 'model_text_q4.onnx')
         full_model = os.path.join(model_dir, 'onnx', 'model_q4.onnx')
         vision_model = os.path.join(model_dir, 'vision_encoder_q4.onnx')
@@ -83,6 +84,8 @@ class Embedder:
         """Extracts 512-dim visual patch features from a logo image file (e.g. PNG)."""
         if not self.vision_sess or not img_path or not os.path.exists(img_path):
             return None
+        if img_path in self._img_cache:
+            return self._img_cache[img_path]
         try:
             import numpy as np
             from PIL import Image
@@ -94,11 +97,14 @@ class Embedder:
             num_h, num_w = H // p, W // p
             patches = [arr[y*p:(y+1)*p, x*p:(x+1)*p, :].reshape(-1) for y in range(num_h) for x in range(num_w)]
             pos_ids = [[y, x] for y in range(num_h) for x in range(num_w)]
-            return self.vision_sess.run(['image_features'], {
+            feat = self.vision_sess.run(['image_features'], {
                 'pixel_values': np.array([patches], dtype=np.float32),
                 'pixel_position_ids': np.array([pos_ids], dtype=np.int64)
             })[0]
+            self._img_cache[img_path] = feat
+            return feat
         except Exception:
+            self._img_cache[img_path] = None
             return None
 
     def __call__(self, texts, images=None, maxlen=320, batch=8, log=None):
@@ -134,9 +140,25 @@ class Embedder:
         if log:
             log(f'   [Inference] Launching {total_batches} batches on ONNX runtime (max {maxlen} tokens, batch {batch})...')
 
-        for b in range(0, len(order), batch):
-            batch_num = b // batch + 1
-            idx = order[b:b + batch]; L = int(lens[idx].max())
+        # Adaptive batch size by sequence length
+        batches = []
+        b_idx = 0
+        while b_idx < len(order):
+            L_est = int(lens[order[b_idx]])
+            if L_est <= 450:
+                bsize = 8
+            elif L_est <= 800:
+                bsize = 4
+            elif L_est <= 1400:
+                bsize = 2
+            else:
+                bsize = 1
+            batches.append(order[b_idx:b_idx + bsize])
+            b_idx += bsize
+
+        done_count = 0
+        for batch_num, idx in enumerate(batches, 1):
+            L = int(lens[idx].max())
             ids = np.zeros((len(idx), L), np.int64); am = np.zeros_like(ids)
             for j, i in enumerate(idx):
                 n = int(lens[i]); ids[j, :n] = enc[i][:n]; am[j, :n] = 1
@@ -155,11 +177,11 @@ class Embedder:
                 tok_emb = ((v.reshape(len(flat_ids), 16, 32) - z[..., None]) * s[..., None]).reshape(len(idx), L, 512)
                 feed[self.embed_input_name] = tok_emb
             out[idx] = self.sess.run(['sentence_embedding'], feed)[0]
-            done = min(b + batch, len(texts))
-            if log and (time.time() - last >= 4 or done == len(texts)):
-                last = time.time(); elapsed = last - t0; rate = done / max(elapsed, 1e-6)
-                eta = (len(texts) - done) / max(rate, 1e-6)
-                log(f'   [Inference] Batch {batch_num}/{total_batches} -> {done}/{len(texts)} ({done / len(texts):.1%}) | {rate:.1f} emb/s | Elapsed: {elapsed:.0f}s | ETA: {eta:.0f}s')
+            done_count += len(idx)
+            if log and (time.time() - last >= 4 or done_count == len(texts)):
+                last = time.time(); elapsed = last - t0; rate = done_count / max(elapsed, 1e-6)
+                eta = (len(texts) - done_count) / max(rate, 1e-6)
+                log(f'   [Inference] Batch {batch_num}/{len(batches)} -> {done_count}/{len(texts)} ({done_count / len(texts):.1%}) | {rate:.1f} emb/s | Elapsed: {elapsed:.0f}s | ETA: {eta:.0f}s')
         return out
 
 
@@ -177,7 +199,7 @@ class Store:
         if img_path and os.path.exists(img_path):
             try:
                 st = os.stat(img_path)
-                h.update(f'|img:{os.path.basename(img_path)}:{st.st_size}:{st.st_mtime}'.encode('utf-8'))
+                h.update(f'|img:{os.path.basename(img_path)}:{st.st_size}'.encode('utf-8'))
             except Exception:
                 pass
         return h.hexdigest()
@@ -194,6 +216,8 @@ class Store:
 
         flush_log(f'[{label}] Total {len(texts)} embeddings: {cached_count} already cached in store ({cached_count/len(texts):.1%}), {len(need_idx)} new to compute (max {maxlen} tokens, {sum(1 for im in imgs if im)} with logos)')
         if need_idx:
+            # Global length sorting: group texts of similar lengths together to eliminate padding waste
+            need_idx.sort(key=lambda i: len(texts[i]))
             if self.emb is None:
                 self.emb = Embedder(self.model_dir, self.threads)
             import gc
@@ -208,8 +232,9 @@ class Store:
                 V = self.emb(part_texts, images=part_imgs, maxlen=maxlen, batch=8, log=lambda m: flush_log('   ' + m))
                 for i, v in zip(chunk, V):
                     self.c[self.key(texts[i], maxlen, imgs[i])] = v.astype(np.float16)
-                os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
-                np.savez(self.path, **self.c)
+                if chunk_num % 5 == 0 or chunk_num == total_chunks:
+                    os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
+                    np.savez(self.path, **self.c)
+                    flush_log(f'[{label}] === Saved Chunk {chunk_num}/{total_chunks} to disk ({len(self.c)} total cached entries) ===')
                 gc.collect()
-                flush_log(f'[{label}] === Saved Chunk {chunk_num}/{total_chunks} to disk ({len(self.c)} total cached entries) ===')
         return np.stack([self.c[self.key(t, maxlen, im)].astype(np.float32) for t, im in zip(texts, imgs)]) if texts else np.zeros((0, MODEL_DIM), np.float32)

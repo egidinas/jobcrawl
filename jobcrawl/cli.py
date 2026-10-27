@@ -12,6 +12,7 @@ COMMANDS = {
     "neighbours": "build the neighbour lists into the vectors folder, so publish can copy them on a machine without numpy",
     "map": "build the atlas layout from the vectors (needs the map extra)",
     "traces": "record each role's first and last seen time, the weekly trends and the atlas timeline (into --traces, default the vectors folder; needs numpy)",
+    "company-network": "build the company nearest-neighbor graph and community clusters from company vectors",
 }
 
 
@@ -59,6 +60,11 @@ def build_parser():
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--traces", metavar="DIR", help="folder for role-traces.*, role-trends.json and the timeline (default: the vectors folder)")
             sp.add_argument("--date", metavar="TIME", help="the run time, UTC: YYYY-MM-DD or YYYY-MM-DDTHH:MM (default: now)")
+        if name == "company-network":
+            sp.add_argument("--vectors", metavar="DIR", required=True, help="vectors folder holding company-vec.bin and company-vec.json")
+            sp.add_argument("--catalogue", metavar="FILE", required=True, help="companies catalogue JSON")
+            sp.add_argument("--site", metavar="DIR", help="site folder (optional)")
+            sp.add_argument("--out", metavar="DIR", help="output folder (default: same as --vectors)")
     return parser
 
 
@@ -204,13 +210,20 @@ def cmd_traces(args):
     return 0
 
 
+def cmd_company_network(args):
+    from jobcrawl.index import company_network
+    out = args.out or args.vectors
+    company_network.build(vectors=args.vectors, catalogue=args.catalogue, site=args.site, out=out)
+    return 0
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
         return 2
-    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "traces": cmd_traces}
+    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "traces": cmd_traces, "company-network": cmd_company_network}
     return handlers[args.command](args)
 
 

@@ -69,12 +69,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hostGates = new Map();
 // One shared API host (greenhouse, lever, ashby...) gets few parallel requests; families where every company has its own
 // subdomain (personio, recruitee, ...) spread over many hosts and tolerate more.
-const SUBDOMAIN_FAMILY = /^(personio\.(de|com)|recruitee\.com|teamtailor\.com|softgarden\.io|bamboohr\.com|breezy\.hr|pinpointhq\.com)$/;
+const SUBDOMAIN_FAMILY = /^(personio\.(de|com)|teamtailor\.com|softgarden\.io|bamboohr\.com|breezy\.hr|pinpointhq\.com)$/;
 const stats = { requests: 0, rate: 0, transient: 0, errs: {} };
 const inflight = new Map();   // probe key -> start time, for the heartbeat
 function gateOf(url) {
   const h = new URL(url).hostname.split('.').slice(-2).join('.');
-  if (!hostGates.has(h)) hostGates.set(h, { active: 0, q: [], pauseUntil: 0, max: h === 'workable.com' ? 2 : SUBDOMAIN_FAMILY.test(h) ? 20 : 8 });
+  if (!hostGates.has(h)) hostGates.set(h, { active: 0, q: [], pauseUntil: 0, max: h === 'workable.com' ? 2 : h === 'recruitee.com' ? 4 : SUBDOMAIN_FAMILY.test(h) ? 8 : 4 });
   return hostGates.get(h);
 }
 async function acquire(g) { if (g.active < g.max) { g.active++; return; } await new Promise((r) => g.q.push(r)); }
@@ -249,7 +249,9 @@ function candidates(rec, tier) {
   if (tier === 1) return uniq([flat(L), dash(L), flat(M), dash(M), ...stems, ...stems.map((s) => s.replace(/-/g, ''))]);
   if (tier === 2) {
     const f = flat(L), d = dash(L);
-    return uniq([flat(R), dash(R), flat(L.slice(0, 2)), dash(L.slice(0, 2)), `${f}gmbh`, `${d}-gmbh`, `${f}inc`, `${d}-inc`, `${f}industries`, `${f}corporation`, `${f}group`, `${d}-group`,
+    const isEuLegal = /\b(gmbh|ag|e\.?v\.?|ug|mbh|institut|universit[aä]t)\b/i.test(rec.name);
+    const usSuffixes = isEuLegal ? [] : [`${f}inc`, `${d}-inc`, `${f}industries`, `${f}corporation`];
+    return uniq([flat(R), dash(R), flat(L.slice(0, 2)), dash(L.slice(0, 2)), `${f}gmbh`, `${d}-gmbh`, ...usSuffixes, `${f}group`, `${d}-group`,
       `${f}se`, `${f}ag`, `${f}space`, `${d}-space`, `${f}aerospace`, `${f}technologies`, `${f}-careers`, ...doms.map((h) => h.replace(/\./g, '')), ...doms.map((h) => h.replace(/\./g, '-'))]);
   }
   const ac = acronym(rec.name);
@@ -285,6 +287,12 @@ function verify(rec, probe, slug, tier) {
     const tt = toks.filter((t) => text.includes(t)).length;
     const exact = [stripLegal(rec.name).join(''), toks.join('')].includes(slug) && slug.length >= 6;
     status = domHit ? 'verified' : (toks.length && tt === toks.length && toks.join('').length >= 6) || exact ? 'plausible' : 'name-mismatch';
+  }
+  const GENERIC_SHORT_WORDS = new Set(['air', 'orbit', 'marble', 'quantum', 'space', 'aero', 'cloud', 'data', 'tech', 'star', 'blue', 'micro', 'cyber', 'smart']);
+  const isGenericShort = (slug.length >= 3 && slug.length <= 5 && GENERIC_SHORT_WORDS.has(slug.toLowerCase())) ||
+                         (toks.length === 1 && toks[0].length <= 5 && GENERIC_SHORT_WORDS.has(toks[0].toLowerCase()));
+  if (status === 'verified' && isGenericShort && !domHit) {
+    status = (toks.length && probe.board_name && fold(probe.board_name).includes(toks[0])) ? 'plausible' : 'name-mismatch';
   }
   // Short or generic slugs and tier-3 guesses are only accepted when verified outright.
   if (status === 'plausible' && (tier >= 3 || slug.length < 5)) status = 'name-mismatch';
@@ -492,7 +500,8 @@ if (!flag('no-fuzz')) {
   await pool(list, CONC, async (r) => {
     if (DEADLINE && Date.now() > DEADLINE) { out.push({ name: r.name, status: 'unresolved', provider: '', slug: '', jobs: '', board_name: '', tier: '', sources: [...r.sources].join(','), domain: [...r.domains][0] ?? '', note: 'not fuzzed yet (time budget); rerun resumes from the cache', sample: '', entry: null }); return; }
     const found = [], rejected = [];
-    for (let tier = 1; tier <= MAX_TIER && !found.length; tier++) {
+    for (let tier = 1; tier <= MAX_TIER; tier++) {
+      if (found.some((f) => f.status === 'verified')) break;
       const jobs = [];
       for (const slug of candidates(r, tier)) for (const p of FUZZ_PROVIDERS) {
         if (tier >= 2 && TIER1_ONLY.has(p)) continue;
@@ -500,7 +509,7 @@ if (!flag('no-fuzz')) {
         if (known.has(`${p === 'lever-eu' ? 'lever' : p}:${slug}`)) continue;
         jobs.push({ p, slug, key });
       }
-      await Promise.all(jobs.map(async ({ p, slug, key }) => {
+      await pool(jobs, 8, async ({ p, slug, key }) => {
         if (missFresh(key)) return;
         let probe = cache.hit[key];
         if (!probe) {
@@ -518,7 +527,7 @@ if (!flag('no-fuzz')) {
         }
         const status = verify(r, probe, slug, tier);
         (status === 'name-mismatch' ? rejected : found).push({ p, slug, tier, status, probe });
-      }));
+      });
     }
     for (const f of rejected) out.push(row(r, f));
     for (const f of found) out.push(row(r, f));
