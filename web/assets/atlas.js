@@ -532,7 +532,7 @@ function paintMap(ctx, P, o) {
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
   // the regions and neighbourhoods as { r, n, xy }: with the one map, the visible roles and their mean position (see visStats)
   const regs = stat ? stat.reg.filter((g) => g.n >= stat.min) : Ly.regions.map((r) => ({ r, n: r.n, xy: r.xy })), hoods = stat ? stat.hood.filter((g) => g.n >= stat.min) : Ly.hoods.map((r) => ({ r, n: r.n, xy: r.xy }));
-  const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => b.n - a.n);
+  const byN = (list, sub) => list.map((g) => ({ ...g, sub })).sort((a, b) => (b.lens ? 1 : 0) - (a.lens ? 1 : 0) || b.n - a.n);
   // an area can lie in several separate patches, and its mean position then falls between them: each area is named at its dense
   // patches instead (local maxima of its points on a coarse screen grid, up to 3, well apart; the main patch at full size)
   const patches = (list, key, groups) => { if (!stat) return list; const GW = 32, GH = Math.max(8, Math.round(32 * H / W)), byG = new Map();
@@ -552,6 +552,11 @@ function paintMap(ctx, P, o) {
     return out; };
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
   const regP = patches(regs, 'c1', Ly.regions);
+  // on screen the area that holds most of the lens's points is named in the lens, first of all (at the mean of those points)
+  if (screen && stat) { const lr2 = (st.size * BW) ** 2, lx = sx(st.lens.x), ly = sy(st.lens.y), by = new Map();
+    Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if ((X0 - lx) ** 2 + (Y0 - ly) ** 2 > lr2) return; const g = by.get(e.c1) || { n: 0, x: 0, y: 0 }; g.n++; g.x += e.x; g.y += e.y; by.set(e.c1, g); });
+    const top = [...by].sort((a, b) => b[1].n - a[1].n)[0], R0 = top && Ly.regions[top[0]];
+    if (R0 && top[1].n >= 3) regP.unshift({ r: R0, n: Math.max(top[1].n, stat.min), xy: [top[1].x / top[1].n, top[1].y / top[1].n], lens: true }); }
   const areas = many ? [...byN(regP, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regP, false);
   // area names first: they win over any single role or company label
   const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
@@ -560,7 +565,8 @@ function paintMap(ctx, P, o) {
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
     const lines = wrapText(nameOf(r), roles ? 16 : 20, roles ? 2 : 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
     const X0 = sx(xy[0]), Y0 = sy(xy[1]), dy = 1.4 * fs * ts * lines.length;   // the patch centre, else just above or below it
-    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center']]); if (ab) { ab.area = true; counts.areas++; }
+    // area names may sit inside the lens (free): placed first, the lens's own labels fit around them
+    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center']], true); if (ab) { ab.area = true; counts.areas++; }
   }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
   // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
