@@ -1169,17 +1169,17 @@
     ]
   ],
   "map": {
-    "k": 15,
+    "k": 12,
     "layout_k": 45,
     "min_dist": 0.25,
     "even": 0.7,
     "reps": 3,
-    "signature": 0.8,
+    "signature": 0.5,
     "min_scope": 600,
     "labels_file": "labels.json",
     "resolution": [
-      1.6,
-      5.0
+      1.45,
+      5.3
     ]
   },
   "embed": {

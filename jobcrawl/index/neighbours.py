@@ -43,9 +43,33 @@ def build(site, vectors, out, log=print, use_jobonly=True):
     V /= np.maximum(np.linalg.norm(V, axis=1, keepdims=True), 1e-9)
     index, desc = read_site(site)
     rows = {r[0]: r for r in index}
-    # a vector whose role is no longer on this board (closed since it was embedded) is nobody's neighbour, joins no duplicate group
-    # and gets no neighbours: the page could not show it
-    on = np.array([i in rows for i in ids])
+
+    target_json = os.path.join(vectors, 'match-vec.json')
+    if os.path.exists(target_json):
+        with open(target_json, encoding='utf-8') as fh:
+            target_vj = json.load(fh)
+        target_ids = target_vj['ids']
+    else:
+        target_ids = ids
+
+    if target_ids != ids:
+        log(f"neighbours: aligning {len(ids)} JD-only vectors to {len(target_ids)} target match-vec rows for exact browser indexing")
+        id_to_idx = {rid: i for i, rid in enumerate(ids)}
+        V_aligned = np.zeros((len(target_ids), V.shape[1]), dtype=np.float32)
+        on = np.zeros(len(target_ids), dtype=bool)
+        for t_idx, rid in enumerate(target_ids):
+            if rid in id_to_idx and rid in rows:
+                V_aligned[t_idx] = V[id_to_idx[rid]]
+                on[t_idx] = True
+            else:
+                on[t_idx] = False
+        V = V_aligned
+        ids = target_ids
+        n = len(ids)
+    else:
+        # a vector whose role is no longer on this board (closed since it was embedded) is nobody's neighbour, joins no duplicate group
+        # and gets no neighbours: the page could not show it
+        on = np.array([i in rows for i in ids])
     emp = [rows[i][2] if i in rows else '?' + i for i in ids]; slug = [rows[i][4] if i in rows else '' for i in ids]
     tw = [title_words(rows[i][1]) if i in rows else set() for i in ids]
     parent = list(range(n))
