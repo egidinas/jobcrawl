@@ -44,8 +44,8 @@ aufgaben profil bieten'''.split())
 WORD = re.compile(r"[a-zäöüß][a-zäöüß0-9+#-]{2,}")
 
 LAYOUT_NEIGHBOURS_COMPANIES = 20    # UMAP neighbours for the company map (the roles use map.layout_k)
-COMPANY_KNN = 12                    # neighbours in the company grouping graph
-COMPANY_RESOLUTION = 1.5
+COMPANY_KNN = 8                     # neighbours in the company grouping graph (optimized for modularity & separation)
+COMPANY_RESOLUTION = 1.8            # optimized resolution parameter separating EO and Consulting
 COMPANY_MIN_GROUP = 5
 EMPLOYER_RESOLUTION = 4.0           # the coarse neighbourhoods that pick the representatives
 EMPLOYER_MIN_GROUP = 12
@@ -56,12 +56,20 @@ class MapError(ValueError):
     pass
 
 
-def load(site, vectors):
+def load(site, vectors, use_jobonly=True):
     """(board rows that have a vector, their normalised vectors, description entries)."""
-    with open(os.path.join(vectors, 'match-vec.json'), encoding='utf-8') as fh:
+    jobonly_json = os.path.join(vectors, 'match-vec-jobonly.json')
+    jobonly_bin = os.path.join(vectors, 'match-vec-jobonly.bin')
+    if use_jobonly and os.path.exists(jobonly_json) and os.path.exists(jobonly_bin):
+        json_file, bin_file = jobonly_json, jobonly_bin
+    else:
+        json_file = os.path.join(vectors, 'match-vec.json')
+        bin_file = os.path.join(vectors, 'match-vec.bin')
+
+    with open(json_file, encoding='utf-8') as fh:
         vj = json.load(fh)
     dim = vj['dim']
-    with open(os.path.join(vectors, 'match-vec.bin'), 'rb') as fh:
+    with open(bin_file, 'rb') as fh:
         V = np.frombuffer(fh.read(), np.int8).reshape(-1, dim).astype(np.float32)
     V /= np.maximum(np.linalg.norm(V, axis=1, keepdims=True), 1e-9)
     index, desc = read_site(site)
@@ -233,7 +241,7 @@ def leiden_target(idx, sim, target, min_size):
     return best
 
 
-def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print):
+def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print, base_coords=None):
     k = cfg['k']
     idx0, sim0 = knn(X, k)
     rep_of = representatives(employer, relabel_small(leiden(idx0, sim0, EMPLOYER_RESOLUTION), idx0, EMPLOYER_MIN_GROUP), X, cfg['reps'])      # neighbourhoods of all roles, only to pick representatives
@@ -244,7 +252,14 @@ def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print):
     coarse_r = leiden_target(idx, sim, nreg, max(8, len(reps) // 300))
     fine_r = leiden_target(idx, sim, 3 * nreg, max(5, len(reps) // 1000))
     log(f'  {len(reps)} representatives, {coarse_r.max() + 1} regions, {fine_r.max() + 1} neighbourhoods')
-    YR = layout(XR, cfg['layout_k'], cfg['min_dist'], cfg['even'])
+    if base_coords is not None:
+        # Reprojecting local excerpt with the exact same relative positions from the global network
+        YR = np.array(base_coords[reps], dtype=np.float64)
+        lo, hi = YR.min(0), YR.max(0)
+        YR = 0.03 + 0.94 * (YR - lo) / np.maximum(hi - lo, 1e-9)
+        YR = relax(YR, dmin=0.6 / math.sqrt(len(YR)), even=cfg['even'])
+    else:
+        YR = layout(XR, cfg['layout_k'], cfg['min_dist'], cfg['even'])
     tr = [titles[i] for i in reps]; fr = [fields_of[i] for i in reps]
     rng = np.random.default_rng(3); jit = 0.25 / math.sqrt(len(reps))
     ri = np.array([pos_in[int(rep_of[i])] for i in range(len(keep))])
@@ -254,6 +269,68 @@ def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print):
             'regions': [dict(d, xy=c) for d, c in zip(describe(coarse_r, tr, fr, XR, prefs, 3), centres(YR, coarse_r))],
             'hoods': [dict(d, xy=c) for d, c in zip(describe(fine_r, tr, fr, XR, prefs, 3), centres(YR, fine_r))],
             'links': links(fine_r, idx, k)}
+
+
+def role_map_excerpt(sel, global_roles, cfg):
+    """Local excerpt: reshapes coordinates slightly via relax() to fit the viewport, but does NOT recluster into new relationships."""
+    ids = [global_roles['ids'][i] for i in sel]
+    c1 = [global_roles['c1'][i] for i in sel]
+    c2 = [global_roles['c2'][i] for i in sel]
+
+    # Reshape coordinates slightly to relax the local network without re-clustering
+    Y_glob = np.column_stack([[global_roles['x'][i] for i in sel], [global_roles['y'][i] for i in sel]])
+    lo, hi = Y_glob.min(0), Y_glob.max(0)
+    Y_norm = 0.03 + 0.94 * (Y_glob - lo) / np.maximum(hi - lo, 1e-9)
+    Y_relaxed = relax(Y_norm, dmin=0.6 / math.sqrt(len(Y_norm)), even=cfg['even'])
+
+    # Map global representative indices to local subset
+    sel_set = set(sel)
+    global_to_local = {g_idx: l_idx for l_idx, g_idx in enumerate(sel)}
+    rep_local = []
+    for i in sel:
+        g_rep = global_roles['rep'][i]
+        if g_rep in sel_set:
+            rep_local.append(global_to_local[g_rep])
+        else:
+            rep_local.append(-1)
+
+    # Maintain existing global cluster relationships: update centroids to local median coordinates
+    c1_arr = np.array(c1)
+    c2_arr = np.array(c2)
+
+    active_regions = []
+    for g_id, r in enumerate(global_roles['regions']):
+        mask = (c1_arr == g_id)
+        if np.any(mask):
+            r_copy = dict(r)
+            r_copy['xy'] = [round(float(v), 4) for v in np.median(Y_relaxed[mask], axis=0)]
+            active_regions.append(r_copy)
+
+    active_hoods = []
+    for h_id, h in enumerate(global_roles['hoods']):
+        mask = (c2_arr == h_id)
+        if np.any(mask):
+            h_copy = dict(h)
+            h_copy['xy'] = [round(float(v), 4) for v in np.median(Y_relaxed[mask], axis=0)]
+            active_hoods.append(h_copy)
+
+    active_hood_ids = set(c2)
+    active_links = [
+        link for link in global_roles.get('links', [])
+        if link[0] in active_hood_ids and link[1] in active_hood_ids
+    ]
+
+    return {
+        'ids': ids,
+        'x': [round(float(v), 4) for v in Y_relaxed[:, 0]],
+        'y': [round(float(v), 4) for v in Y_relaxed[:, 1]],
+        'c1': c1,
+        'c2': c2,
+        'rep': rep_local,
+        'regions': active_regions,
+        'hoods': active_hoods,
+        'links': active_links
+    }
 
 
 def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=print):
@@ -283,7 +360,8 @@ def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=
     return {'names': [(cat.get(s_) or {}).get('name', s_) for s_ in slugs], 'about': [about(cat.get(s_) or {}) for s_ in slugs],
             'field': [(cat.get(s_) or {}).get('field') or '' for s_ in slugs], 'slugs': slugs,
             'x': [round(float(v), 4) for v in CY[:, 0]], 'y': [round(float(v), 4) for v in CY[:, 1]], 'c1': cm.tolist(), 'roles': nroles,
-            'regions': [dict(d, xy=c) for d, c in zip(describe(cm, ctexts, cfields, C, prefs, 3), centres(CY, cm))]}
+            'regions': [dict(d, xy=c) for d, c in zip(describe(cm, ctexts, cfields, C, prefs, 3), centres(CY, cm))],
+            'links': links(cm, cidx, COMPANY_KNN)}
 
 
 EMPTY_COMPANIES = {'names': [], 'about': [], 'field': [], 'slugs': [], 'x': [], 'y': [], 'c1': [], 'roles': [], 'regions': []}
@@ -313,6 +391,7 @@ def build(site, vectors, profile, log=print):
     scope_of = [set((desc.get(r[0]) or {}).get('sc') or []) for r in keep]
     any_scopes = {s['id'] for s in profile['scopes'] if (s.get('match') or {}).get('any')}
     roles = role_map(keep, X, employer, titles, fields_of, prefs, cfg, log)
+    global_coords = np.column_stack([roles['x'], roles['y']])
     log(f'worldwide: {len(keep)} roles, {len(roles["regions"])} regions')
     maps = {}
     for s in reversed(profile['scopes']):                           # widest first, as the reference's SCOPES list
@@ -322,8 +401,8 @@ def build(site, vectors, profile, log=print):
         sel = [i for i in range(len(keep)) if sid in scope_of[i]]
         if len(sel) < m['min_scope']:
             log(f'  {sid}: {len(sel)} roles, too few for a map of its own'); continue
-        log(f'{sid}: {len(sel)} roles')
-        maps[sid] = role_map([keep[i] for i in sel], X[sel], [employer[i] for i in sel], [titles[i] for i in sel], [fields_of[i] for i in sel], prefs, cfg, log)
+        log(f'{sid}: {len(sel)} roles (reshaping with relaxed coordinates, preserving global cluster relationships)')
+        maps[sid] = role_map_excerpt(sel, roles, cfg)
     # companies: every catalogue company, from its own vector (companies.py), combined with the centre of its open roles where it has any
     companies = dict(EMPTY_COMPANIES)
     cpath = os.path.join(vectors, 'company-vec.json')
