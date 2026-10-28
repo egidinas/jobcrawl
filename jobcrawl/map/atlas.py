@@ -799,6 +799,52 @@ def add_new(site, vectors, profile, log=print, k=8):
     return added
 
 
+def add_new_companies(vectors, profile, log=print, k=8):
+    """Puts the companies that have a vector but no place in the layout on the companies map without rebuilding it: each at the mean position
+    of its k most similar placed companies, in their most common group (the next full rebuild places them properly). Returns how many."""
+    from jobcrawl.embed import companies as co
+    path = os.path.join(vectors, 'atlas-layout.json')
+    vpath = os.path.join(vectors, 'company-vec.json')
+    if not (os.path.exists(path) and os.path.exists(vpath)):
+        return 0
+    with open(path, encoding='utf-8') as fh:
+        out = json.load(fh)
+    C = out.get('companies') or {}
+    if not C.get('slugs'):
+        return 0
+    with open(vpath, encoding='utf-8') as fh:
+        vj = json.load(fh)
+    dim = vj['dim']
+    M = np.fromfile(os.path.join(vectors, 'company-vec.bin'), dtype=np.int8).reshape(-1, dim).astype(np.float32)
+    M /= np.maximum(np.linalg.norm(M, axis=1, keepdims=True), 1e-9)
+    row = {s: i for i, s in enumerate(vj['slugs'])}
+    if len(row) != len(M):
+        return 0
+    cat = {c['slug']: c for c in co.load_catalogue(co.catalogue_path(profile))}
+    have = set(C['slugs'])
+    new = [s for s in vj['slugs'] if s not in have and s in cat]
+    base = [n for n, s in enumerate(C['slugs']) if s in row]
+    if not new or len(base) < k:
+        return 0
+    B = M[[row[C['slugs'][n]] for n in base]]
+    near = np.argpartition(-(M[[row[s] for s in new]] @ B.T), k - 1, axis=1)[:, :k]
+    for q, s in enumerate(new):
+        nb = [base[j] for j in near[q]]
+        c = cat[s]
+        C['slugs'].append(s); C['names'].append(c.get('name') or s); C['field'].append(c.get('field') or '')
+        pr = c.get('profile'); t = (pr or {}).get('en', '') if isinstance(pr, dict) else ''
+        C['about'].append(t[:240].rsplit(' ', 1)[0] + '…' if len(t) > 240 else t)
+        C['x'].append(round(float(np.mean([C['x'][n] for n in nb])), 4)); C['y'].append(round(float(np.mean([C['y'][n] for n in nb])), 4))
+        g = collections.Counter(C['c1'][n] for n in nb).most_common(1)[0][0]
+        C['c1'].append(g); C['roles'].append(0)
+        if isinstance(C['regions'][g].get('n'), int):
+            C['regions'][g]['n'] += 1
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
+    log(f'  {len(new)} new companies added to the companies map, without a rebuild')
+    return len(new)
+
+
 def companies_only(site, vectors, profile, log=print):
     """Rebuilds only the companies section of VECTORS/atlas-layout.json (roles and scopes stay as they are, byte for byte)."""
     path = os.path.join(vectors, 'atlas-layout.json')

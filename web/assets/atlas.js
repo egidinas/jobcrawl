@@ -484,7 +484,7 @@ function paintMap(ctx, P, o) {
   if (P.heat) heatField(ctx, ff, T, bg);
   let shown = 0; const hot = [], buckets = new Map();
   // a company's dot: by its open roles (1.6 + 1.1 sqrt(n), at most 5.5), 1.3 for a company with none
-  const rcOf = (k) => (cn[k] ? Math.min(5.5, 1.6 + 1.1 * Math.sqrt(cn[k])) : 1.3) * zf;
+  const rcOf = (k) => (cn[k] ? Math.min(5.5, 1.6 + 1.1 * Math.sqrt(cn[k])) : 1.9) * zf;
   // a star's strength: a role's age weight; a company's log weight against the heaviest company
   const starOf = (k) => (roles ? wE(Ly.ents[k]) : cw[k] > 0 ? Math.log1p(cw[k]) / Math.log1p(P.cwMax) : 0);
   // companies with no open role in the filter: small faint dots, drawn first, no rings
@@ -494,13 +494,13 @@ function paintMap(ctx, P, o) {
   if (lw) Ly.ents.forEach((e, k) => { if (!(lw[k] > 0) || !vis[k] || (e.hidden && !st.all)) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     const rgb = regionRgb(e, T.pointL, T.C), R = (roles ? dot : rcOf(k)) * (3 + 6 * lw[k]), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, R), hs = `${rgb[0]},${rgb[1]},${rgb[2]}`;
     gd.addColorStop(0, `rgba(${hs},${0.55 * lw[k]})`); gd.addColorStop(1, `rgba(${hs},0)`); ctx.globalAlpha = 1; ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7); ctx.fill(); });
-  Ly.ents.forEach((e, k) => { if (!roles && !cn[k] && !(lw && lw[k] > 0)) return; if (!vis[k]) return; if (act[k] && !e.ember) shown++; if (e.hidden && !st.all) return;
+  Ly.ents.forEach((e, k) => { if (!vis[k]) return; if ((act[k] || !roles) && !e.ember) shown++; /* every company is drawn, those without open roles small and dim */ if (e.hidden && !st.all) return;
     const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     if (e.ember) { ctx.globalAlpha = e.ea; ctx.fillStyle = 'rgb(190,120,60)'; ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }   // a role last seen before the scrubbed time: a dim warm ember
     const sv = starOf(k), lk = lw ? lw[k] : -1;   // lk: the link's weight (-1: no link; 0: dimmed)
     if (sv > 0) { hot.push([k, sv, lk]); return; }   // new roles, and companies with some: drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const a = lk > 0 ? T.pointA : lk === 0 ? 0.25 * (act[k] ? T.pointA : 0.45) : (act[k] ? T.pointA : 0.45) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
+    const a = lk > 0 ? T.pointA : lk === 0 ? 0.25 * (act[k] ? T.pointA : 0.45) : (act[k] ? T.pointA : roles ? 0.45 : 0.8) * Math.min(1, 1 / Math.sqrt(densAt(X0, Y0))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
     if (a <= 0.003) return;
     const rgb = regionRgb(e, act[k] || lk > 0 ? T.pointL : T.dimL, T.C);
     if (roles) {   // the role points go into one path per colour and alpha (a fill each, not one per point)
