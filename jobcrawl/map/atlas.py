@@ -147,11 +147,14 @@ def relabel_small(memb, idx, min_size):
     return memb
 
 
-def describe(memb, titles, fields_of, X, prefs, n_words=3):
+FOREIGN_TITLE = re.compile(r'\(\s*(?:m/w/d|w/m/d|d/w/m|m/w/x|h/f|f/h)|[äöüß]|\b(?:für|und|der|die|das|mit|zur|zum|bei|von|als|oder|pour|et|les|des|une|para|los|las|con|del)\b')
+
+
+def describe(memb, titles, fields_of, X, prefs, n_words=3, allowed=None):
     """Per group: distinctive title words (share in the group against share on the whole board, at least twice as common),
     leading board fields, and the statements the group leans to."""
     groups = sorted(set(memb.tolist())); n = len(memb)
-    words_of = [set(w for w in WORD.findall(t) if w not in STOP and not w.isdigit()) for t in titles]
+    words_of = [set(w for w in WORD.findall(t) if w not in STOP and not w.isdigit() and (allowed is None or w in allowed)) for t in titles]
     total = collections.Counter(w for ws in words_of for w in ws)
     P = np.array([p['v'] for p in prefs], np.float32) if prefs else None
     z_all = ((X @ P.T) - np.array([p['mu'] for p in prefs])) / np.array([p['sd'] for p in prefs]) if prefs else None
@@ -344,8 +347,8 @@ def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print, base_c
     Y = YR[ri] + np.where((rep_of == np.arange(len(keep)))[:, None], 0, rng.normal(scale=jit, size=(len(keep), 2)))
     return {'ids': [r[0] for r in keep], 'x': [round(float(v), 4) for v in Y[:, 0]], 'y': [round(float(v), 4) for v in Y[:, 1]],
             'c1': coarse_r[ri].tolist(), 'c2': fine_r[ri].tolist(), 'rep': [int(pos_in[int(rep_of[i])]) if rep_of[i] != i else -1 for i in range(len(keep))],
-            'regions': [dict(d, xy=c) for d, c in zip(describe(coarse_r, tr, fr, XR, prefs, 3), centres(YR, coarse_r))],
-            'hoods': [dict(d, xy=c) for d, c in zip(describe(fine_r, tr, fr, XR, prefs, 3), centres(YR, fine_r))],
+            'regions': [dict(d, xy=c) for d, c in zip(describe(coarse_r, tr, fr, XR, prefs, 3, cfg.get('en_vocab')), centres(YR, coarse_r))],
+            'hoods': [dict(d, xy=c) for d, c in zip(describe(fine_r, tr, fr, XR, prefs, 3, cfg.get('en_vocab')), centres(YR, fine_r))],
             'links': links(fine_r, idx, k)}
 
 
@@ -536,9 +539,17 @@ def prepare(site, vectors, profile):
     if os.path.exists(prefs_file):
         with open(prefs_file, encoding='utf-8') as fh:
             prefs = json.load(fh)['prefs']
+    langs = np.array([langfix.language(r[1] + ' ' + ((desc.get(r[0]) or {}).get('x') or '')[:2000]) for r in keep])
     if not vj.get('lang_dirs'):        # the stored vectors already have the directions removed (jobcrawl embed); otherwise remove them here
-        langs = np.array([langfix.language(r[1] + ' ' + ((desc.get(r[0]) or {}).get('x') or '')[:2000]) for r in keep])
         X = langfix.project(X, langfix.directions(X, langs))
+    # the words that name a group are English: a title word counts when at least three titles that look English use it and it is more than
+    # twice as common there as in titles that look German, French or Spanish ("manager" is, "teamleiter" is not). The language detector sees
+    # the posting's text, which is often English under a German title, so the title's own markers decide here.
+    en_count, other = collections.Counter(), collections.Counter()
+    for r in keep:
+        t = r[1].lower()
+        (other if FOREIGN_TITLE.search(t) else en_count).update(set(WORD.findall(t)))
+    cfg['en_vocab'] = {w for w, n in en_count.items() if n >= 3 and n > 2 * other.get(w, 0)}
     X0 = X.copy()                                                   # language-neutral, employer signature still in (for company centres)
     employer = [r[4] or r[2] for r in keep]                        # the company page slug, or the name for employers without a page
     X = remove_employer(X, employer, cfg['signature'])
@@ -744,6 +755,48 @@ def build(site, vectors, profile, log=print, namer=None):
         json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
     log(f'  wrote {path} ({os.path.getsize(path) / 1e6:.2f} MB)')
     return path
+
+
+def add_new(site, vectors, profile, log=print, k=8):
+    """Puts the roles on the board that the layout does not have yet on the map, without rebuilding it: each at the mean position of its k most
+    similar roles that are already placed (in the worldwide map, and in every scope map the role belongs to), in the most common group of those
+    neighbours. Roles without a vector wait for one. The next full rebuild (jobcrawl map) places them properly. Returns how many were added."""
+    path = os.path.join(vectors, 'atlas-layout.json')
+    if not os.path.exists(path):
+        return 0
+    with open(path, encoding='utf-8') as fh:
+        out = json.load(fh)
+    cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of = prepare(site, vectors, profile)
+    nl = cfg['n_live']
+    X = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
+    row_of = {r[0]: i for i, r in enumerate(keep)}
+    has_vec = np.abs(X).sum(1) > 0
+    added = 0
+    for sid, R in [(None, out['roles'])] + list((out.get('scopes') or {}).items()):
+        have = set(R['ids'])
+        base = [row_of[i] for i in R['ids'] if i in row_of and has_vec[row_of[i]]]
+        pos = [n for n, i in enumerate(R['ids']) if i in row_of and has_vec[row_of[i]]]
+        new = [i for i in range(nl) if keep[i][0] not in have and has_vec[i] and (sid is None or sid in scope_of[i])]
+        if not new or len(base) < k:
+            continue
+        sims = X[new] @ X[base].T
+        near = np.argpartition(-sims, k - 1, axis=1)[:, :k]
+        for q, i in enumerate(new):
+            nb = [pos[j] for j in near[q]]
+            R['ids'].append(keep[i][0])
+            R['x'].append(round(float(np.mean([R['x'][n] for n in nb])), 4)); R['y'].append(round(float(np.mean([R['y'][n] for n in nb])), 4))
+            for key, groups in (('c1', R['regions']), ('c2', R['hoods'])):
+                g = collections.Counter(R[key][n] for n in nb).most_common(1)[0][0]
+                R[key].append(g)
+                if isinstance(groups[g].get('n'), int):
+                    groups[g]['n'] += 1
+            R['rep'].append(-1)
+            added += 1
+    if added:
+        with open(path, 'w', encoding='utf-8') as fh:
+            json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
+    log(f'  {added} new role placements added to the layout (worldwide and scope maps), without a rebuild')
+    return added
 
 
 def companies_only(site, vectors, profile, log=print):
