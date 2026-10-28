@@ -249,7 +249,7 @@ fitView();
 // the backing store follows the screen's pixel density (k = device pixel ratio, at most 3); everything is drawn in logical units
 function sizeCanvas() { const k = Math.min(3, window.devicePixelRatio || 1), w = Math.round(W * k), h = Math.round(H * k); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0); }
 sizeCanvas();
-const lay = () => { const Ly = st.mode === 'geo' ? geoLay() : st.mode === 'roles' && TL && scrub.tm < TL.end ? tlLayer(scrub.tm) : layers[st.mode]; if (Ly && Ly.regions) { HR = Ly.regions; HD = Ly; } return Ly; };
+const lay = () => { const Ly = st.mode === 'geo' ? geoLay() : st.mode === 'roles' && TL && scrub.tm < TL.end ? tlLayer(scrub.tm) : layers[st.mode]; if (Ly) { HR = Ly.regions || null; HD = Ly; } return Ly; };
 const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1));
 const visibleRoles = (e) => e.idx.filter(roleVisible);
 function tw(r) { if (r.vote !== undefined) return r.vote; const v = []; if (r.role) v.push((r.role - 3) / 2); if (r.interest) v.push((r.interest - 3) / 2); if (r.apply !== undefined) v.push(r.apply); return v.length ? Math.sign(v.reduce((a, b) => a + b, 0)) : null; }
@@ -272,7 +272,8 @@ function hueTable(regs) {
   const turns = n >= 16 ? 2 : 1;   // many regions: the wheel is walked twice, so far-apart regions can share a hue and neighbours differ more
   t = new Array(n); tour.forEach((r, k) => { t[r] = (20 + 360 * turns * k / n) % 360; }); hueTabs.set(regs, t); return t;
 }
-const hue = (c) => (HR && c < HR.length ? hueTable(HR)[c] : (c * 137.508) % 360);
+// the geography view keeps the plain wheel (c * 137.508): its colours are a density ramp given as a pseudo region index (hueC)
+const hue = (c) => (HR && HD && HD.kind !== 'geo' && Number.isInteger(c) && c < HR.length ? hueTable(HR)[c] : (c * 137.508) % 360);
 // Inside a region the hue drifts from one neighbourhood to the next (up to +-45 degrees, by the angle of the neighbourhood around the
 // region's centre), so a large region is a spread of related colours and not one flat area. HD is the layout being drawn.
 let HD = null; const shiftTabs = new WeakMap();
@@ -287,7 +288,7 @@ function hoodShifts(Ly) {
     hs.sort((a, b) => ang(a) - ang(b)); hs.forEach((h, k) => { t[h] = -S + 2 * S * k / (m - 1); }); });
   shiftTabs.set(Ly, t); return t;
 }
-const hueOf = (e) => { const t = HD && !HD.past ? hoodShifts(HD) : null; return (hue(e.c1) + (t && e.c2 >= 0 && e.c2 < t.length ? t[e.c2] : 0) + 360) % 360; };
+const hueOf = (e) => { const t = HD && !HD.past && HD.kind !== 'geo' ? hoodShifts(HD) : null; return (hue(e.c1) + (t && e.c2 >= 0 && e.c2 < t.length ? t[e.c2] : 0) + 360) % 360; };
 // region colours in OKLCH, one hue per region; at a given lightness a hue takes the largest chroma up to the target that is inside
 // the sRGB gamut (binary search on C). The themes use lightness bands instead (vivid() below)
 const VIVID_C = 0.19;
