@@ -479,7 +479,7 @@ def graph_layout(C, P, groups, graph, cfg, seed=1):
         dist = np.clip(1 - np.sum(P[:, None, :] * P[nb], axis=2), 0, 2).astype(np.float32)
         kw['precomputed_knn'] = (nb.astype(np.int32), dist, None)
     Y = umap.UMAP(**kw).fit_transform(C, y=np.asarray(groups))
-    return relax(Y, dmin=0.6 / math.sqrt(len(Y)), even=cfg['even'])
+    return relax(Y, dmin=0.6 / math.sqrt(len(Y)), even=cfg.get('even_companies', cfg['even']))
 
 
 def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=print, graph=None):
@@ -502,7 +502,7 @@ def company_map(slugs, P, X0, keep, by, cat, titles, fields_of, prefs, cfg, log=
               for s_ in slugs]
     cfields = [[f for i in by.get(s_, []) for f in fields_of[i]] for s_ in slugs]
     if graph is None:
-        CY = layout(C, LAYOUT_NEIGHBOURS_COMPANIES, cfg['min_dist'], cfg['even'])
+        CY = layout(C, LAYOUT_NEIGHBOURS_COMPANIES, cfg['min_dist'], cfg.get('even_companies', cfg['even']))
     else:
         CY = graph_layout(C, P, cm, graph, cfg)
 
@@ -529,7 +529,7 @@ def prepare(site, vectors, profile):
     """The inputs of the layout, read from the site and the vectors: (cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of).
     X is the role vectors without the employer signature (the worldwide map), X0 the language-neutral ones (the company centres)."""
     m = profile['map']
-    cfg = {'k': m['k'], 'layout_k': m['layout_k'], 'min_dist': m['min_dist'], 'even': m['even'], 'reps': m['reps'], 'signature': m['signature']}
+    cfg = {'k': m['k'], 'layout_k': m['layout_k'], 'min_dist': m['min_dist'], 'even': m['even'], 'even_companies': m.get('even_companies', 0.3), 'reps': m['reps'], 'signature': m['signature']}   # companies: less evening, dense clusters stay dense
     keep, X, desc, vj = load(site, vectors, traces=os.environ.get('JOBCRAWL_TRACES'))
     cfg['n_live'] = sum(1 for r in keep if not (desc.get(r[0]) or {}).get('off'))
     if len(keep) <= cfg['k'] + 1:

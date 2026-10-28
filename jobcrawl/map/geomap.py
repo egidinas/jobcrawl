@@ -17,6 +17,7 @@ Writes VECTORS/geo-map.json: {version, source, scopes: {id: {extent, w, h, shape
 y counted from the north edge: x, y the true position, cx, cy the cartogram position (density as is), mx, my the moderate cartogram
 position (each area (1 - MODERATE) its true size plus MODERATE its cartogram size: a milder distortion). publish copies it into SITE/match/.
 """
+import collections
 import json
 import math
 import os
@@ -511,7 +512,7 @@ def centroid(rings):
     return None if best is None else (best[2], best[1])
 
 
-def role_places(index, desc, shapes):
+def role_places(index, desc, shapes, keys_of=None):
     """The places of the board's roles: {key: {'key', 'name', 'cc', 'n' (roles naming it), 'share' (sum of 1/places per role),
     'll' (lat, lon) or None, 'shape' (polygon id or None)}}, the roles with no place, and the roles' share per polygon id."""
     by_id = {s['id']: s for s in shapes['countries'] + shapes['states']}
@@ -529,6 +530,8 @@ def role_places(index, desc, shapes):
         for p in places:
             cc, city, state = p['country'], p.get('city', ''), p.get('state', '')
             key = f'{cc}|{city or state}' if (city or state) else cc
+            if keys_of is not None:
+                keys_of.setdefault(rid, []).append(key)
             rec = table.get(key)
             if rec is None:
                 shape = state_id.get((cc, state)) or country_id.get(cc)
@@ -559,6 +562,117 @@ def read_companies(path):
         ll = c.get('coordinates')
         if ll and len(ll) == 2 and c.get('slug'):
             out.append((c['slug'], (float(ll[0]), float(ll[1]))))
+    return out
+
+
+def km(a, b):
+    """Great-circle distance in km between two (lat, lon)."""
+    la1, lo1, la2, lo2 = map(math.radians, (a[0], a[1], b[0], b[1]))
+    h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
+    return 12742 * math.asin(min(1.0, math.sqrt(h)))
+
+
+def place_of(text, by_id, state_id, country_id, coords):
+    """The main place a location text names: (key, name, (lat, lon) or None), or None (the same resolution as role_places)."""
+    places = [p for p in geo.resolve(text)['places'] if p.get('country')][:1]
+    if not places:
+        return None
+    p = places[0]; cc, city, state = p['country'], p.get('city', ''), p.get('state', '')
+    key = f'{cc}|{city or state}' if (city or state) else cc
+    shape = state_id.get((cc, state)) or country_id.get(cc)
+    ll = coords.get(f'{cc}|{city}') if city else None
+    if ll is not None:
+        ll = (float(ll[0]), float(ll[1]))
+    elif shape is not None:
+        ll = centroid(by_id[shape]['rings'])
+    return key, city or state or geo.COUNTRY.get(cc, {}).get('en', cc), ll
+
+
+def read_history(path):
+    """[(company, location, first_seen, last_seen, status)] of the crawl history (scan-history.tsv: every role ever seen)."""
+    rows = []
+    with open(path, encoding='utf-8') as fh:
+        head = fh.readline().rstrip('\n').split('\t'); ix = {h: i for i, h in enumerate(head)}
+        for line in fh:
+            q = line.rstrip('\n').split('\t')
+            if len(q) >= len(head):
+                rows.append((q[ix['company']], q[ix['location']], q[ix['first_seen']], q[ix['last_seen']], q[ix['status']]))
+    return rows
+
+
+def catalogue_names(path):
+    """{lower-case name or alias: slug} of the companies catalogue."""
+    with open(path, encoding='utf-8') as fh:
+        data = json.load(fh)
+    out = {}
+    for c in (data.get('companies', data) if isinstance(data, dict) else data):
+        for n in [c.get('name')] + list(c.get('aliases') or []):
+            if n and c.get('slug'):
+                out[n.lower()] = c['slug']
+    return out
+
+
+def catalogue_places(path, coords):
+    """[(slug, (lat, lon), name)] of the branch locations the catalogue itself holds: a branch given with coordinates (companies[].branches as objects with
+    "coordinates": [lat, lon]), and the places of the company's own geo classification (companies[].geo.p: city, area, state, country code, continent;
+    the city's point from the gazetteer). Branches that are only an address text are placed by the geocoding check (tools/geo_verify.py)."""
+    with open(path, encoding='utf-8') as fh:
+        data = json.load(fh)
+    out = []
+    for c in (data.get('companies', data) if isinstance(data, dict) else data):
+        slug = c.get('slug')
+        if not slug:
+            continue
+        for b in c.get('branches') or []:
+            ll = b.get('coordinates') if isinstance(b, dict) else None
+            if ll and len(ll) == 2:
+                out.append((slug, (float(ll[0]), float(ll[1])), (b.get('city') or b.get('name') or 'branch')))
+        g = c.get('geo')
+        for pl in (g.get('p') if isinstance(g, dict) else None) or []:
+            if len(pl) >= 4 and pl[0]:
+                ll = coords.get(f'{pl[3]}|{pl[0]}')
+                if ll is not None:
+                    out.append((slug, (float(ll[0]), float(ll[1])), pl[0]))
+    return out
+
+
+def company_points(index, keys_of, table, hq, near_km=15.0, max_branches=12, history=None, addresses=None):
+    """The points of the companies map: [(slug, (lat, lon), ids, place key, meta)]. meta: {'k': kind, 'pn': place name, 'h': roles ever seen there, 'ls': last seen}.
+    - 'hq': the company at its headquarters (the catalogue's coordinates, or an address checked on OpenStreetMap when the catalogue has none); ids lists
+      the roles there when the company has branch points (None: the point stands for all its roles).
+    - 'branch': a place farther than near_km from the headquarters where the company has open roles now; ids = those roles. A company without
+      coordinates is located by the geo classification: at the places of its roles.
+    - 'past': a place where the company had roles before (history: [(slug, key, name, ll, n, last_seen)]) and has none now.
+    - 'addr': a branch address on file (addresses: [(slug, (lat, lon), name)], the checked branches of the catalogue).
+    A place within near_km of a point the company already has is not added again."""
+    by = {}
+    for rid, _title, _co, _url, slug in index:
+        ks = keys_of.get(rid)
+        if slug and ks:
+            by.setdefault(slug, {}).setdefault(ks[0], []).append(rid)       # a role's first place is its main one
+    out, seen = [], {}
+    for slug in sorted(set(hq) | set(by)):
+        base, groups = hq.get(slug), by.get(slug, {})
+        home, branches = [], []
+        for key, ids in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            ll = (table.get(key) or {}).get('ll')
+            if ll is None or (base is not None and km(base, ll) <= near_km) or len(branches) >= max_branches:
+                home += ids
+            else:
+                branches.append((ll, ids, key, table[key]['name']))
+        if base is not None:
+            out.append((slug, base, home if branches else None, None, {'k': 'hq'}))
+            seen.setdefault(slug, []).append(base)
+        for ll, ids, key, name in branches:
+            out.append((slug, ll, ids, key, {'k': 'branch', 'pn': name}))
+            seen.setdefault(slug, []).append(ll)
+    near = lambda slug, ll: any(km(ll, q) <= near_km for q in seen.get(slug, []))
+    for slug, key, name, ll, n, last in sorted(history or [], key=lambda h: -h[4]):
+        if ll is not None and not near(slug, ll) and sum(1 for o in out if o[0] == slug) < max_branches + 1:
+            out.append((slug, ll, [], key, {'k': 'past', 'pn': name, 'h': n, 'ls': last})); seen.setdefault(slug, []).append(ll)
+    for slug, ll, name in addresses or []:
+        if not near(slug, ll):
+            out.append((slug, ll, [], None, {'k': 'addr', 'pn': name})); seen.setdefault(slug, []).append(ll)
     return out
 
 
@@ -593,10 +707,12 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     res_m, method_m = annealed(rings, points, roles_in, frame.w, frame.h, km_per_cell, log=log, mix=MODERATE)
     carto_m = res_m['map']
     comp_in = []
-    for slug, (lat, lon) in companies:
+    for comp in companies:                                    # (slug, (lat, lon)) or (slug, (lat, lon), ids, place key, meta)
+        slug, (lat, lon) = comp[0], comp[1]
+        ids, key, meta = (comp[2], comp[3], comp[4]) if len(comp) > 4 else (None, None, {'k': 'hq'})
         x, y = frame.xy([lon], [lat])[0]
         if 0 <= x <= frame.w and 0 <= y <= frame.h:
-            comp_in.append((slug, x, y))
+            comp_in.append((slug, x, y, ids, key, meta))
     # validation: each shape's area after the transform (edges cut finely first), against its share of the roles inside the extent
     cell = 1.0 / GRID
     area = {sid: sum(poly_area(carto.apply(densify(r, VALID_STEP * cell))) for r in rs) for sid, rs in rings.items()}
@@ -638,27 +754,71 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
                                'cx': round(float(cx), 4), 'cy': round(float(cy), 4), 'mx': round(float(mx), 4), 'my': round(float(my), 4)})
     out_companies = []
     if comp_in:
-        pos = carto.apply([[x, y] for _s, x, y in comp_in])
-        pos_m = carto_m.apply([[x, y] for _s, x, y in comp_in])
-        for (slug, x, y), (cx, cy), (mx, my) in zip(comp_in, pos, pos_m):
-            out_companies.append({'slug': slug, 'x': round(x, 4), 'y': round(y, 4), 'cx': round(float(cx), 4), 'cy': round(float(cy), 4),
-                                  'mx': round(float(mx), 4), 'my': round(float(my), 4)})
+        pos = carto.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
+        pos_m = carto_m.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
+        for (slug, x, y, ids, key, meta), (cx, cy), (mx, my) in zip(comp_in, pos, pos_m):
+            row = {'slug': slug, 'x': round(x, 4), 'y': round(y, 4), 'cx': round(float(cx), 4), 'cy': round(float(cy), 4),
+                   'mx': round(float(mx), 4), 'my': round(float(my), 4)}
+            if ids is not None:
+                row['ids'] = ids                                              # the roles this point stands for (a branch, or the headquarters beside branches)
+            if key:
+                row['b'] = key
+            if meta.get('k') != 'hq':
+                row.update({kk: vv for kk, vv in (('k', meta.get('k')), ('pn', meta.get('pn')), ('h', meta.get('h')), ('ls', meta.get('ls'))) if vv})
+            out_companies.append(row)
     log(f'  {len(out_shapes)} shapes, {len(out_places)} places, {len(out_companies)} companies in the extent')
     return {'extent': [round(v, 4) for v in box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
             'places': out_places, 'companies': out_companies, 'error': round(res['error'], 4), 'method': method,
             'moderate': {'error': round(res_m['error'], 4), 'method': method_m, 'mix': MODERATE}}
 
 
-def build(site, profile, vectors, companies=None, cache=None, log=print):
+def build(site, profile, vectors, companies=None, cache=None, log=print, history=None, verified=None):
     """Writes VECTORS/geo-map.json for the board in SITE. Returns its path."""
     if not os.path.exists(os.path.join(site, 'jobs-index.json')):
         raise GeoMapError(f'no jobs-index.json in {site} (run jobcrawl build first)')
     cache = cache or os.path.join(vectors, '.geo-cache')
     shapes = geo_base.load(cache, ('DE',), log)
     index, desc = read_site(site)
-    table, unplaced, shape_share = role_places(index, desc, shapes)
+    keys_of = {}
+    table, unplaced, shape_share = role_places(index, desc, shapes, keys_of)
     log(f'roles: {len(index)}, placed {len(index) - unplaced}, not placed {unplaced} (remote or no place named); {len(table)} places')
-    comp = read_companies(companies) if companies else []
+    hq = dict(read_companies(companies)) if companies else {}
+    hist, addrs = [], []
+    if history and os.path.exists(history) and companies:
+        by_id = {s['id']: s for s in shapes['countries'] + shapes['states']}
+        state_id = {(s['cc'], s['name']): s['id'] for s in shapes['states']}
+        country_id = {s['cc']: s['id'] for s in shapes['countries']}
+        coords = geo.coords()
+        slug_of = catalogue_names(companies)
+        slug_of.update({co.lower(): sl for _r, _t, co, _u, sl in index if sl})
+        acc, texts = {}, {}
+        for co, loc, _first, last, _st in read_history(history):
+            sl = slug_of.get(co.lower())
+            if not sl or not loc:
+                continue
+            if loc not in texts:
+                texts[loc] = place_of(loc.split(' | ')[0], by_id, state_id, country_id, coords)
+            pl = texts[loc]
+            if pl:
+                a = acc.setdefault((sl, pl[0]), [pl[1], pl[2], 0, ''])
+                a[2] += 1; a[3] = max(a[3], last)
+        hist = [(sl, key, v[0], v[1], v[2], v[3]) for (sl, key), v in acc.items()]
+        log(f'history: {len(hist)} (company, place) pairs from {len(texts)} location texts')
+    if companies:
+        addrs += catalogue_places(companies, geo.coords())
+    if verified and os.path.exists(verified):
+        with open(verified, encoding='utf-8') as fh:
+            ver = json.load(fh)
+        for key, v in ver.items():
+            if v.get('status') in ('ok', 'filled') and v.get('found'):
+                sl = key.split('#')[0]
+                if '#b' in key:
+                    addrs.append((sl, (v['found'][0], v['found'][1]), (v.get('addr') or {}).get('city') or 'branch address'))
+                elif sl not in hq and v.get('status') == 'filled':
+                    hq[sl] = (v['found'][0], v['found'][1])          # no coordinates on file: the checked address
+    comp = company_points(index, keys_of, table, hq, history=hist, addresses=addrs)
+    log(f'company points by kind: {dict(collections.Counter(c[4]["k"] for c in comp))}')
+    log(f'company points: {len(comp)} for {len(hq)} companies with coordinates, {sum(1 for c in comp if c[3])} of them at branch locations, {len({c[0] for c in comp} - set(hq))} companies without coordinates located by their roles')
     scopes = profile['scopes'] if profile else DEFAULT_SCOPES
     out = {'version': 1, 'source': SOURCE, 'scopes': {}}
     for scope in scopes:
