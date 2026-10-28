@@ -131,14 +131,16 @@ duplicate group); 65535 means none. `role-graph.json`: `{k, ids_from, sim, dup}`
 
 ### geo-map.json (geomap, copied by publish)
 
-`{version, source, scopes}`; `scopes` is keyed by scope id, each `{extent, w, h, shapes, places, companies, error}`. `extent` is
+`{version, source, scopes}`; `scopes` is keyed by scope id, each `{extent, w, h, shapes, places, companies, error, moderate}`. `extent` is
 `[lon0, lat0, lon1, lat1]`; `w` and `h` the plane's size, normalised so the longer side is 1 (y counts from the north edge). Every position is
 in those units: `x, y` the true position, `cx, cy` the cartogram position (the role mass decides the area; both are kept so the web view can morph).
-* `shapes`: `{id, name, kind ('country' | 'state'), roles, rings}`; `rings` is a list of rings of `[x, y, cx, cy]` points (no repeated first point).
+`mx, my` the moderate cartogram: the same map with the density raised to 0.5 (a milder distortion; a shape with 4x the mean density grows 2x, not 4x).
+* `shapes`: `{id, name, kind ('country' | 'state'), roles, rings}`; `rings` is a list of rings of `[x, y, cx, cy, mx, my]` points (no repeated first point).
   `roles` is the number of roles that name a place in the shape (any place, not only those inside the extent).
-* `places`: `{id ('CC|City', or 'CC|State', or 'CC'), name, n (roles naming it), x, y, cx, cy}`, inside the extent.
-* `companies`: `{slug, x, y, cx, cy}` for the companies with coordinates inside the extent.
+* `places`: `{id ('CC|City', or 'CC|State', or 'CC'), name, n (roles naming it), x, y, cx, cy, mx, my}`, inside the extent.
+* `companies`: `{slug, x, y, cx, cy, mx, my}` for the companies with coordinates inside the extent.
 * `error`: the largest relative area error of the cartogram over its grid (cell area against the role share).
+* `moderate`: `{error, method, gamma}` for the moderate cartogram (`gamma` is 0.5, the density's exponent; `method` as above).
 
 Built with Natural Earth polygons (public domain) and the gazetteer's places; the cartogram itself is a Gastner-Newman (2004) diffusion
 followed by Gauss-Newton corrections of the cell areas (see the module's docstring).

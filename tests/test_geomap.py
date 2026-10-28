@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 from synthetic import HAVE_NUMPY, NUMPY_REASON
 from jobcrawl import board
@@ -46,6 +47,26 @@ class SquaresCartogram(unittest.TestCase):
         self.assertLess(abs(a + b - 1.0), 0.02)                               # the total area is kept
         self.assertLess(res['error'], 0.05)
 
+    @need_numpy
+    def test_moderate_distorts_less_than_full(self):
+        import numpy as np
+        from jobcrawl.map import geomap as g
+        left = np.array([[0, 0], [0.5, 0], [0.5, 1], [0, 1]], float)
+        right = np.array([[0.5, 0], [1, 0], [1, 1], [0.5, 1]], float)
+        points = np.array([[0.25, 0.5, 3.0], [0.75, 0.5, 1.0]])
+
+        def left_share(gamma):
+            carto = g.cartogram({'A': [left], 'B': [right]}, points, 1.0, 1.0, grid=128, log=silent, gamma=gamma)['map']
+            def area(ring):
+                return g.poly_area(carto.apply(g.densify(ring, 0.25 / 128)))
+            a, b = area(left), area(right)
+            return a / (a + b)
+        true_share = 0.5                                                      # the squares have equal area in the plane
+        full = left_share(1.0)
+        moderate = left_share(g.MODERATE)
+        self.assertLess(true_share, moderate)                                 # the densest square grows, but
+        self.assertLess(moderate, full)                                       # less than under the full cartogram
+
 
 class AnnealedNested(unittest.TestCase):
     """A small dense shape inside a big sparse one (with a hole): the staged map gives it its share, and a diverging stage falls back."""
@@ -83,6 +104,40 @@ class AnnealedNested(unittest.TestCase):
         self.assertEqual(method, 'single')                                    # every stage "diverges" under the tiny limit
         self.assertGreater(res['folds'], 0.0)
         self.assertLess(res["error"], 0.05)                                  # the single stage converges (its share is the known leak)
+
+
+class ScopeMapOutput(unittest.TestCase):
+    """scope_map on two synthetic countries (3:1 roles): rings carry true, full and moderate positions, places and companies carry mx, my,
+    and the scope records its moderate map."""
+
+    @need_numpy
+    def test_output_has_the_moderate_positions(self):
+        from jobcrawl.map import geomap as g
+        square = lambda x0: [[x0, 0.0], [x0 + 1.0, 0.0], [x0 + 1.0, 1.0], [x0, 1.0]]     # (lon, lat), 1 degree squares
+        shapes = {'countries': [{'id': 'A', 'name': 'Alpha', 'kind': 'country', 'cc': 'AA', 'rings': [square(0.0)]},
+                                {'id': 'B', 'name': 'Beta', 'kind': 'country', 'cc': 'BB', 'rings': [square(1.0)]}], 'states': []}
+        table = {'AA|Alpha': {'key': 'AA|Alpha', 'name': 'Alpha', 'cc': 'AA', 'n': 3, 'share': 3.0, 'll': (0.5, 0.5), 'shape': 'A'},
+                 'BB|Beta': {'key': 'BB|Beta', 'name': 'Beta', 'cc': 'BB', 'n': 1, 'share': 1.0, 'll': (0.5, 1.5), 'shape': 'B'}}
+        companies = [('acme', (0.5, 0.5))]
+        real = g.annealed
+        small = lambda *a, **k: real(*a, **dict({'grid': 128}, **k))                       # a coarse grid keeps the test fast
+        with mock.patch.object(g, 'GRID', 128), mock.patch.object(g, 'annealed', small):
+            out = g.scope_map({'id': 'test'}, (0.0, 0.0, 2.0, 1.0), 1.0, shapes, table, companies, {'A': 3.0, 'B': 1.0}, log=silent)
+        self.assertEqual(out['moderate']['gamma'], g.MODERATE)
+        self.assertIn(out['moderate']['method'], ('staged', 'single'))
+        self.assertIn('error', out['moderate'])
+        rings = [r for sh in out['shapes'] for r in sh['rings']]
+        self.assertTrue(rings)
+        for ring in rings:
+            for pt in ring:
+                self.assertEqual(len(pt), 6)                                  # x, y, cx, cy, mx, my
+        self.assertEqual(len(out['places']), 2)
+        for place in out['places']:
+            self.assertIn('mx', place)
+            self.assertIn('my', place)
+        self.assertEqual(len(out['companies']), 1)
+        self.assertIn('mx', out['companies'][0])
+        self.assertIn('my', out['companies'][0])
 
 
 class NaturalEarthCache(unittest.TestCase):
