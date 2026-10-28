@@ -447,15 +447,17 @@ const fsk = () => Math.max(1, Math.min(1.5, BW / 900)) * Math.min(1.35, st.z.s *
 // a new role's star, or a company's star (strength w: a role's age weight, a company's log weight against the heaviest). R: the radius,
 // spark: a sparkle. Neon: the region colour with a glow and a white core. Light: a dark core in the region colour, a soft shadow in the
 // region colour and an ink ring. a: the alpha (the points fade in and out with a change of view)
-function star(ctx, X0, Y0, R, w, c1, spark, T, ink, a) {
+function star(ctx, X0, Y0, R, w, c1, spark, T, ink, a, tier = 3) {   // tier (roles by age): 3 today, 2 this week, 1 this month; the companies' stars are always 3
   const rgb = regionRgb(c1, T.pointL, T.C), c = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, hc = T.glow ? rgb : regionRgb(c1, 0.45, T.C);
   ctx.globalAlpha = a;
   // the glow: a soft radial halo in the region colour (a gradient is far cheaper than a canvas shadow on every star)
-  const gr = R * (1 + 1.1 * w), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, gr), hs = `${hc[0]},${hc[1]},${hc[2]}`;
-  gd.addColorStop(0, `rgba(${hs},${T.glow ? 0.5 : 0.4})`); gd.addColorStop(1, `rgba(${hs},0)`);
-  ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, gr, 0, 7); ctx.fill();
+  if (tier > 1) {   // the month's roles have no halo
+    const gr = R * (1 + 1.1 * w), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, gr), hs = `${hc[0]},${hc[1]},${hc[2]}`;
+    gd.addColorStop(0, `rgba(${hs},${(T.glow ? 0.5 : 0.4) * (tier === 2 ? 0.55 : 1)})`); gd.addColorStop(1, `rgba(${hs},0)`);
+    ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, gr, 0, 7); ctx.fill();
+  }
   ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7);
-  if (T.glow) { ctx.fillStyle = c; ctx.fill(); ctx.beginPath(); ctx.arc(X0, Y0, 0.4 * R, 0, 7); ctx.fillStyle = '#ffffff'; ctx.fill(); }   // neon: the region colour with a white core
+  if (T.glow) { ctx.fillStyle = c; ctx.fill(); if (tier > 2) { ctx.beginPath(); ctx.arc(X0, Y0, 0.4 * R, 0, 7); ctx.fillStyle = '#ffffff'; ctx.fill(); } }   // neon: the region colour with a white core
   else { const core = regionRgb(c1, 0.48, T.C); ctx.fillStyle = `rgb(${core[0]},${core[1]},${core[2]})`; ctx.fill(); ctx.strokeStyle = spark ? ink : '#ffffff'; ctx.lineWidth = spark ? 1.2 : 1; ctx.stroke(); }   // light: a deep region-colour core with a white ring (an ink ring for today's)
   if (spark) { const s = 1.25 * R; ctx.globalAlpha = 0.65 * a; ctx.strokeStyle = T.glow ? '#ffffff' : ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(X0 - s, Y0); ctx.lineTo(X0 + s, Y0); ctx.moveTo(X0, Y0 - s); ctx.lineTo(X0, Y0 + s); ctx.stroke(); }
   ctx.globalAlpha = a;
@@ -498,9 +500,9 @@ function paintMap(ctx, P, o) {
     const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     if (e.ember) { ctx.globalAlpha = e.ea; ctx.fillStyle = 'rgb(190,120,60)'; ctx.fillRect(X0 - dot / 2, Y0 - dot / 2, dot, dot); return; }   // a role last seen before the scrubbed time: a dim warm ember
     const sv = starOf(k), lk = lw ? lw[k] : -1;   // lk: the link's weight (-1: no link; 0: dimmed)
-    if (sv >= (roles ? 0.4 : 0.001)) { hot.push([k, sv, lk]); return; }   // roles: only this week's and today's are stars; the month's are plain points   // new roles, and companies with some: drawn after the others, on top
+    if (sv > 0) { hot.push([k, sv, lk]); return; }   // new roles, and companies with some: drawn after the others, on top (roles: today, this week, this month, in falling intensity)   // new roles, and companies with some: drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const a = lk > 0 ? T.pointA : lk === 0 ? 0.25 * (act[k] ? T.pointA : 0.45) : (act[k] ? T.pointA : roles ? 0.45 : 0.8) * Math.max(0.5, Math.min(1, 1 / Math.sqrt(densAt(X0, Y0)))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
+    const a = lk > 0 ? T.pointA : lk === 0 ? 0.25 * (act[k] ? T.pointA : 0.45) : (act[k] ? T.pointA : roles ? 0.45 : 0.8) * Math.max(0.65, Math.min(1, 1 / Math.sqrt(densAt(X0, Y0)))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
     if (a <= 0.003) return;
     const rgb = regionRgb(e, act[k] || lk > 0 ? T.pointL : T.dimL, T.C);
     if (roles) {   // the role points go into one path per colour and alpha (a fill each, not one per point)
@@ -515,7 +517,7 @@ function paintMap(ctx, P, o) {
     const rgb = regionRgb(e, 0.35, T.C); ctx.globalAlpha = 1; ctx.strokeStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.arc(X0, Y0, (roles ? dot * 1.6 : rcOf(k)) + 1.5, 0, 7); ctx.stroke(); });
   for (const b of buckets.values()) { if (!b.q) continue; ctx.globalAlpha = b.q / 20; ctx.fillStyle = `rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})`; ctx.fill(b.p); }
   // the new roles and the companies with some, on top
-  if (hot.length) for (const [k, sv, lk] of hot) { const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), base = roles ? dot : rcOf(k); star(ctx, X0, Y0, base * (1 + 0.8 * sv), sv, e, roles ? sv >= 1 : !!P.cNew[k], T, ink, lk === 0 ? 0.25 : 1); }
+  if (hot.length) for (const [k, sv, lk] of hot) { const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), base = roles ? dot : rcOf(k); star(ctx, X0, Y0, base * (1 + (roles ? 0.9 : 0.8) * sv), sv, e, roles ? sv >= 1 : !!P.cNew[k], T, ink, lk === 0 ? 0.25 : 1, roles ? (sv >= 1 ? 3 : sv >= 0.4 ? 2 : 1) : 3); }
   // the point whose card is open: a ring (on screen only)
   if (screen && sel && sel.ly === Ly && vis[sel.k]) {
     const e = Ly.ents[sel.k], R = (roles ? dot * (1 + 1.6 * wE(e)) : rcOf(sel.k) * (1 + 1.6 * starOf(sel.k))) + 4;
