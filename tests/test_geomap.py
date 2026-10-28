@@ -47,6 +47,44 @@ class SquaresCartogram(unittest.TestCase):
         self.assertLess(res['error'], 0.05)
 
 
+class AnnealedNested(unittest.TestCase):
+    """A small dense shape inside a big sparse one (with a hole): the staged map gives it its share, and a diverging stage falls back."""
+
+    def setUp(self):
+        import numpy as np
+        self.outer = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], float)
+        self.hole = np.array([[0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6]], float)
+        self.rings = {'BIG': [self.outer, self.hole], 'SMALL': [self.hole.copy()]}
+        self.roles = {'BIG': 1.0, 'SMALL': 2.0}
+
+    def shares(self, carto, grid):
+        from jobcrawl.map import geomap as g
+        def area(rings):
+            return sum(g.poly_area(carto.apply(g.densify(r, 0.25 / grid))) * (1 if i == 0 else -1) for i, r in enumerate(rings))
+        big, sm = area([self.outer, self.hole]), area([self.hole])
+        return sm / (big + sm)
+
+    @need_numpy
+    def test_small_dense_shape_inside_big_sparse_one_reaches_its_share(self):
+        from jobcrawl.map import geomap as g
+        res = g.cartogram_staged(self.rings, self.roles, 1.0, 1.0, (8.0, 4.0, 2.0, 1.0), grid=128, log=silent)
+        self.assertTrue(res['ok'])
+        self.assertGreater(res['folds'], 0.0)
+        self.assertAlmostEqual(self.shares(res['map'], 128), 2.0 / 3.0, delta=0.2 * 2.0 / 3.0)
+
+    @need_numpy
+    def test_diverging_stage_falls_back_to_the_single_stage(self):
+        from jobcrawl.map import geomap as g
+        import numpy as np
+        pts = np.array([[0.2, 0.5, 1.0], [0.5, 0.5, 2.0]])                   # the roles' places: one per shape
+        res, method = g.annealed(self.rings, pts, self.roles, 1.0, 1.0, km_per_cell=5.0, grid=128, log=silent)
+        self.assertEqual(method, 'staged')
+        res, method = g.annealed(self.rings, pts, self.roles, 1.0, 1.0, km_per_cell=5.0, grid=128, log=silent, stage_limit=1e-9)
+        self.assertEqual(method, 'single')                                    # every stage "diverges" under the tiny limit
+        self.assertGreater(res['folds'], 0.0)
+        self.assertLess(res["error"], 0.05)                                  # the single stage converges (its share is the known leak)
+
+
 class NaturalEarthCache(unittest.TestCase):
     """geo_base.load reads the two files from the cache folder (no download) and keeps the countries other than the states' country."""
 

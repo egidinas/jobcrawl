@@ -35,6 +35,9 @@ BLEND_KM = 40.0             # km: the density is smoothed over this distance whe
                             # A narrower blur leaves the fit unconverged (Bavaria); the blur spreads a small region's roles into its neighbours (Berlin looks small).
 FLOOR = 0.02                # empty land keeps this share of the mean land density
 TOL = 0.05                  # stop when every cell is within 5 % of its target area
+STAGES_KM = (40.0, 20.0, 10.0, 5.0)  # km: the blur width of the annealing stages (coarse first)
+MIN_STAGE_CELLS = 3.0       # cells: the finest blur the stages use (the flow folds on a sub-cell density step)
+STAGE_MAX_ERR = 0.1         # a stage that ends with a larger area error (or a fold) has diverged: the scope falls back to the single stage
 FLOW_STEPS = 100            # the flow stops here (its error stalls once the density is uniform; the area fit does the rest)
 FIT_STEPS = 15              # Gauss-Newton steps on the areas (the fit converges in a few)
 FIT_CG = 60                 # conjugate-gradient iterations per fit step
@@ -349,6 +352,87 @@ def cartogram(rings, points, w, h, grid=GRID, tol=TOL, max_steps=FLOW_STEPS, ble
     return {'map': Cartogram(P, 1.0 / grid, margin), 'error': err, 'steps': steps, 'fit': fit, 'folds': folds, 'time': took}
 
 
+class Composed:
+    """The cartogram of several stages: each map takes the picture the stage before left (the composition is a map of the extent)."""
+
+    def __init__(self, maps):
+        self.maps = maps
+
+    def apply(self, xy):
+        for m in self.maps:
+            xy = m.apply(xy)
+        return xy
+
+
+def _stage(rings, roles, w, h, grid, sigma, tol, max_steps, log):
+    """One annealing stage: the density is uniform inside each shape (its roles over its cells), blurred by sigma cells."""
+    margin = grid // 4
+    ny, nx = math.ceil(h * grid - 1e-9), math.ceil(w * grid - 1e-9)
+    shape = (ny + 2 * margin, nx + 2 * margin)
+    inside = np.zeros(shape, bool)
+    inside[margin:margin + ny, margin:margin + nx] = True
+    ids = list(rings)
+    label = np.full(shape, -1)
+    for i, sid in enumerate(ids):
+        label[rasterize([r * grid + margin for r in rings[sid]], shape)] = i
+    land = label >= 0
+    cnt = np.bincount(label[land], minlength=len(ids)).astype(float)
+    per = np.array([float(roles.get(sid, 0.0)) / cnt[i] if cnt[i] else 0.0 for i, sid in enumerate(ids)])
+    dense = np.zeros(shape)
+    dense[land] = per[label[land]]
+    mean_land = float(dense[land].mean()) if land.any() else 1.0
+    dense[land & (dense <= 0)] = FLOOR * mean_land           # land without roles keeps the floor
+    sea = mean_land                                          # the sea and the margin keep the mean land density
+    blend = smooth(np.where(land, dense, sea), sigma)
+    blend[~inside] *= blend[inside].mean() / blend[~inside].mean()
+    start = time.time()
+    P, err1, steps, _ = equalise(blend, tol, max_steps)
+    fixed = np.zeros((shape[0] + 1, shape[1] + 1), bool)
+    fixed[0, :] = fixed[-1, :] = fixed[:, 0] = fixed[:, -1] = True
+    P, err, fit, folds = area_fit(P, blend / blend.mean(), fixed, tol, FIT_STEPS)
+    took = time.time() - start
+    log(f'    stage sigma {sigma:.1f} cells: flow {steps} steps (error {err1:.3f}), area fit {fit} steps, error {err:.4f}, '
+        f'smallest cell area {folds:.4f}, {took:.1f} s')
+    return {'map': Cartogram(P, 1.0 / grid, margin), 'error': err, 'folds': folds, 'time': took}
+
+
+def cartogram_staged(rings, roles, w, h, sigmas, grid=GRID, tol=TOL, max_steps=FLOW_STEPS, log=print, stage_limit=STAGE_MAX_ERR):
+    """Annealed multi-stage cartogram (Gastner, Seguy and More 2018 style): the stages use the blur widths in sigmas (cells, decreasing).
+    Each stage starts from the picture the stage before left: its shapes are rasterised at their displaced positions, their uniform
+    densities are blurred and the flow and the area fit take them to the next picture. The result composes all stages."""
+    cur = {sid: [densify(r, 2.0 / grid) for r in rs] for sid, rs in rings.items()}
+    maps, errs, folds, total = [], [], [], 0.0
+    for sigma in sigmas:
+        res = _stage(cur, roles, w, h, grid, sigma, tol, max_steps, log)
+        maps.append(res['map'])
+        errs.append(res['error'])
+        folds.append(res['folds'])
+        total += res['time']
+        if res['error'] > stage_limit or res['folds'] <= 0:
+            log(f'  stage sigma {sigma:.1f} diverged (error {res["error"]:.3f}, smallest cell area {res["folds"]:.4f})')
+            return {'map': None, 'ok': False, 'error': res['error'], 'folds': res['folds'], 'stage_errors': errs, 'time': total}
+        cur = {sid: [res['map'].apply(r) for r in rs] for sid, rs in cur.items()}
+    log(f'  {len(sigmas)} stages, final error {errs[-1]:.4f}, smallest cell area {min(folds):.4f}, {total:.1f} s')
+    return {'map': Composed(maps), 'ok': True, 'error': errs[-1], 'folds': min(folds), 'stage_errors': errs, 'time': total}
+
+
+def annealed(rings, points, roles, w, h, km_per_cell, grid=GRID, log=print, stage_limit=STAGE_MAX_ERR):
+    """The map of one extent: the annealed stages (STAGES_KM) when they converge, else the single stage (cartogram).
+    Returns (result, method) with method 'staged' or 'single'. A scope with fewer than two distinct stages is single."""
+    sigmas = []                                          # blur widths in cells; a stage below MIN_STAGE_CELLS would be a sub-cell step
+    for k in STAGES_KM:
+        c = max(k / km_per_cell, MIN_STAGE_CELLS)
+        if not sigmas or abs(c - sigmas[-1]) > 1e-9:
+            sigmas.append(c)
+    if len(sigmas) >= 2:
+        res = cartogram_staged(rings, roles, w, h, sigmas, grid=grid, log=log, stage_limit=stage_limit)
+        if res['ok']:
+            return res, 'staged'
+        log('  staged method diverged: falling back to the single stage')
+    res = cartogram(rings, points, w, h, grid=grid, blend_cells=max(BLEND_SMOOTH, BLEND_KM / km_per_cell), log=log)
+    return res, 'single'
+
+
 class Frame:
     """An extent's plane: x east from the west edge, y south from the north edge, in units of the longer side (max(w, h) = 1)."""
 
@@ -489,7 +573,11 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
             inside_places.append((rec, x, y))
     points = np.array([[x, y, rec['share']] for rec, x, y in inside_places]).reshape(-1, 3)
     km_per_cell = 111.2 * frame.s / GRID                 # a plane unit is about one degree of latitude
-    res = cartogram(rings, points, frame.w, frame.h, blend_cells=max(BLEND_SMOOTH, BLEND_KM / km_per_cell), log=log)
+    roles_in = {}
+    for rec, _x, _y in inside_places:
+        if rec['shape'] in rings:
+            roles_in[rec['shape']] = roles_in.get(rec['shape'], 0.0) + rec['share']
+    res, method = annealed(rings, points, roles_in, frame.w, frame.h, km_per_cell, log=log)
     carto = res['map']
     comp_in = []
     for slug, (lat, lon) in companies:
@@ -536,7 +624,7 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
             out_companies.append({'slug': slug, 'x': round(x, 4), 'y': round(y, 4), 'cx': round(float(cx), 4), 'cy': round(float(cy), 4)})
     log(f'  {len(out_shapes)} shapes, {len(out_places)} places, {len(out_companies)} companies in the extent')
     return {'extent': [round(v, 4) for v in box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
-            'places': out_places, 'companies': out_companies, 'error': round(res['error'], 4)}
+            'places': out_places, 'companies': out_companies, 'error': round(res['error'], 4), 'method': method}
 
 
 def build(site, profile, vectors, companies=None, cache=None, log=print):
