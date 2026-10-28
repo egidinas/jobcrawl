@@ -55,8 +55,8 @@ class SquaresCartogram(unittest.TestCase):
         right = np.array([[0.5, 0], [1, 0], [1, 1], [0.5, 1]], float)
         points = np.array([[0.25, 0.5, 3.0], [0.75, 0.5, 1.0]])
 
-        def left_share(gamma):
-            carto = g.cartogram({'A': [left], 'B': [right]}, points, 1.0, 1.0, grid=128, log=silent, gamma=gamma)['map']
+        def left_share(mix):
+            carto = g.cartogram({'A': [left], 'B': [right]}, points, 1.0, 1.0, grid=128, log=silent, mix=mix)['map']
             def area(ring):
                 return g.poly_area(carto.apply(g.densify(ring, 0.25 / 128)))
             a, b = area(left), area(right)
@@ -123,7 +123,7 @@ class ScopeMapOutput(unittest.TestCase):
         small = lambda *a, **k: real(*a, **dict({'grid': 128}, **k))                       # a coarse grid keeps the test fast
         with mock.patch.object(g, 'GRID', 128), mock.patch.object(g, 'annealed', small):
             out = g.scope_map({'id': 'test'}, (0.0, 0.0, 2.0, 1.0), 1.0, shapes, table, companies, {'A': 3.0, 'B': 1.0}, log=silent)
-        self.assertEqual(out['moderate']['gamma'], g.MODERATE)
+        self.assertEqual(out['moderate']['mix'], g.MODERATE)
         self.assertIn(out['moderate']['method'], ('staged', 'single'))
         self.assertIn('error', out['moderate'])
         rings = [r for sh in out['shapes'] for r in sh['rings']]
