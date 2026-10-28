@@ -792,10 +792,13 @@ function paintGeo(ctx, P, o) {
         if (hitDot(b, o2.skip, o2.minN || 0, 2 * ts)) return;
         const c = dotsIn(b); if (c > (o2.maxDots ?? 1e9)) return;
         const sc = c + 0.2 * idx; if (!best || sc < best.sc) best = { lg, b, sc }; });
-      if (!best) return false; boxes.push(best.b); labelDraw(ctx, best.lg, halo); return best.b; };
+      if (!best) return false; boxes.push(best.b);
+      if (o2.pill) { const b = best.b, q = 3 * ts; ctx.save(); ctx.globalAlpha = 0.9; ctx.fillStyle = paper; ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(b[0] - q, b[1] - q * 0.6, b[2] - b[0] + 2 * q, b[3] - b[1] + 1.2 * q, 5 * ts); ctx.fill(); ctx.globalAlpha = 0.45; ctx.stroke(); ctx.restore(); }
+      labelDraw(ctx, best.lg, halo); return best.b; };
     // the shapes' names first, the largest first (only shapes with roles); they win over the places' names, and keep off the bigger places
+    ctx.letterSpacing = (1.6 * ts) + 'px';   // area names are spaced out (and upper case): the cities' tags below are not
     for (const s of Lg.shapes.filter((x) => x.roles > 0).sort((a, b) => b.roles - a.roles)) { if (counts.areas >= Math.round((many ? 60 : 24) * ks)) break;
-      const fs = Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(s.roles) * 0.33))), lines = wrapText(geoNameOf(s), 16, 2).map((t) => ({ t, fs, face: '600', alpha: 1, color: T.areaInk || ink })), dy = 1.4 * fs * ts * lines.length;
+      const fs = Math.round(Math.max(10, Math.min(15, 6 + Math.sqrt(s.roles) * 0.28))), lines = wrapText(geoNameOf(s).toUpperCase(), 15, 2).map((t) => ({ t, fs, face: '500', alpha: 0.82, color: T.areaInk || ink })), dy = 1.4 * fs * ts * lines.length;
       const lb = labelLayout(ctx, lines, 0, 0, 'center', ts).box; if (s.ar < 1.5 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // a shape too small for its name: none
       const cands = [[s.lx, s.ly, 'center'], [s.lx, s.ly - dy, 'center'], [s.lx, s.ly + dy, 'center']];
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (const q of s.pr) for (let j = 0; j < q.length; j += 2) { if (q[j] < x0) x0 = q[j]; if (q[j] > x1) x1 = q[j]; if (q[j + 1] < y0) y0 = q[j + 1]; if (q[j + 1] > y1) y1 = q[j + 1]; }
@@ -804,17 +807,45 @@ function paintGeo(ctx, P, o) {
       for (let y = y0; y <= y1; y += step * 0.6) for (let x = x0; x <= x1; x += step) if (ctx.isPointInPath(s.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd')) lat.push([x, y, 'center']);
       lat.sort((p1, p2) => Math.hypot(p1[0] - s.lx, p1[1] - s.ly) - Math.hypot(p2[0] - s.lx, p2[1] - s.ly)); cands.push(...lat.slice(0, 40));
       const ab = place(lines, cands, true, 0, { minN: Math.max(nMed, 1) }); if (ab) { ab.area = true; counts.areas++; } }
-    // the places' names: those in the lens first, then the biggest; the size of a name and its weight follow the place's roles; each needs room
-    // around it (OPP), keeps clear of every dot (its own excepted) and of crowds of company dots, as the other views' names do
-    const cap = Math.round((many ? 120 : zoomed ? 40 : 16) * ks), nco = (k) => (Lg.coAt.get(k) || []).length, maxCo = Math.max(1, ...pl.map(nco)), order = pl.slice().sort((a, b) => (inl(Lg.ents[b]) - inl(Lg.ents[a])) || nco(b) - nco(a) || Lg.ents[b].n - Lg.ents[a].n);   // cities by their number of companies
-    let named = 0;
-    for (const k of order) { if (named >= cap) break; const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), r = 4 * zf, free = inl(e), hh = 6 * ts, big = Math.sqrt(nco(k) / maxCo);
-      const fs = Math.round(9.5 + 4.5 * big), lines = wrapText(e.name, 20, 1).map((t) => ({ t, fs, face: big > 0.5 ? '700' : big > 0.2 ? '600' : '500', alpha: 0.78 + 0.22 * big, color: T.subInk || ink }));
-      const cands = [];   // eight directions at four distances from the dot, the nearest first
-      for (const gap of [3, 9, 18, 30]) { const g = r + gap * ts, d = g * 0.72;
-        cands.push([X0 + g, Y0, 'left'], [X0 - g, Y0, 'right'], [X0, Y0 - g - hh, 'center'], [X0, Y0 + g + hh, 'center'],
-          [X0 + d, Y0 - d - hh * 0.5, 'left'], [X0 - d, Y0 - d - hh * 0.5, 'right'], [X0 + d, Y0 + d + hh * 0.5, 'left'], [X0 - d, Y0 + d + hh * 0.5, 'right']); }
-      if (place(lines, cands, free, free ? 0 : OPP, { skip: k, maxDots: big > 0.3 ? 1e9 : 6 })) named++; }
+    ctx.letterSpacing = '0px';
+    // the companies as clusters: dots closer than CR px (zooming in splits them) form one cluster, drawn as a ring round it, named after its main city with the number of
+    // companies in a tag beside it, and joined to the ring by a leader line; a lone company is named only when zoomed in. The tag (rounded, with the count) is what marks a
+    // place; the countries and states above are plain upper-case letters.
+    const CR = 20 * ts, coPl = new Map(); Lg.coAt.forEach((cs, pk) => cs.forEach((ci) => coPl.set(ci, pk)));
+    const pts = []; Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) pts.push({ k, x: X0, y: Y0 }); });
+    const par = pts.map((_, i) => i), root = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; }, cellOf = new Map();
+    pts.forEach((q, i) => { const cx = Math.floor(q.x / CR), cy = Math.floor(q.y / CR); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of (cellOf.get((cx + dx) + ',' + (cy + dy)) || [])) if (Math.hypot(q.x - pts[j].x, q.y - pts[j].y) <= CR) par[root(i)] = root(j);
+      const key = cx + ',' + cy; if (!cellOf.has(key)) cellOf.set(key, []); cellOf.get(key).push(i); });
+    const groups = new Map(); pts.forEach((q, i) => { const r = root(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(q); });
+    // a chain of dots can link a whole region into one cluster: a cluster wider than 3.2 CR is split in two (2-means), again and again, until each is compact
+    const compact = [], mid = (g, key) => g.reduce((a, q) => a + q[key], 0) / g.length;
+    const split = (g, d) => { const x = mid(g, 'x'), y = mid(g, 'y'), rad = Math.max(...g.map((q) => Math.hypot(q.x - x, q.y - y)));
+      if (rad <= 3.2 * CR || g.length < 6 || d > 6) { compact.push(g); return; }
+      let a = g[0]; for (const q of g) if (Math.hypot(q.x - x, q.y - y) > Math.hypot(a.x - x, a.y - y)) a = q;
+      let b = g[0]; for (const q of g) if (Math.hypot(q.x - a.x, q.y - a.y) > Math.hypot(b.x - a.x, b.y - a.y)) b = q;
+      let ca = [a.x, a.y], cb = [b.x, b.y], A = [], B = [];
+      for (let it = 0; it < 6; it++) { A = []; B = []; for (const q of g) (Math.hypot(q.x - ca[0], q.y - ca[1]) <= Math.hypot(q.x - cb[0], q.y - cb[1]) ? A : B).push(q); if (!A.length || !B.length) break; ca = [mid(A, 'x'), mid(A, 'y')]; cb = [mid(B, 'x'), mid(B, 'y')]; }
+      if (!A.length || !B.length) { compact.push(g); return; } split(A, d + 1); split(B, d + 1); };
+    groups.forEach((g) => split(g, 0));
+    const clusters = compact.map((g) => { const x = g.reduce((a, q) => a + q.x, 0) / g.length, y = g.reduce((a, q) => a + q.y, 0) / g.length, byPl = new Map();
+      g.forEach((q) => { const pk = coPl.get(q.k); if (pk !== undefined) byPl.set(pk, (byPl.get(pk) || 0) + 1); });
+      const top = [...byPl].sort((a, b) => b[1] - a[1])[0];
+      return { n: g.length, x, y, rad: Math.max(...g.map((q) => Math.hypot(q.x - x, q.y - y))), city: top ? Lg.ents[top[0]].name : '', one: g[0].k, near: g.some((q) => inl(Lg.ents[q.k])) }; })
+      .filter((c) => c.n >= 2 ? c.city : zoomed).sort((a, b) => (b.near - a.near) || b.n - a.n);
+    const capC = Math.round((many ? 120 : zoomed ? 60 : 24) * ks); let named = 0;
+    for (const c of clusters) { if (named >= capC) break;
+      const solo = c.n < 2, text = solo ? Lg.ents[c.one].name : `${c.city} · ${c.n}`, big = Math.sqrt(Math.min(c.n, 40) / 40), fs = Math.round(10 + 3 * big), R = solo ? 0 : Math.min(60 * ts, Math.max(7 * ts, c.rad + 5 * ts));
+      const lines = wrapText(text, 28, 1).map((t) => ({ t, fs, face: solo ? '500' : '600', alpha: 1, color: T.subInk || ink })), cands = [];
+      for (const gap of [5, 14, 26]) { const g = R + gap * ts, d = g * 0.72, hh = 6 * ts;
+        cands.push([c.x + g, c.y, 'left'], [c.x - g, c.y, 'right'], [c.x, c.y - g - hh, 'center'], [c.x, c.y + g + hh, 'center'],
+          [c.x + d, c.y - d - hh * 0.5, 'left'], [c.x - d, c.y - d - hh * 0.5, 'right'], [c.x + d, c.y + d + hh * 0.5, 'left'], [c.x - d, c.y + d + hh * 0.5, 'right']); }
+      const bx = place(lines, cands, c.near, c.near ? 0 : OPP, { pill: true, maxDots: 1e9 }); if (!bx) continue;
+      named++;
+      ctx.save(); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.6;
+      if (!solo) { ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.stroke(); boxes.push([c.x - R, c.y - R, c.x + R, c.y + R]); }
+      const px = Math.max(bx[0], Math.min(c.x, bx[2])), py = Math.max(bx[1], Math.min(c.y, bx[3])), dd = Math.hypot(px - c.x, py - c.y);
+      if (dd > R + 2) { ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(c.x + (px - c.x) / dd * R, c.y + (py - c.y) / dd * R); ctx.lineTo(px, py); ctx.stroke(); }
+      ctx.restore(); }
   }
   if (screen) {   // the lens, its sample and the open point's ring
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
