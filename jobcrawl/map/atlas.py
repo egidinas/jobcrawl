@@ -585,11 +585,23 @@ def name_companies(companies, names):
             r['label'] = nm
 
 
-def previous_namer(prev):
+def field_names(profile):
+    """{English label or tag of a board field: (English, German label)} from the profile."""
+    out = {}
+    for f in (profile or {}).get('fields') or []:
+        lb = f.get('label') or {}
+        en = lb.get('en') or f.get('tag') or f.get('id'); de = lb.get('de') or en
+        for k in {en, f.get('tag'), f.get('id')}:
+            if k:
+                out[k] = (en, de)
+    return out
+
+
+def previous_namer(prev, fields=None):
     """A namer without any model: names a group after the group of the previous layout (prev, the parsed atlas-layout.json) that holds most
     of its roles, by the whole membership and not only the 25 sample ids of the labels file. When several new groups descend from one old group
     (it split), the largest keeps the name and the others get it with their own distinguishing board field or key words added ("Systems
-    Engineering . Thermal"); the German name takes the same field or words. A group with less than 30 % of its roles in a named old group stays unnamed."""
+    Engineering . Thermal"); the German name takes the German label of the same board field (fields: {English label: (en, de)}, from the profile) and the same key words. A group with less than 30 % of its roles in a named old group stays unnamed."""
     old = {}
     for scope, R in [('worldwide', (prev or {}).get('roles'))] + list(((prev or {}).get('scopes') or {}).items()):
         if not R:
@@ -599,6 +611,8 @@ def previous_namer(prev):
             for i, g in zip(R['ids'], R[key]):
                 mem[g].add(i)
             old[(scope, kind)] = [(mem.get(g, set()), grp['label']) for g, grp in enumerate(R[kind]) if grp.get('label')]
+
+    pair = lambda x: tuple((fields or {}).get(x) or (x, x))                  # a board field as (English, German); key words stay as they are
 
     def namer(requests):
         used, out, cand = collections.defaultdict(set), {}, []
@@ -618,11 +632,11 @@ def previous_namer(prev):
             if tuple(lb) not in taken and lb[0].lower() not in used[scope]:
                 taken.add(tuple(lb)); out[r['key']] = tuple(lb); used[scope].add(lb[0].lower()); continue
             base = [x.split(' · ')[0] for x in lb]
-            extra = [x for x in r['fields'] + [w.title() for w in r['words']] if x.lower() not in base[0].lower()]
+            extra = [pair(x) for x in r['fields'] + [w.title() for w in r['words']] if x.lower() not in base[0].lower()]
             for take in (1, 2, 3):
                 if not extra:
                     break
-                cand_name = tuple(f'{b} · {" & ".join(extra[:take])}' for b in base)
+                cand_name = tuple(f'{b} · {" & ".join(e[k] for e in extra[:take])}' for k, b in enumerate(base))
                 if cand_name[0].lower() not in used[scope]:
                     out[r['key']] = cand_name; used[scope].add(cand_name[0].lower()); break
         for r in requests:                                                  # a topic new since the last map: named by what sets it apart
@@ -630,13 +644,13 @@ def previous_namer(prev):
                 continue
             parts = []
             for x in r['fields'][:1] + [w.title() for w in r['words']]:
-                if x.lower() not in [p.lower() for p in parts] and not any(x.lower() in p.lower() or p.lower() in x.lower() for p in parts):
-                    parts.append(x)
+                if x.lower() not in [p[0].lower() for p in parts] and not any(x.lower() in p[0].lower() or p[0].lower() in x.lower() for p in parts):
+                    parts.append(pair(x))
             parts = parts[:3]
             for take in (len(parts), 2, 3, 1):
-                nm = ' & '.join(parts[:take]) if parts else ''
+                nm = ' & '.join(p[0] for p in parts[:take]) if parts else ''
                 if nm and nm.lower() not in used[(r['scope'], r['kind'])]:
-                    out[r['key']] = (nm, nm); used[(r['scope'], r['kind'])].add(nm.lower()); break
+                    out[r['key']] = (nm, ' & '.join(p[1] for p in parts[:take])); used[(r['scope'], r['kind'])].add(nm.lower()); break
         return out
     namer.batch = None
     namer.auto = True
@@ -721,7 +735,7 @@ def build(site, vectors, profile, log=print, namer=None):
     log(f'  {named} groups named from the labels file')
     if lab:
         lab_path, titles_of = os.path.join(profile['_dir'], m['labels_file']), {r[0]: r[1] for r in keep}
-        name_missing(out, lab, lab_path, titles_of, previous_namer(prev_layout), log)
+        name_missing(out, lab, lab_path, titles_of, previous_namer(prev_layout, field_names(profile)), log)
         if namer:
             name_missing(out, lab, lab_path, titles_of, namer, log)
         name_companies(companies, names)                # apply_labels ran again: the company regions' names from the company graph are set again
