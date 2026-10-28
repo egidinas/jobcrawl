@@ -80,7 +80,7 @@ document.head.appendChild(style);
 mount.innerHTML = `<div class="atlas-bar">
 <div class="atlas-views" id="atlas-mode" role="group"><button type="button" data-m="roles" aria-pressed="true">${L('Roles', 'Stellen')}</button><button type="button" data-m="companies" aria-pressed="false">${L('Companies', 'Firmen')}</button>${cfg.geomap ? `<button type="button" data-m="geo" aria-pressed="false">${L('Geography', 'Geografie')}</button>` : ''}</div>
 <label>${L('Where', 'Wo')}<select id="atlas-scope">${scopeOpts}</select></label>
-<label>${L('Lens size', 'Lupengröße')}<select id="atlas-size"><option value="0.05" selected>${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option><option value="0">${L('off', 'aus')}</option></select></label>
+<label>${L('Lens size', 'Lupengröße')}<select id="atlas-size"><option value="0.05">${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option><option value="0" selected>${L('off', 'aus')}</option></select></label>
 <label class="atlas-link-t"><input type="checkbox" id="atlas-linked" checked> ${L('Linked', 'Verknüpft')}</label>
 </div>
 <details class="atlas-fieldbox" id="atlas-fieldbox"><summary id="atlas-fields-sum"></summary><div class="atlas-fields" id="atlas-fields" role="group"></div></details>
@@ -230,7 +230,7 @@ function renderCv() {
 renderPersonas(); renderPrefs(); renderCv(); computeTaste();
 
 // ---- state, view and drawing
-const st = { all: false, mode: 'roles', scope: defaultScope(), size: 0.05, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
+const st = { all: false, mode: 'roles', scope: defaultScope(), size: 0, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
 const fieldSum = () => { const on = [...st.fields]; $('atlas-fields-sum').innerHTML = `<span>${L('Fields', 'Fachgebiete')}</span> <span class="atlas-note">${on.length ? esc(on.map(fieldLabel).join(', ')) : L('all (click to narrow the map to some)', 'alle (zum Eingrenzen öffnen)')}</span>`; };
 fieldSum();
 $('atlas-fields').innerHTML = ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="false">${esc(fieldLabel(f))}</button>`).join('');
@@ -749,21 +749,46 @@ function paintGeo(ctx, P, o) {
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
   if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
-    const place = (lines, cands, free, pad = 0) => { for (const [x, y, a] of cands) { const lg = labelLayout(ctx, lines, x, y, a, ts), b = lg.box;
-        if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
-        if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) continue; }
-        if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) continue;
-        boxes.push(b); labelDraw(ctx, lg, halo); return b; } return false; };
-    // the shapes' names first, the largest first (only shapes with roles); they win over the places' names
+    // what a name must keep clear of: the other names, every place's dot (hotspots: the big ones), and, as a soft cost, the companies' dots
+    const pdots = pl.map((k) => { const e = Lg.ents[k]; return { k, x: sx(e.x), y: sy(e.y), r: rOf(e), n: e.n }; });
+    const nMed = pdots.length ? pdots.map((q) => q.n).sort((x, y) => x - y)[pdots.length >> 1] : 0;
+    const CELL = 24 * ts, gw = Math.ceil(W / CELL) + 1, gh = Math.ceil(H / CELL) + 1, grid = new Uint16Array(gw * gh);
+    Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) grid[Math.floor(Y0 / CELL) * gw + Math.floor(X0 / CELL)]++; });
+    const dotsIn = (b) => { let c = 0; for (let gy = Math.max(0, Math.floor(b[1] / CELL)); gy <= Math.min(gh - 1, Math.floor(b[3] / CELL)); gy++) for (let gx = Math.max(0, Math.floor(b[0] / CELL)); gx <= Math.min(gw - 1, Math.floor(b[2] / CELL)); gx++) c += grid[gy * gw + gx]; return c; };
+    const hitDot = (b, skip, minN, m) => pdots.some((q) => q.k !== skip && q.n >= minN && !(q.x + q.r + m < b[0] || q.x - q.r - m > b[2] || q.y + q.r + m < b[1] || q.y - q.r - m > b[3]));
+    // the candidates are tried in order; the best is the one on the fewest company dots (a little more for each step down the list), and none
+    // that touches another name, the controls, the lens, or a place's dot (o2.minN: only the places with at least that many roles)
+    const place = (lines, cands, free, pad = 0, o2 = {}) => { let best = null;
+      cands.forEach(([x, y, a], idx) => { const lg = labelLayout(ctx, lines, x, y, a, ts), b = lg.box;
+        if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) return;
+        if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) return; }
+        if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) return;
+        if (hitDot(b, o2.skip, o2.minN || 0, 2 * ts)) return;
+        const c = dotsIn(b); if (c > (o2.maxDots ?? 1e9)) return;
+        const sc = c + 0.2 * idx; if (!best || sc < best.sc) best = { lg, b, sc }; });
+      if (!best) return false; boxes.push(best.b); labelDraw(ctx, best.lg, halo); return best.b; };
+    // the shapes' names first, the largest first (only shapes with roles); they win over the places' names, and keep off the bigger places
     for (const s of Lg.shapes.filter((x) => x.roles > 0).sort((a, b) => b.roles - a.roles)) { if (counts.areas >= Math.round((many ? 60 : 24) * ks)) break;
       const fs = Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(s.roles) * 0.33))), lines = wrapText(geoNameOf(s), 16, 2).map((t) => ({ t, fs, face: '600', alpha: 1, color: T.areaInk || ink })), dy = 1.4 * fs * ts * lines.length;
       const lb = labelLayout(ctx, lines, 0, 0, 'center', ts).box; if (s.ar < 1.5 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // a shape too small for its name: none
-      const ab = place(lines, [[s.lx, s.ly, 'center'], [s.lx, s.ly - dy, 'center'], [s.lx, s.ly + dy, 'center']], true); if (ab) { ab.area = true; counts.areas++; } }
-    // the places' names: those in the lens first, then the biggest; each needs room around it (OPP), as the other views' names do
+      const cands = [[s.lx, s.ly, 'center'], [s.lx, s.ly - dy, 'center'], [s.lx, s.ly + dy, 'center']];
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (const q of s.pr) for (let j = 0; j < q.length; j += 2) { if (q[j] < x0) x0 = q[j]; if (q[j] > x1) x1 = q[j]; if (q[j + 1] < y0) y0 = q[j + 1]; if (q[j + 1] > y1) y1 = q[j + 1]; }
+      const step = Math.max(10 * ts, (lb[2] - lb[0]) / 2), lat = [];
+      const tm = ctx.getTransform();   // the point is in device pixels, the path is drawn through the transform
+      for (let y = y0; y <= y1; y += step * 0.6) for (let x = x0; x <= x1; x += step) if (ctx.isPointInPath(s.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd')) lat.push([x, y, 'center']);
+      lat.sort((p1, p2) => Math.hypot(p1[0] - s.lx, p1[1] - s.ly) - Math.hypot(p2[0] - s.lx, p2[1] - s.ly)); cands.push(...lat.slice(0, 40));
+      const ab = place(lines, cands, true, 0, { minN: Math.max(nMed, 1) }); if (ab) { ab.area = true; counts.areas++; } }
+    // the places' names: those in the lens first, then the biggest; the size of a name and its weight follow the place's roles; each needs room
+    // around it (OPP), keeps clear of every dot (its own excepted) and of crowds of company dots, as the other views' names do
     const cap = Math.round((many ? 120 : zoomed ? 40 : 16) * ks), order = pl.slice().sort((a, b) => (inl(Lg.ents[b]) - inl(Lg.ents[a])) || Lg.ents[b].n - Lg.ents[a].n);
     let named = 0;
-    for (const k of order) { if (named >= cap) break; const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), r = rOf(e), free = inl(e), hh = 6 * ts, lines = wrapText(e.name, 20, 1).map((t) => ({ t, fs: 10, face: '500', alpha: 0.9, color: T.subInk || ink }));
-      if (place(lines, [[X0 + r + 3 * ts, Y0, 'left'], [X0 - r - 3 * ts, Y0, 'right'], [X0, Y0 - r - hh - 2 * ts, 'center'], [X0, Y0 + r + hh + 2 * ts, 'center']], free, free ? 0 : OPP)) named++; }
+    for (const k of order) { if (named >= cap) break; const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), r = rOf(e), free = inl(e), hh = 6 * ts, big = Math.sqrt(e.n / Lg.nMax);
+      const fs = Math.round(9.5 + 4.5 * big), lines = wrapText(e.name, 20, 1).map((t) => ({ t, fs, face: big > 0.5 ? '700' : big > 0.2 ? '600' : '500', alpha: 0.78 + 0.22 * big, color: T.subInk || ink }));
+      const cands = [];   // eight directions at four distances from the dot, the nearest first
+      for (const gap of [3, 9, 18, 30]) { const g = r + gap * ts, d = g * 0.72;
+        cands.push([X0 + g, Y0, 'left'], [X0 - g, Y0, 'right'], [X0, Y0 - g - hh, 'center'], [X0, Y0 + g + hh, 'center'],
+          [X0 + d, Y0 - d - hh * 0.5, 'left'], [X0 - d, Y0 - d - hh * 0.5, 'right'], [X0 + d, Y0 + d + hh * 0.5, 'left'], [X0 - d, Y0 + d + hh * 0.5, 'right']); }
+      if (place(lines, cands, free, free ? 0 : OPP, { skip: k, maxDots: big > 0.3 ? 1e9 : 6 })) named++; }
   }
   if (screen) {   // the lens, its sample and the open point's ring
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
