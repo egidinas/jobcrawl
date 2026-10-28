@@ -544,8 +544,8 @@ function paintMap(ctx, P, o) {
       if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) return;
       if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) return; }
       if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) return;
-      const hb = hitBright(b, o2.self); if (hb && !o2.soft) return;
-      const sc = crowd(b) + 4 * hb + (o2.step ?? 0.15) * idx; if (!best || sc < best.sc) best = { lay, b, sc }; });
+      const hb = o2.flat ? 0 : hitBright(b, o2.self); if (hb && !o2.soft) return;
+      const sc = o2.flat ? idx : crowd(b) + 4 * hb + (o2.step ?? 0.15) * idx;   /* flat: the first free position of the list, whatever lies under it */ if (!best || sc < best.sc) best = { lay, b, sc }; });
     if (!best) return false; boxes.push(best.b); labelDraw(ctx, best.lay, halo); return best.b; };
   const OPP = screen ? 8 * ts : 0;   // the free margin for opportunistic labels on screen (images stay dense)
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
@@ -564,7 +564,7 @@ function paintMap(ctx, P, o) {
       const pk = []; for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { const v = S[y * GW + x]; if (v < Math.max(stat.min, 0.15 * g0.n)) continue; let top = true;
         for (let dy = -1; dy <= 1 && top; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if ((dx || dy) && xx >= 0 && yy >= 0 && xx < GW && yy < GH && S[yy * GW + xx] > v) { top = false; break; } }
         if (top) pk.push([v, x, y]); }
-      pk.sort((a, b) => b[0] - a[0]); const kept = []; for (const p of pk) { if (kept.length >= 3) break; if (kept.every((o) => Math.hypot(o[1] - p[1], o[2] - p[2]) >= 6)) kept.push(p); }
+      pk.sort((a, b) => b[0] - a[0]); const kept = []; for (const p of pk) { if (kept.length >= (many || zoomed ? 3 : 1)) break; if (kept.every((o) => Math.hypot(o[1] - p[1], o[2] - p[2]) >= 6)) kept.push(p); }
       if (!kept.length) { out.push(g0); continue; }
       kept.forEach(([v, x, y], i) => { let n = 0, X = 0, Y = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= GW || yy >= GH) continue; const q = yy * GW + xx; n += g.c[q]; X += g.x[q]; Y += g.y[q]; }
         out.push({ ...g0, n: i ? v : g0.n, xy: [ux(X / n), uy(Y / n)] }); }); }
@@ -576,17 +576,20 @@ function paintMap(ctx, P, o) {
     Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if ((X0 - lx) ** 2 + (Y0 - ly) ** 2 > lr2) return; const g = by.get(e.c1) || { n: 0, x: 0, y: 0 }; g.n++; g.x += e.x; g.y += e.y; by.set(e.c1, g); });
     const top = [...by].sort((a, b) => b[1].n - a[1].n)[0], R0 = top && Ly.regions[top[0]];
     if (R0 && top[1].n >= 3) regP.unshift({ r: R0, n: Math.max(top[1].n, stat.min), xy: [top[1].x / top[1].n, top[1].y / top[1].n], lens: true }); }
-  const areas = many ? [...byN(regP, false), ...(roles ? byN(hoods, true) : [])] : byN(roles && zoomed && !Ly.past ? hoods : regP, false);
+  const areas = many ? [...byN(regP, false), ...(roles ? byN(hoods, true) : [])] : roles && !zoomed && !Ly.past ? [...byN(regP, false), ...byN(hoods, true).slice(0, Math.round(18 * ks))] : byN(roles && zoomed && !Ly.past ? hoods : regP, false);
   // area names first: they win over any single role or company label
   const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
+  const areaNames = new Set();   // a name is drawn once: a neighbourhood called like a region shown already is left out
   for (const { r, n, xy, sub } of areas) {
-    if (counts.areas >= Math.round((many ? 400 : 24) * ks) || (!r.words.length && !r.label)) continue;
+    if (sub && areaNames.has(nameOf(r).toLowerCase())) continue;
+    if (counts.areas >= Math.round((many ? 400 : 44) * ks) || (!r.words.length && !r.label)) continue;
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
-    const lines = wrapText(nameOf(r), roles ? 16 : 20, roles ? 2 : 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
+    const lines = wrapText(nameOf(r), roles ? 18 : 20, 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
     const X0 = sx(xy[0]), Y0 = sy(xy[1]), dy = 1.4 * fs * ts * lines.length;   // the patch centre, else just above or below it
     // area names may sit inside the lens (free): placed first, the lens's own labels fit around them
     const ring = []; for (const f of [1, 2]) for (let q = 0; q < 8; q++) ring.push([X0 + Math.cos(q * Math.PI / 4) * f * dy * 1.7, Y0 + Math.sin(q * Math.PI / 4) * f * dy, 'center']);
-    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center'], ...ring], true, 0, { soft: true, step: 0.8 }); if (ab) { ab.area = true; counts.areas++; }
+    // job clouds: an area is named at the centre of its patch, over its points (just above or below when another name is there); other maps: the emptiest position
+    const ab = roles ? place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center']], true, 0, { flat: true }) : place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center'], ...ring], true, 0, { soft: true, step: 0.8 }); if (ab) { ab.area = true; counts.areas++; areaNames.add(nameOf(r).toLowerCase()); }
   }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
   // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
