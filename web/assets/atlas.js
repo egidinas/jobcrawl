@@ -767,16 +767,16 @@ function paintGeo(ctx, P, o) {
     ctx.fillStyle = `rgb(${hs})`; ctx.beginPath(); ctx.arc(X0, Y0, r, 0, 7); ctx.fill(); }
   // the places: a dot sized by its open roles (1.5 to 7 px) in its density colour, like the stars; the big ones last, on top
   const rOf = (e) => (1.5 + 5.5 * (Math.sqrt(e.n) - 1) / Math.max(1e-9, Math.sqrt(Lg.nMax) - 1)) * zf, pl = [];
-  Lg.ents.forEach((e, k) => { if (e.place && vis[k]) { const X0 = sx(e.x), Y0 = sy(e.y); if (inBox(X0, Y0)) pl.push(k); } });
+  Lg.ents.forEach((e, k) => { if (e.place && vis[k] && Lg.coAt.has(k)) { const X0 = sx(e.x), Y0 = sy(e.y); if (inBox(X0, Y0)) pl.push(k); } });   // only cities that have companies
   pl.sort((a, b) => Lg.ents[a].n - Lg.ents[b].n);
-  for (const k of pl) { const e = Lg.ents[k]; star(ctx, sx(e.x), sy(e.y), rOf(e), 0.2 + 0.6 * e.q, hueC(geoHue(e.q)), false, T, ink, 1); }
+  // no dots for the cities: the map is the borders and the companies; a city with companies is named (below)
   ctx.globalAlpha = 1;
   if (o.keep) { const kf = base || (base = { c: document.createElement('canvas') }); kf.c.width = ctx.canvas.width; kf.c.height = ctx.canvas.height; kf.c.getContext('2d').drawImage(ctx.canvas, 0, 0); kf.z = { ...st.z }; }
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
   if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
     // what a name must keep clear of: the other names, every place's dot (hotspots: the big ones), and, as a soft cost, the companies' dots
-    const pdots = pl.map((k) => { const e = Lg.ents[k]; return { k, x: sx(e.x), y: sy(e.y), r: rOf(e), n: e.n }; });
+    const pdots = [];   // no city dots are drawn: what names keep clear of is the companies' dots (the crowd cost)
     const nMed = pdots.length ? pdots.map((q) => q.n).sort((x, y) => x - y)[pdots.length >> 1] : 0;
     const CELL = 24 * ts, gw = Math.ceil(W / CELL) + 1, gh = Math.ceil(H / CELL) + 1, grid = new Uint16Array(gw * gh);
     Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) grid[Math.floor(Y0 / CELL) * gw + Math.floor(X0 / CELL)]++; });
@@ -806,9 +806,9 @@ function paintGeo(ctx, P, o) {
       const ab = place(lines, cands, true, 0, { minN: Math.max(nMed, 1) }); if (ab) { ab.area = true; counts.areas++; } }
     // the places' names: those in the lens first, then the biggest; the size of a name and its weight follow the place's roles; each needs room
     // around it (OPP), keeps clear of every dot (its own excepted) and of crowds of company dots, as the other views' names do
-    const cap = Math.round((many ? 120 : zoomed ? 40 : 16) * ks), order = pl.slice().sort((a, b) => (inl(Lg.ents[b]) - inl(Lg.ents[a])) || Lg.ents[b].n - Lg.ents[a].n);
+    const cap = Math.round((many ? 120 : zoomed ? 40 : 16) * ks), nco = (k) => (Lg.coAt.get(k) || []).length, maxCo = Math.max(1, ...pl.map(nco)), order = pl.slice().sort((a, b) => (inl(Lg.ents[b]) - inl(Lg.ents[a])) || nco(b) - nco(a) || Lg.ents[b].n - Lg.ents[a].n);   // cities by their number of companies
     let named = 0;
-    for (const k of order) { if (named >= cap) break; const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), r = rOf(e), free = inl(e), hh = 6 * ts, big = Math.sqrt(e.n / Lg.nMax);
+    for (const k of order) { if (named >= cap) break; const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), r = 4 * zf, free = inl(e), hh = 6 * ts, big = Math.sqrt(nco(k) / maxCo);
       const fs = Math.round(9.5 + 4.5 * big), lines = wrapText(e.name, 20, 1).map((t) => ({ t, fs, face: big > 0.5 ? '700' : big > 0.2 ? '600' : '500', alpha: 0.78 + 0.22 * big, color: T.subInk || ink }));
       const cands = [];   // eight directions at four distances from the dot, the nearest first
       for (const gap of [3, 9, 18, 30]) { const g = r + gap * ts, d = g * 0.72;
@@ -833,8 +833,8 @@ function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, s
 function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
   if (!Lg.shapes.length && !Lg.ents.length) return L('There is no geography for this area in the file.', 'Für diesen Bereich gibt es in der Datei keine Geografie.');
   const link = lnk && lnk.to === 'geo' ? L(' The link lights companies only: the data does not place roles in cities.', ' Die Verknüpfung hebt nur Firmen hervor: die Daten ordnen Stellen keinen Städten zu.') : '';
-  return L(`${c.places.toLocaleString()} places and ${c.companies.toLocaleString()} companies shown. Places are sized by their open roles (the filters do not change them). Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
-    `${c.places.toLocaleString('de-DE')} Orte und ${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Orte sind nach ihren offenen Stellen groß (die Filter ändern sie nicht). Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
+  return L(`${c.companies.toLocaleString()} companies shown, ${c.places.toLocaleString()} cities with companies named (the bigger the name, the more companies). A company is a dot at its headquarters and at each branch, larger with open roles. Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
+    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt, ${c.places.toLocaleString('de-DE')} Orte mit Firmen benannt (je größer der Name, desto mehr Firmen). Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, größer mit offenen Stellen. Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
 function geoBar() { const el = $('atlas-geo'); if (el) el.hidden = st.mode !== 'geo'; }
 function geoStop() { if (geo.raf) cancelAnimationFrame(geo.raf); geo.raf = 0; geo.morph = false; }
 function geoSetT(t) { geo.t = Math.max(0, Math.min(1, t)); geoMarks(); draw(); }
