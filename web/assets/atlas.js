@@ -667,7 +667,7 @@ const geoHue = (q) => 240 + 170 * q, hueC = (h) => Math.round(h) / 137.508;   //
 const STATE_DE = { 'DE-BW': 'Baden-Württemberg', 'DE-BY': 'Bayern', 'DE-BE': 'Berlin', 'DE-BB': 'Brandenburg', 'DE-HB': 'Bremen', 'DE-HH': 'Hamburg', 'DE-HE': 'Hessen', 'DE-MV': 'Mecklenburg-Vorpommern', 'DE-NI': 'Niedersachsen', 'DE-NW': 'Nordrhein-Westfalen', 'DE-RP': 'Rheinland-Pfalz', 'DE-SL': 'Saarland', 'DE-SN': 'Sachsen', 'DE-ST': 'Sachsen-Anhalt', 'DE-SH': 'Schleswig-Holstein', 'DE-TH': 'Thüringen' };
 let deNames = null;
 // a shape's name: countries in German through the browser's region names, the German states from the table above
-const geoNameOf = (s) => { if (!isDe()) return s.name; if (s.kind === 'state') return STATE_DE[s.id] || s.name; try { deNames = deNames || new Intl.DisplayNames(['de'], { type: 'region' }); return deNames.of(s.id) || s.name; } catch (e) { return s.name; } };
+const geoNameOf = (s) => { if (!isDe()) return s.name; if (s.kind === 'state' || s.kind === 'district') return s.de || STATE_DE[s.id] || s.name; try { deNames = deNames || new Intl.DisplayNames(['de'], { type: 'region' }); return deNames.of(s.id) || s.name; } catch (e) { return s.name; } };
 // a company passes the field chips (any chip: its profile vector, its field text or its tags) and the Where scope (its rank in the scope order)
 const SCOPE_RANKS = { bavaria: 0, germany: 1, europe: 2, worldwide: 3 };
 function coFieldsOk(e) { if (!st.fields.size) return true; if (ix.fields.some((f, q) => st.fields.has(f) && e.f[q] >= 0.15)) return true;
@@ -687,9 +687,9 @@ function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
   const dens = shapes.filter((s) => s.roles > 0).sort((a, b) => a.roles / a.area - b.roles / b.area); dens.forEach((s, i) => { s.q = dens.length > 1 ? i / (dens.length - 1) : 0.5; });
   const places = (S.places || []).map((p) => ({ id: 'pl:' + p.id, place: true, name: p.name, n: p.n, idx: [], slug: null, c1: 0, c2: 0, gx: p.x, gy: p.y, hx: p.mx ?? (p.x + p.cx) / 2, hy: p.my ?? (p.y + p.cy) / 2, kx: p.cx, ky: p.cy, x: 0, y: 0 }));
   const byN = [...places].sort((a, b) => a.n - b.n); byN.forEach((e, i) => { e.q = byN.length > 1 ? i / (byN.length - 1) : 0.5; });
-  const cos = (S.companies || []).map((c) => { const e = coBy.get(c.slug), base = e ? { ...e } : { id: 'co:' + c.slug, slug: c.slug, name: c.slug, about: '', field: '', idx: [], vec: null, c1: 0, c2: 0, f: new Float32Array(ix.fields.length) }; const own = c.ids ? { idx: c.ids.map((id) => idIndex.get(id)).filter((i) => i !== undefined), ...(c.b ? { id: base.id + '@' + c.b, branch: c.b } : {}) } : {};
+  const cos = (S.companies || []).map((c) => { const e = coBy.get(c.slug), base = e ? { ...e } : { id: 'co:' + c.slug, slug: c.slug, name: c.slug, about: '', field: '', idx: [], vec: null, c1: 0, c2: 0, f: new Float32Array(ix.fields.length) }; const own0 = c.cc ? { cc: c.cc } : {}, own = c.ids ? { idx: c.ids.map((id) => idIndex.get(id)).filter((i) => i !== undefined), ...(c.b ? { id: base.id + '@' + c.b, branch: c.b } : {}) } : {};
     if (c.k) { own.kind = c.k; own.name = base.name + ' · ' + (c.pn || '') + (c.k === 'past' ? ' (past roles' + (c.h ? ': ' + c.h : '') + ')' : c.k === 'addr' ? ' (location on file)' : ''); if (!c.b) own.id = base.id + '@' + c.k + (c.pn || ''); own.idx = own.idx || []; }   // a branch (or the headquarters beside branches) stands for the roles listed
-    return { ...base, ...own, gx: c.x, gy: c.y, hx: c.mx ?? (c.x + c.cx) / 2, hy: c.my ?? (c.y + c.cy) / 2, kx: c.cx, ky: c.cy, x: 0, y: 0 }; });
+    return { ...base, ...own0, ...own, gx: c.x, gy: c.y, hx: c.mx ?? (c.x + c.cx) / 2, hy: c.my ?? (c.y + c.cy) / 2, kx: c.cx, ky: c.cy, x: 0, y: 0 }; });
   // companies on one and the same point (a catalogue with only a city centre for them) are spread in a sunflower spiral around it, so a crowd shows as a crowd and not as one dot
   const spot = new Map(); cos.forEach((e) => { const k = e.gx.toFixed(4) + ',' + e.gy.toFixed(4); if (!spot.has(k)) spot.set(k, []); spot.get(k).push(e); });
   spot.forEach((g) => { if (g.length < 2) return; g.forEach((e, i) => { const r = 0.0035 * Math.sqrt(i + 0.5) * Math.max(1, S.w || 1), t = i * 2.399963, dx = Math.cos(t) * r, dy = Math.sin(t) * r; e.gx += dx; e.gy += dy; e.hx += dx; e.hy += dy; e.kx += dx; e.ky += dy; }); });
@@ -738,6 +738,13 @@ const placeCos = (k) => { const Lg = lay(); return (Lg.coAt.get(k) || []).map((j
 // a place in the lens: its name, its open roles and the companies located there (the data gives no city per role: a place card, not a role list)
 function placeCardHtml(k, e) { const cs = placeCos(k); return `<li class="atlas-item" data-k="${k}" data-id="${e.id}"><div class="t">${esc(e.name)}</div><div class="m">${e.n.toLocaleString()} ${L('open roles here', 'offene Stellen hier')} · ${cs.length} ${L('companies here', 'Firmen hier')}</div>${cs.length ? `<div class="m">${cs.slice(0, 6).map((c) => esc(shortName(c.name))).join(' · ')}${cs.length > 6 ? ` · +${cs.length - 6}` : ''}</div>` : ''}</li>`; }
 // the geography's marks for this view: the places always (their counts are all their roles), the companies by the chips and the Where scope
+// the regions the geography names at the widest level (a country not listed is named by itself)
+const SUBREGION = (() => { const R = {}, add = (en, de, ccs) => ccs.split(' ').forEach((c) => { R[c] = [en, de]; });
+  add('Central Europe', 'Mitteleuropa', 'DE AT CH CZ PL SK HU LI SI'); add('Western Europe', 'Westeuropa', 'FR BE NL LU MC'); add('British Isles', 'Britische Inseln', 'GB IE');
+  add('Nordics', 'Nordeuropa', 'SE NO DK FI IS'); add('Southern Europe', 'Südeuropa', 'ES PT IT GR MT HR RS BA AL MK ME XK CY SM VA AD'); add('Eastern Europe', 'Osteuropa', 'UA BY RU MD RO BG LT LV EE');
+  add('North America', 'Nordamerika', 'US CA'); add('Latin America', 'Lateinamerika', 'MX BR AR CL CO PE UY EC VE PA CR GT DO CU BO PY');
+  add('Middle East', 'Naher Osten', 'AE SA IL QA KW BH OM JO LB TR IR IQ'); add('South Asia', 'Südasien', 'IN PK BD LK NP'); add('East Asia', 'Ostasien', 'CN JP KR TW HK MN');
+  add('Southeast Asia', 'Südostasien', 'SG MY TH VN ID PH'); add('Oceania', 'Ozeanien', 'AU NZ'); add('Africa', 'Afrika', 'ZA EG MA NG KE TN GH ET DZ SN'); return R; })();
 // which branch points the geography shows (toggles, any mix): 'now' where roles are open now, 'past' where the company had roles before, 'file' the locations on file
 // (checked addresses, branch coordinates, the company's own places), also where nothing is open. Headquarters are always shown.
 const brOk = (e) => !e.kind || st.branches.has(e.kind === 'branch' ? 'now' : e.kind === 'addr' ? 'file' : e.kind);
@@ -764,8 +771,8 @@ function paintGeo(ctx, P, o) {
     const on = cn[k] > 0, lit = on && T.multiply, a = (on ? (lit ? 0.8 : 0.6) : (T.dimA ?? 0.28)) * (w === 0 ? 0.25 : 1), r = (on ? 1.6 : 1.3) * zf, rgb = regionRgb(e.c1, on ? (lit ? 0.55 : T.pointL) : T.dimL, T.C), key = rgb.join(',') + '|' + a.toFixed(3) + '|' + r.toFixed(2);
     let b = dots.get(key); if (!b) dots.set(key, b = { rgb, a, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); });
   for (const b of dots.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = `rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})`; ctx.fill(b.p); }
-  for (const k of linked) { const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), hs = regionRgb(e.c1, T.pointL, T.C).join(','), r = (1.6 + 1.1 * Math.sqrt(cn[k] || 1)) * zf, R = r * (3 + 4 * lw[k]), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, R);
-    gd.addColorStop(0, `rgba(${hs},${0.55 * lw[k]})`); gd.addColorStop(1, `rgba(${hs},0)`); ctx.globalAlpha = 1; ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7); ctx.fill();
+  for (const k of linked) { const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), hs = regionRgb(e.c1, T.pointL, T.C).join(','), r = (1.6 + 1.1 * Math.sqrt(cn[k] || 1)) * zf, R = r * (2 + 2.5 * lw[k]), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, R);
+    gd.addColorStop(0, `rgba(${hs},${0.45 * lw[k] * Math.min(1, Math.sqrt(40 / Math.max(1, linked.length)))})`); gd.addColorStop(1, `rgba(${hs},0)`); ctx.globalAlpha = 1; ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7); ctx.fill();
     ctx.fillStyle = `rgb(${hs})`; ctx.beginPath(); ctx.arc(X0, Y0, r, 0, 7); ctx.fill(); }
   // the places: a dot sized by its open roles (1.5 to 7 px) in its density colour, like the stars; the big ones last, on top
   const rOf = (e) => (1.5 + 5.5 * (Math.sqrt(e.n) - 1) / Math.max(1e-9, Math.sqrt(Lg.nMax) - 1)) * zf, pl = [];
@@ -777,68 +784,77 @@ function paintGeo(ctx, P, o) {
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
   if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
+    // label scale: a small map (a phone) gets smaller names, rings and tags; LIM: the width (px) up to which one tag may stand for a region or a country
+    const fk = Math.max(0.6, Math.min(1.15, Math.sqrt(Math.min(W, H * 1.4) / 700))), tsl = ts * fk, LIM = Math.max(46, Math.min(150, 0.2 * Math.min(W, H)));
     // what a name must keep clear of: the other names, every place's dot (hotspots: the big ones), and, as a soft cost, the companies' dots
     const pdots = [];   // no city dots are drawn: what names keep clear of is the companies' dots (the crowd cost)
     const nMed = pdots.length ? pdots.map((q) => q.n).sort((x, y) => x - y)[pdots.length >> 1] : 0;
-    const CELL = 24 * ts, gw = Math.ceil(W / CELL) + 1, gh = Math.ceil(H / CELL) + 1, grid = new Uint16Array(gw * gh);
+    const CELL = 24 * tsl, gw = Math.ceil(W / CELL) + 1, gh = Math.ceil(H / CELL) + 1, grid = new Uint16Array(gw * gh);
     Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) grid[Math.floor(Y0 / CELL) * gw + Math.floor(X0 / CELL)]++; });
     const dotsIn = (b) => { let c = 0; for (let gy = Math.max(0, Math.floor(b[1] / CELL)); gy <= Math.min(gh - 1, Math.floor(b[3] / CELL)); gy++) for (let gx = Math.max(0, Math.floor(b[0] / CELL)); gx <= Math.min(gw - 1, Math.floor(b[2] / CELL)); gx++) c += grid[gy * gw + gx]; return c; };
     const hitDot = (b, skip, minN, m) => pdots.some((q) => q.k !== skip && q.n >= minN && !(q.x + q.r + m < b[0] || q.x - q.r - m > b[2] || q.y + q.r + m < b[1] || q.y - q.r - m > b[3]));
     // the candidates are tried in order; the best is the one on the fewest company dots (a little more for each step down the list), and none
     // that touches another name, the controls, the lens, or a place's dot (o2.minN: only the places with at least that many roles)
     const place = (lines, cands, free, pad = 0, o2 = {}) => { let best = null;
-      cands.forEach(([x, y, a], idx) => { const lg = labelLayout(ctx, lines, x, y, a, ts), b = lg.box;
+      cands.forEach(([x, y, a], idx) => { const lg = labelLayout(ctx, lines, x, y, a, tsl), b = lg.box;
         if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) return;
         if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) return; }
         if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) return;
-        if (hitDot(b, o2.skip, o2.minN || 0, 2 * ts)) return;
+        if (hitDot(b, o2.skip, o2.minN || 0, 2 * tsl)) return;
         const c = dotsIn(b); if (c > (o2.maxDots ?? 1e9)) return;
         const sc = c + 0.2 * idx; if (!best || sc < best.sc) best = { lg, b, sc }; });
       if (!best) return false; boxes.push(best.b);
-      if (o2.pill) { const b = best.b, q = 3 * ts; ctx.save(); ctx.globalAlpha = 0.9; ctx.fillStyle = paper; ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(b[0] - q, b[1] - q * 0.6, b[2] - b[0] + 2 * q, b[3] - b[1] + 1.2 * q, 5 * ts); ctx.fill(); ctx.globalAlpha = 0.45; ctx.stroke(); ctx.restore(); }
+      if (o2.pill) { const b = best.b, q = 3 * tsl; ctx.save(); ctx.globalAlpha = 0.9; ctx.fillStyle = paper; ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(b[0] - q, b[1] - q * 0.6, b[2] - b[0] + 2 * q, b[3] - b[1] + 1.2 * q, 5 * tsl); ctx.fill(); ctx.globalAlpha = 0.45; ctx.stroke(); ctx.restore(); }
       labelDraw(ctx, best.lg, halo); return best.b; };
     // the shapes' names first, the largest first (only shapes with roles); they win over the places' names, and keep off the bigger places
-    ctx.letterSpacing = (1.6 * ts) + 'px';   // area names are spaced out (and upper case): the cities' tags below are not
+    ctx.letterSpacing = (1.6 * tsl) + 'px';   // area names are spaced out (and upper case): the cities' tags below are not
     for (const s of Lg.shapes.filter((x) => x.roles > 0).sort((a, b) => b.roles - a.roles)) { if (counts.areas >= Math.round((many ? 60 : 24) * ks)) break;
-      const fs = Math.round(Math.max(10, Math.min(15, 6 + Math.sqrt(s.roles) * 0.28))), lines = wrapText(geoNameOf(s).toUpperCase(), 15, 2).map((t) => ({ t, fs, face: '500', alpha: 0.82, color: T.areaInk || ink })), dy = 1.4 * fs * ts * lines.length;
-      const lb = labelLayout(ctx, lines, 0, 0, 'center', ts).box; if (s.ar < 1.5 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // a shape too small for its name: none
+      const fs = Math.round(Math.max(10, Math.min(15, 6 + Math.sqrt(s.roles) * 0.28))), lines = wrapText(geoNameOf(s).toUpperCase(), 15, 2).map((t) => ({ t, fs, face: '500', alpha: 0.82, color: T.areaInk || ink })), dy = 1.4 * fs * tsl * lines.length;
+      const lb = labelLayout(ctx, lines, 0, 0, 'center', tsl).box; if (s.ar < 1.5 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // a shape too small for its name: none
       const cands = [[s.lx, s.ly, 'center'], [s.lx, s.ly - dy, 'center'], [s.lx, s.ly + dy, 'center']];
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (const q of s.pr) for (let j = 0; j < q.length; j += 2) { if (q[j] < x0) x0 = q[j]; if (q[j] > x1) x1 = q[j]; if (q[j + 1] < y0) y0 = q[j + 1]; if (q[j + 1] > y1) y1 = q[j + 1]; }
-      const step = Math.max(10 * ts, (lb[2] - lb[0]) / 2), lat = [];
+      const step = Math.max(10 * tsl, (lb[2] - lb[0]) / 2), lat = [];
       const tm = ctx.getTransform();   // the point is in device pixels, the path is drawn through the transform
       for (let y = y0; y <= y1; y += step * 0.6) for (let x = x0; x <= x1; x += step) if (ctx.isPointInPath(s.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd')) lat.push([x, y, 'center']);
       lat.sort((p1, p2) => Math.hypot(p1[0] - s.lx, p1[1] - s.ly) - Math.hypot(p2[0] - s.lx, p2[1] - s.ly)); cands.push(...lat.slice(0, 40));
       const ab = place(lines, cands, true, 0, { minN: Math.max(nMed, 1) }); if (ab) { ab.area = true; counts.areas++; } }
     ctx.letterSpacing = '0px';
-    // the companies as clusters: dots closer than CR px (zooming in splits them) form one cluster, drawn as a ring round it, named after its main city with the number of
-    // companies in a tag beside it, and joined to the ring by a leader line; a lone company is named only when zoomed in. The tag (rounded, with the count) is what marks a
-    // place; the countries and states above are plain upper-case letters.
-    const CR = 20 * ts, coPl = new Map(); Lg.coAt.forEach((cs, pk) => cs.forEach((ci) => coPl.set(ci, pk)));
-    const pts = []; Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) pts.push({ k, x: X0, y: Y0 }); });
-    const par = pts.map((_, i) => i), root = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; }, cellOf = new Map();
-    pts.forEach((q, i) => { const cx = Math.floor(q.x / CR), cy = Math.floor(q.y / CR); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of (cellOf.get((cx + dx) + ',' + (cy + dy)) || [])) if (Math.hypot(q.x - pts[j].x, q.y - pts[j].y) <= CR) par[root(i)] = root(j);
-      const key = cx + ',' + cy; if (!cellOf.has(key)) cellOf.set(key, []); cellOf.get(key).push(i); });
-    const groups = new Map(); pts.forEach((q, i) => { const r = root(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(q); });
-    // a chain of dots can link a whole region into one cluster: a cluster wider than 3.2 CR is split in two (2-means), again and again, until each is compact
-    const compact = [], mid = (g, key) => g.reduce((a, q) => a + q[key], 0) / g.length;
-    const split = (g, d) => { const x = mid(g, 'x'), y = mid(g, 'y'), rad = Math.max(...g.map((q) => Math.hypot(q.x - x, q.y - y)));
-      if (rad <= 3.2 * CR || g.length < 6 || d > 6) { compact.push(g); return; }
-      let a = g[0]; for (const q of g) if (Math.hypot(q.x - x, q.y - y) > Math.hypot(a.x - x, a.y - y)) a = q;
-      let b = g[0]; for (const q of g) if (Math.hypot(q.x - a.x, q.y - a.y) > Math.hypot(b.x - a.x, b.y - a.y)) b = q;
-      let ca = [a.x, a.y], cb = [b.x, b.y], A = [], B = [];
-      for (let it = 0; it < 6; it++) { A = []; B = []; for (const q of g) (Math.hypot(q.x - ca[0], q.y - ca[1]) <= Math.hypot(q.x - cb[0], q.y - cb[1]) ? A : B).push(q); if (!A.length || !B.length) break; ca = [mid(A, 'x'), mid(A, 'y')]; cb = [mid(B, 'x'), mid(B, 'y')]; }
-      if (!A.length || !B.length) { compact.push(g); return; } split(A, d + 1); split(B, d + 1); };
-    groups.forEach((g) => split(g, 0));
-    const clusters = compact.map((g) => { const x = g.reduce((a, q) => a + q.x, 0) / g.length, y = g.reduce((a, q) => a + q.y, 0) / g.length, byPl = new Map();
-      g.forEach((q) => { const pk = coPl.get(q.k); if (pk !== undefined) byPl.set(pk, (byPl.get(pk) || 0) + 1); });
-      const top = [...byPl].sort((a, b) => b[1] - a[1])[0];
-      return { n: g.length, x, y, rad: Math.max(...g.map((q) => Math.hypot(q.x - x, q.y - y))), city: top ? Lg.ents[top[0]].name : '', one: g[0].k, near: g.some((q) => inl(Lg.ents[q.k])) }; })
-      .filter((c) => c.n >= 2 ? c.city : zoomed).sort((a, b) => (b.near - a.near) || b.n - a.n);
+    // the companies as clusters, named at the level the view calls for. The world is read as regions (Central Europe, Southeast Asia); a region too wide for one tag
+    // (wider than LIM px, a fifth of the map) splits into its countries, a country that is still too wide into cities (dots closer than CR px; a long chain is split again and
+    // again). Each cluster has a ring, a tag "name · companies" and a leader line; a lone company is named only when zoomed in. Tags and rings scale with the map (fk).
+    const CR = 16 * tsl, coPl = new Map(); Lg.coAt.forEach((cs, pk) => cs.forEach((ci) => coPl.set(ci, pk)));
+    const ccOf = (k) => Lg.ents[k].cc || (coPl.has(k) ? String(Lg.ents[coPl.get(k)].id).replace(/^pl:/, '').split('|')[0] : '');
+    const pts = []; Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) pts.push({ k, x: X0, y: Y0, cc: ccOf(k) }); });
+    const mid = (g, key) => g.reduce((a, q) => a + q[key], 0) / g.length, spreadOf = (g) => { const x = mid(g, 'x'), y = mid(g, 'y'); return { x, y, rad: Math.max(...g.map((q) => Math.hypot(q.x - x, q.y - y))) }; };
+    const countryName = (cc) => { try { return new Intl.DisplayNames([isDe() ? 'de' : 'en'], { type: 'region' }).of(cc) || cc; } catch (e) { return cc; } };
+    const regionName = (cc) => (SUBREGION[cc] ? pick(SUBREGION[cc][0], SUBREGION[cc][1]) : countryName(cc));
+    const cityClusters = (members) => {   // dots closer than CR px, a cluster wider than 3.2 CR split in two (2-means), again and again
+      const par = members.map((_, i) => i), root = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; }, cellOf = new Map();
+      members.forEach((q, i) => { const cx = Math.floor(q.x / CR), cy = Math.floor(q.y / CR); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of (cellOf.get((cx + dx) + ',' + (cy + dy)) || [])) if (Math.hypot(q.x - members[j].x, q.y - members[j].y) <= CR) par[root(i)] = root(j);
+        const key = cx + ',' + cy; if (!cellOf.has(key)) cellOf.set(key, []); cellOf.get(key).push(i); });
+      const groups = new Map(); members.forEach((q, i) => { const r = root(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(q); });
+      const compact = [], split = (g, d) => { const sp = spreadOf(g);
+        if (sp.rad <= 3.2 * CR || g.length < 6 || d > 6) { compact.push(g); return; }
+        let a = g[0]; for (const q of g) if (Math.hypot(q.x - sp.x, q.y - sp.y) > Math.hypot(a.x - sp.x, a.y - sp.y)) a = q;
+        let b = g[0]; for (const q of g) if (Math.hypot(q.x - a.x, q.y - a.y) > Math.hypot(b.x - a.x, b.y - a.y)) b = q;
+        let ca = [a.x, a.y], cb = [b.x, b.y], A = [], B = [];
+        for (let it = 0; it < 6; it++) { A = []; B = []; for (const q of g) (Math.hypot(q.x - ca[0], q.y - ca[1]) <= Math.hypot(q.x - cb[0], q.y - cb[1]) ? A : B).push(q); if (!A.length || !B.length) break; ca = [mid(A, 'x'), mid(A, 'y')]; cb = [mid(B, 'x'), mid(B, 'y')]; }
+        if (!A.length || !B.length) { compact.push(g); return; } split(A, d + 1); split(B, d + 1); };
+      groups.forEach((g) => split(g, 0)); return compact; };
+    const topCity = (g, cc) => { const byPl = new Map(); g.forEach((q) => { const pk = coPl.get(q.k); if (pk !== undefined) byPl.set(pk, (byPl.get(pk) || 0) + 1); }); const top = [...byPl].sort((a, b) => b[1] - a[1])[0]; return top ? Lg.ents[top[0]].name : countryName(cc); };
+    const clusters = [], emit = (g, label) => { const sp = spreadOf(g), ds = g.map((q) => Math.hypot(q.x - sp.x, q.y - sp.y)).sort((u, v) => u - v); clusters.push({ n: g.length, x: sp.x, y: sp.y, rad: sp.rad, rr: ds[Math.floor(0.8 * (ds.length - 1))], label, one: g[0].k, near: g.some((q) => inl(Lg.ents[q.k])) }); };
+    const byKey = (list, f) => { const m = new Map(); list.forEach((q) => { const k = f(q); if (!m.has(k)) m.set(k, []); m.get(k).push(q); }); return m; };
+    for (const g of byKey(pts, (q) => (SUBREGION[q.cc] ? SUBREGION[q.cc][0] : 'c:' + q.cc)).values()) {
+      if (spreadOf(g).rad <= LIM) { emit(g, regionName(g[0].cc)); continue; }
+      for (const [cc, gc] of byKey(g, (q) => q.cc)) {
+        if (spreadOf(gc).rad <= LIM) emit(gc, countryName(cc));
+        else for (const part of cityClusters(gc)) emit(part, topCity(part, cc)); } }
+    clusters.sort((a, b) => (b.near - a.near) || b.n - a.n);
     const capC = Math.round((many ? 120 : zoomed ? 60 : 24) * ks); let named = 0;
-    for (const c of clusters) { if (named >= capC) break;
-      const solo = c.n < 2, text = solo ? Lg.ents[c.one].name : `${c.city} · ${c.n}`, big = Math.sqrt(Math.min(c.n, 40) / 40), fs = Math.round(10 + 3 * big), R = solo ? 0 : Math.min(60 * ts, Math.max(7 * ts, c.rad + 5 * ts));
+    for (const c of clusters.filter((c) => c.n >= 2 ? c.label : zoomed)) { if (named >= capC) break;   // a cluster with no name (no country known) gets no tag
+      const solo = c.n < 2, text = solo ? Lg.ents[c.one].name : `${c.label} · ${c.n.toLocaleString()}`, big = Math.sqrt(Math.min(c.n, 400) / 400), fs = Math.round(10 + 3.5 * big), R = solo ? 0 : Math.min(0.8 * LIM, Math.max(7 * tsl, c.rr + 4 * tsl));   // the ring: the typical reach of the cluster (80th percentile), not its outliers
       const lines = wrapText(text, 28, 1).map((t) => ({ t, fs, face: solo ? '500' : '600', alpha: 1, color: T.subInk || ink })), cands = [];
-      for (const gap of [5, 14, 26]) { const g = R + gap * ts, d = g * 0.72, hh = 6 * ts;
+      for (const gap of [5, 14, 26]) { const g = R + gap * tsl, d = g * 0.72, hh = 6 * tsl;
         cands.push([c.x + g, c.y, 'left'], [c.x - g, c.y, 'right'], [c.x, c.y - g - hh, 'center'], [c.x, c.y + g + hh, 'center'],
           [c.x + d, c.y - d - hh * 0.5, 'left'], [c.x - d, c.y - d - hh * 0.5, 'right'], [c.x + d, c.y + d + hh * 0.5, 'left'], [c.x - d, c.y + d + hh * 0.5, 'right']); }
       const bx = place(lines, cands, c.near, c.near ? 0 : OPP, { pill: true, maxDots: 1e9 }); if (!bx) continue;
@@ -1093,7 +1109,8 @@ function resample() {
 // does not flood the view. The weights are kept by identity (a role's row, a company's slug), so moving the lens in the target view
 // does not change them; a filter change rebuilds them (linkBuild). No open roles at all: the companies nearest by profile light up.
 const coName = (c) => shortName(coBy.has(c) ? coBy.get(c).name : c);
-const selNow = () => { const Ly = lay(); return sel && sel.ly === Ly && vis[sel.k] ? { keys: [sel.k], picked: true } : { keys: inLens(), picked: false }; };
+// no lens (the default) and no point picked: there is no selection to carry to the other view (the whole view is not a selection)
+const selNow = () => { const Ly = lay(); return sel && sel.ly === Ly && vis[sel.k] ? { keys: [sel.k], picked: true } : lensOn() ? { keys: inLens(), picked: false } : null; };
 const linkOn = () => !!$('atlas-linked') && $('atlas-linked').checked;
 // the companies nearest to the selected ones (cosine of their profile vectors; the selection's own companies left out), the top 12 weighted
 function simBuild(o) { const cen = new Float32Array(D), srcs = new Set(o.src); let m = 0;

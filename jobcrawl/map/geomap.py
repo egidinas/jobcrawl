@@ -53,7 +53,7 @@ VALID_STEP = 0.25           # cells: edges are cut this finely before the areas 
 OUT_STEP = 2.0              # cells: output edges are cut this finely before the transform (the transform bends them)
 WORLD = (-180.0, -60.0, 180.0, 80.0)
 EUROPE = (-25.0, 34.0, 45.0, 72.0)
-SOURCE = 'Natural Earth (public domain); GeoNames (CC BY 4.0)'
+SOURCE = 'Eurostat GISCO boundaries (c) EuroGeographics; Natural Earth (public domain); GeoNames (CC BY 4.0)'
 FILE = 'geo-map.json'
 
 
@@ -479,7 +479,7 @@ def scope_box(scope, shapes):
     else:
         cc = m['country']
         if 'admin1' in m:
-            found = [s for s in shapes['states'] if s['cc'] == cc and m['admin1'] in [s['name']] + s['match']]
+            found = [s for s in shapes['states'] if s['cc'] == cc and (m['admin1'] in [s['name']] + s['match'] or s.get('parent') == m['admin1'])]
             pad = 0.05
         else:
             found = [s for s in shapes['states'] + shapes['countries'] if s['cc'] == cc]
@@ -676,6 +676,189 @@ def company_points(index, keys_of, table, hq, near_km=15.0, max_branches=12, his
     return out
 
 
+def simplify_open(pts, tol):
+    """Douglas-Peucker on an open polyline; both ends are kept."""
+    n = len(pts)
+    keep = np.zeros(n, bool)
+    keep[[0, n - 1]] = True
+    stack = [(0, n - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue
+        d = pts[b] - pts[a]
+        length = math.hypot(d[0], d[1])
+        rel = pts[a + 1:b] - pts[a]
+        dist = np.abs(rel[:, 0] * d[1] - rel[:, 1] * d[0]) / length if length > 0 else np.hypot(rel[:, 0], rel[:, 1])
+        i = int(np.argmax(dist))
+        if dist[i] > tol:
+            keep[a + 1 + i] = True
+            stack += [(a, a + 1 + i), (a + 1 + i, b)]
+    return pts[keep]
+
+
+def densify_open(pts, step):
+    """An open polyline with extra points so that no edge is longer than step; both ends are kept."""
+    out = []
+    for a, b in zip(pts[:-1], pts[1:]):
+        n = max(1, int(math.ceil(math.hypot(*(b - a)) / step)))
+        out.append(a + (b - a) * np.arange(n)[:, None] / n)
+    out.append(pts[-1:])
+    return np.vstack(out)
+
+
+def weld_rings(rings, tol, step, carto, carto_m):
+    """{shape id: [(simplified ring, dense ring, cartogram positions, moderate positions)]} with the borders two shapes have in common kept as ONE line.
+    Every ring is cut into arcs at the points where the set of shapes using its edges changes (a border shared with a neighbour, a stretch with none, a
+    triple point); each distinct arc is simplified, cut finely and warped once, and both neighbours are built from that same line. Simplifying each ring
+    on its own keeps different points along a common border, and the two outlines then come apart; the warp itself moves equal points equally."""
+    Q = 1e5
+    key = lambda p: (int(round(p[0] * Q)), int(round(p[1] * Q)))
+    prep, uses = {}, {}
+    for sid, rs in rings.items():
+        for ri, r in enumerate(rs):
+            ks, pts = [], []
+            for p in r:
+                k = key(p)
+                if ks and k == ks[-1]:
+                    continue
+                ks.append(k); pts.append(p)
+            if len(ks) > 1 and ks[0] == ks[-1]:
+                ks.pop(); pts.pop()
+            if len(ks) < 3:
+                continue
+            prep[(sid, ri)] = (np.array(pts), ks)
+            for a, b in zip(ks, ks[1:] + ks[:1]):
+                uses.setdefault(frozenset((a, b)), set()).add(sid)
+    arcs, plan = {}, {}
+    for rk, (pts, ks) in prep.items():
+        n = len(ks)
+        sig = [frozenset(uses[frozenset((ks[i], ks[(i + 1) % n]))]) for i in range(n)]
+        starts = [i for i in range(n) if sig[i] != sig[i - 1]]
+        pieces = []
+        if not starts:
+            pieces.append((list(range(n)) + [0], 'c'))
+        else:
+            for j, s0 in enumerate(starts):
+                e0 = starts[(j + 1) % len(starts)]
+                idx, i = [], s0
+                while True:
+                    idx.append(i); i = (i + 1) % n
+                    if i == e0:
+                        idx.append(i); break
+                pieces.append((idx, 'o'))
+        order = []
+        for idx, kind in pieces:
+            seq = tuple(ks[i] for i in idx)
+            canon = min(seq, seq[::-1])
+            ck = (kind, canon)
+            rev = seq != canon
+            if ck not in arcs:
+                a = np.array([pts[i] for i in idx])
+                arcs[ck] = a[::-1].copy() if rev else a
+            order.append((ck, rev))
+        plan[rk] = order
+    done = {}
+    for ck, a in arcs.items():
+        if ck[0] == 'c':
+            sm = simplify(a[:-1], tol); sm = np.vstack([sm, sm[:1]])
+        else:
+            sm = simplify_open(a, tol)
+        d = densify_open(sm, step)
+        done[ck] = (sm, d, carto.apply(d), carto_m.apply(d))
+    out = {}
+    for (sid, ri), order in plan.items():
+        parts = []
+        for ck, rev in order:
+            sm, d, c, m = done[ck]
+            if rev:
+                sm, d, c, m = sm[::-1], d[::-1], c[::-1], m[::-1]
+            parts.append((sm[:-1], d[:-1], c[:-1], m[:-1]))
+        out.setdefault(sid, []).append(tuple(np.vstack([q[i] for q in parts]) for i in range(4)))
+    return out
+
+
+def in_ring(x, y, ring):
+    """Even-odd test of the points x, y (arrays) against one ring (n, 2)."""
+    x1, y1 = ring[:, 0], ring[:, 1]
+    x2, y2 = np.roll(x1, -1), np.roll(y1, -1)
+    inside = np.zeros(len(x), bool)
+    for a, b, c, d in zip(x1, y1, x2, y2):
+        cross = (b > y) != (d > y)
+        if cross.any():
+            xi = a + (y - b) * (c - a) / (d - b + 1e-30)
+            inside ^= cross & (x < xi)
+    return inside
+
+
+def shape_of_points(x, y, rings, cc_of=None, only_cc=None):
+    """The id of the shape containing each point (None: in no shape; with only_cc, only shapes of that country count)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    out = [None] * len(x)
+    for sid, rs in rings.items():
+        if only_cc is not None and cc_of[sid] != only_cc:
+            continue
+        for r in rs:
+            lo, hi = r.min(0), r.max(0)
+            m = np.where((x >= lo[0]) & (x <= hi[0]) & (y >= lo[1]) & (y <= hi[1]))[0]
+            if len(m):
+                hit = in_ring(x[m], y[m], r)
+                for i in m[hit]:
+                    if out[i] is None:
+                        out[i] = sid
+    return out
+
+
+def nearest_on_rings(px, py, rs):
+    """(distance, x, y) of the point on the rings' outlines nearest to (px, py)."""
+    best = (1e9, px, py)
+    for r in rs:
+        a, b = r, np.roll(r, -1, axis=0)
+        d = b - a
+        L = (d ** 2).sum(1)
+        t = np.clip(((px - a[:, 0]) * d[:, 0] + (py - a[:, 1]) * d[:, 1]) / np.where(L > 0, L, 1), 0, 1)
+        qx, qy = a[:, 0] + t * d[:, 0], a[:, 1] + t * d[:, 1]
+        dist = np.hypot(qx - px, qy - py)
+        i = int(dist.argmin())
+        if dist[i] < best[0]:
+            best = (float(dist[i]), float(qx[i]), float(qy[i]))
+    return best
+
+
+def land_snap(pts, ccs, rings, cc_of, tol, eps):
+    """Points that fall outside the land of their country (a coastal city a coarse outline leaves in the sea) are moved to the nearest point of that country's outline,
+    a little way inland. pts: [(x, y)], ccs: the intended country of each (None: any). Returns (points, number moved, number with no land of their country within tol)."""
+    pts = [list(p) for p in pts]
+    if not pts:
+        return pts, 0, 0
+    x = np.array([p[0] for p in pts]); y = np.array([p[1] for p in pts])
+    own = shape_of_points(x, y, rings)                       # on land of any country
+    moved = lost = 0
+    for i, sid in enumerate(own):
+        cc = ccs[i]
+        if sid is not None and (cc is None or cc_of[sid] == cc or not any(v == cc for v in cc_of.values())):
+            continue
+        cands = {k: r for k, r in rings.items() if cc is not None and cc_of[k] == cc} or ({k: r for k, r in rings.items()} if cc is None else {})
+        if not cands:
+            continue
+        if cc is not None and sid is not None and shape_of_points([x[i]], [y[i]], cands)[0] is not None:
+            continue
+        best = (1e9, 0, 0)
+        for k, rs in cands.items():
+            lo = np.min([r.min(0) for r in rs], 0) - tol; hi = np.max([r.max(0) for r in rs], 0) + tol
+            if not (lo[0] <= x[i] <= hi[0] and lo[1] <= y[i] <= hi[1]):
+                continue
+            c = nearest_on_rings(x[i], y[i], rs)
+            if c[0] < best[0]:
+                best = c
+        if best[0] <= tol:
+            d = math.hypot(best[1] - x[i], best[2] - y[i]) or 1.0
+            pts[i] = [best[1] + (best[1] - x[i]) / d * eps, best[2] + (best[2] - y[i]) / d * eps]; moved += 1
+        elif sid is None:
+            lost += 1
+    return pts, moved, lost
+
+
 def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     """The map of one scope: shapes, places and companies with their true and cartogram positions, and the validation."""
     frame = Frame(box, kx)
@@ -689,6 +872,9 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     log(f'scope {scope["id"]}: extent {tuple(round(v, 2) for v in box)}, {len(rings)} shapes')
     if not rings:
         raise GeoMapError(f'scope {scope["id"]!r}: no shape in the extent')
+    cc_of = {sid: names[sid]['cc'] for sid in rings}
+    tol = 0.8 / frame.s                                     # 0.8 degrees: a city this close to its country's coast, in a coarse outline's sea, is moved ashore
+    eps = 0.004 / frame.s
     inside_places = []
     for rec in table.values():
         if rec['ll'] is None:
@@ -696,6 +882,12 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
         x, y = frame.xy([rec['ll'][1]], [rec['ll'][0]])[0]
         if 0 <= x <= frame.w and 0 <= y <= frame.h:
             inside_places.append((rec, x, y))
+    snapped, n_moved, n_lost = land_snap([(x, y) for _r, x, y in inside_places], [r['cc'] for r, _x, _y in inside_places], rings, cc_of, tol, eps)
+    inside_places = [(rec, p[0], p[1]) for (rec, _x, _y), p in zip(inside_places, snapped)]
+    log(f'  places on land: {n_moved} moved ashore, {n_lost} with no land of their country nearby')
+    place_shape = shape_of_points([x for _r, x, _y in inside_places], [y for _r, _x, y in inside_places], rings)        # the shape each place lies in (a district, a state, a country)
+    for (rec, _x, _y), sid in zip(inside_places, place_shape):
+        rec['shape'] = sid
     points = np.array([[x, y, rec['share']] for rec, x, y in inside_places]).reshape(-1, 3)
     km_per_cell = 111.2 * frame.s / GRID                 # a plane unit is about one degree of latitude
     roles_in = {}
@@ -713,6 +905,14 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
         x, y = frame.xy([lon], [lat])[0]
         if 0 <= x <= frame.w and 0 <= y <= frame.h:
             comp_in.append((slug, x, y, ids, key, meta))
+    if comp_in:
+        ccs = [(k.split('|')[0] if k else (m.get('cc') or None)) for _s, _x, _y, _i, k, m in comp_in]
+        snapped, n_moved, n_lost = land_snap([(x, y) for _s, x, y, _i, _k, _m in comp_in], ccs, rings, cc_of, tol, eps)
+        comp_in = [(c[0], p[0], p[1]) + tuple(c[3:]) for c, p in zip(comp_in, snapped)]
+        comp_cc = [cc_of.get(sid) for sid in shape_of_points([p[0] for p in snapped], [p[1] for p in snapped], rings)]       # the country each point lies in
+        log(f'  companies on land: {n_moved} moved ashore, {n_lost} with no land nearby')
+    else:
+        comp_cc = []
     # validation: each shape's area after the transform (edges cut finely first), against its share of the roles inside the extent
     cell = 1.0 / GRID
     area = {sid: sum(poly_area(carto.apply(densify(r, VALID_STEP * cell))) for r in rs) for sid, rs in rings.items()}
@@ -729,22 +929,23 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
             f'moderate {area_m[sid] / total_area_m:7.2%}  ({names[sid]["name"]})')
     # the output: simplified rings, cut finely (the transform bends them), with their true and cartogram positions
     out_shapes = []
-    for sid, rs in rings.items():
+    welded = weld_rings(rings, SIMPLIFY, OUT_STEP * cell, carto, carto_m)         # borders in common stay one line, before and after the warp
+    for sid in rings:
         out_rings = []
-        for r in rs:
-            s = simplify(r, SIMPLIFY)
-            if len(s) < 3 or poly_area(s) < RING_MIN * frame.w * frame.h:
+        for sm, d, c, m in welded.get(sid, []):
+            if len(sm) < 3 or poly_area(sm) < RING_MIN * frame.w * frame.h:
                 continue
-            s = densify(s, OUT_STEP * cell)
-            c = carto.apply(s)
-            m = carto_m.apply(s)
             out_rings.append([[round(float(a), 4), round(float(b), 4), round(float(c_[0]), 4), round(float(c_[1]), 4),
                                round(float(m_[0]), 4), round(float(m_[1]), 4)]
-                              for (a, b), c_, m_ in zip(s, c, m)])
+                              for (a, b), c_, m_ in zip(d, c, m)])
         if out_rings:
             sh = names[sid]
-            out_shapes.append({'id': sid, 'name': sh['name'], 'kind': sh['kind'], 'roles': int(round(shape_roles.get(sid, 0.0))),
-                               'rings': out_rings})
+            row = {'id': sid, 'name': sh['name'], 'kind': sh['kind'], 'roles': int(round(roles_in.get(sid, 0.0))), 'rings': out_rings}
+            if sh.get('de'):
+                row['de'] = sh['de']
+            if sh.get('parent'):
+                row['parent'] = sh['parent']
+            out_shapes.append(row)
     out_places = []
     if inside_places:
         pos = carto.apply([[x, y] for _rec, x, y in inside_places])
@@ -756,9 +957,11 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     if comp_in:
         pos = carto.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
         pos_m = carto_m.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
-        for (slug, x, y, ids, key, meta), (cx, cy), (mx, my) in zip(comp_in, pos, pos_m):
+        for (slug, x, y, ids, key, meta), (cx, cy), (mx, my), cc in zip(comp_in, pos, pos_m, comp_cc):
             row = {'slug': slug, 'x': round(x, 4), 'y': round(y, 4), 'cx': round(float(cx), 4), 'cy': round(float(cy), 4),
                    'mx': round(float(mx), 4), 'my': round(float(my), 4)}
+            if cc:
+                row['cc'] = cc
             if ids is not None:
                 row['ids'] = ids                                              # the roles this point stands for (a branch, or the headquarters beside branches)
             if key:
@@ -822,8 +1025,9 @@ def build(site, profile, vectors, companies=None, cache=None, log=print, history
     scopes = profile['scopes'] if profile else DEFAULT_SCOPES
     out = {'version': 1, 'source': SOURCE, 'scopes': {}}
     for scope in scopes:
-        box, kx = scope_box(scope, shapes)
-        out['scopes'][scope['id']] = scope_map(scope, box, kx, shapes, table, comp, shape_share, log)
+        sh = geo_base.load_scope(cache, scope, 'DE', log)                  # the outlines at this scope's level of detail (the world 1:20M, Europe 1:10M, Germany 1:3M, Bavaria's districts 1:3M)
+        box, kx = scope_box(scope, sh)
+        out['scopes'][scope['id']] = scope_map(scope, box, kx, sh, table, comp, shape_share, log)
     os.makedirs(vectors, exist_ok=True)
     path = os.path.join(vectors, FILE)
     with open(path, 'w', encoding='utf-8') as fh:

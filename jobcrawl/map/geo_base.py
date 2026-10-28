@@ -137,3 +137,90 @@ def snap_borders(countries, states, tol=0.3, step=0.01):
                 if d[j] <= tol and d[j] > 0:
                     ring[k] = (float(q[j, 0]), float(q[j, 1])); moved += 1; dist += float(d[j])
     return moved, (dist / moved if moved else 0.0)
+
+
+# ---- Eurostat GISCO outlines, one level of detail per scope ------------------------------------------------------------------------------------------
+# The countries and the NUTS regions come from one family of files, so their borders meet (no gaps between a state and its neighbour country), and every scale is
+# available: the world is drawn from the 1:20M countries, Europe from 1:10M with the German Laender, Germany from 1:3M with the Laender, and Bavaria from 1:3M with
+# its 96 districts (71 Landkreise and the independent cities, NUTS 3) between the other Laender and the neighbouring countries. (c) EuroGeographics for the boundaries.
+GISCO = 'https://gisco-services.ec.europa.eu/distribution/v2/'
+GISCO_ISO = {'EL': 'GR', 'UK': 'GB'}                     # GISCO's country codes that differ from ISO 3166-1 alpha-2
+
+
+def _fetch_url(cache, url, log):
+    path = os.path.join(cache, os.path.basename(url))
+    if not os.path.exists(path):
+        os.makedirs(cache, exist_ok=True)
+        log(f'downloading {os.path.basename(url)} ...')
+        req = urllib.request.Request(url, headers={'User-Agent': 'jobcrawl-geomap'})
+        with urllib.request.urlopen(req, timeout=120) as r, open(path + '.part', 'wb') as out:
+            out.write(r.read())
+        os.replace(path + '.part', path)
+    return path
+
+
+def detail_of(scope):
+    """The level of detail of a profile scope: 'world' (any), 'europe' (continent EU), 'states' (a country, with its states), 'districts' (a state, with its districts)."""
+    m = scope['match']
+    if 'any' in m:
+        return 'world'
+    if 'continent' in m:
+        return 'europe'
+    return 'districts' if 'admin1' in m else 'states'
+
+
+def _district_name(n):
+    n = (n or '').strip()
+    for suffix, fmt in ((', Landkreis', 'LK {}'), (', Kreisfreie Stadt', '{} (city)'), (', Stadtkreis', '{} (city)'), (', Landeshauptstadt', '{} (city)'), (', Stadt', '{} (city)')):
+        if n.endswith(suffix):
+            return fmt.format(n[:-len(suffix)])
+    return n
+
+
+def load_scope(cache, scope, state_country='DE', log=print):
+    """The shapes of one scope at its level of detail, as geo_base.load returns them ({'countries', 'states', 'unmatched'}); the 'states' of a 'districts' scope are the
+    districts of the scope's state (kind 'district', parent: the state) plus the other states as context (kind 'state')."""
+    level = detail_of(scope)
+    res = {'world': ('20M', '20M', ()), 'europe': ('10M', '10M', (state_country,)), 'states': ('03M', '03M', (state_country,)), 'districts': ('03M', '03M', (state_country,))}[level]
+    cres, nres, stc = res
+    with open(_fetch_url(cache, f'{GISCO}countries/geojson/CNTR_RG_{cres}_2020_4326.geojson', log), encoding='utf-8') as fh:
+        countries = []
+        for f in json.load(fh)['features']:
+            p = f['properties']; cc = GISCO_ISO.get(p.get('CNTR_ID'), p.get('CNTR_ID'))
+            rings = _rings(f['geometry'])
+            if cc and cc not in stc and rings:
+                countries.append({'id': cc, 'cc': cc, 'name': p.get('NAME_ENGL') or cc, 'match': [], 'kind': 'country', 'rings': rings})
+    states = []
+    if stc:
+        en_of = {}                                         # the German name of a state (NUTS) -> its English name, from the Natural Earth state names
+        with open(_fetch(cache, STATES_FILE, log), encoding='utf-8') as fh:
+            for f in json.load(fh)['features']:
+                q = f['properties']
+                if q.get('iso_a2') in stc and q.get('name_de') and (q.get('name_en') or q.get('name')):
+                    en_of[q['name_de']] = q.get('name_en') or q['name']
+        with open(_fetch_url(cache, f'{GISCO}nuts/geojson/NUTS_RG_{nres}_2021_4326_LEVL_1.geojson', log), encoding='utf-8') as fh:
+            lands = [f for f in json.load(fh)['features'] if f['properties'].get('CNTR_CODE') in stc]
+        keep = None
+        if level == 'districts':
+            want = scope['match'].get('admin1')
+            keep = next((f['properties']['NUTS_ID'] for f in lands if want in (en_of.get(f['properties'].get('NAME_LATN')), f['properties'].get('NAME_LATN'), f['properties'].get('NUTS_NAME'))), None)
+        for f in lands:
+            p = f['properties']
+            if keep and p['NUTS_ID'] == keep:
+                continue                                   # the scope's own state is drawn as its districts
+            rings = _rings(f['geometry'])
+            if rings:
+                states.append({'id': p['NUTS_ID'], 'cc': p['CNTR_CODE'], 'name': en_of.get(p.get('NAME_LATN')) or p.get('NAME_LATN'), 'de': p.get('NAME_LATN'),
+                               'match': [n for n in (p.get('NAME_LATN'), p.get('NUTS_NAME')) if n], 'kind': 'state', 'rings': rings})
+        if keep:
+            with open(_fetch_url(cache, f'{GISCO}nuts/geojson/NUTS_RG_{nres}_2021_4326_LEVL_3.geojson', log), encoding='utf-8') as fh:
+                for f in json.load(fh)['features']:
+                    p = f['properties']
+                    if p['NUTS_ID'].startswith(keep):
+                        rings = _rings(f['geometry'])
+                        if rings:
+                            nm = _district_name(p.get('NAME_LATN'))
+                            states.append({'id': p['NUTS_ID'], 'cc': p['CNTR_CODE'], 'name': nm, 'de': nm, 'match': [p.get('NAME_LATN') or nm], 'kind': 'district',
+                                           'parent': scope['match'].get('admin1'), 'rings': rings})
+    log(f'shapes for scope {scope["id"]} ({level}, countries 1:{cres}): {len(countries)} countries, {len(states)} states/districts')
+    return {'countries': countries, 'states': states, 'unmatched': []}
