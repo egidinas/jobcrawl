@@ -245,6 +245,63 @@ def embed_all(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=
 
 
 
+def align_jobonly(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=4, log=print):
+    """Makes match-vec-jobonly.* hold exactly the rows of match-vec.* in the same order (the browser and the neighbour lists index both by row).
+    Rows the job-only file lacks are embedded from the role's work text when the role is on the board; any other gets a zero row, which
+    neighbours/atlas treat as having no vector. Rows the job-only file has but match-vec does not are dropped. Returns the number of rows added."""
+    import numpy as np
+    bin_path, json_path = vector_paths(vectors)
+    bin_jo, json_jo = vector_paths(vectors, variant='jobonly')
+    if not (os.path.exists(json_jo) and os.path.exists(bin_jo)):
+        return 0
+    with open(json_path, encoding='utf-8') as fh:
+        vj = json.load(fh)
+    with open(json_jo, encoding='utf-8') as fh:
+        vo = json.load(fh)
+    if vo['ids'] == vj['ids']:
+        return 0
+    dim = vo['dim']
+    old = np.frombuffer(open(bin_jo, 'rb').read(), np.int8).reshape(len(vo['ids']), dim)
+    where = {rid: i for i, rid in enumerate(vo['ids'])}
+    missing = [rid for rid in vj['ids'] if rid not in where]
+    bodies = {r[0]: (r, b) for r, _, b, _ in board_texts(site) if len(b) >= MIN_CHARS}
+    todo = [rid for rid in missing if rid in bodies]
+    fresh = {}
+    if todo:
+        texts = [full_text(clean_title(bodies[rid][0][1]), role_jobonly_text(bodies[rid][0], bodies[rid][1], max_body_chars=text_chars), prompt) for rid in todo]
+        mt = max(max_tokens, vo.get('max_tokens', 384))
+        if text_chars == 0:
+            try:
+                from tokenizers import Tokenizer
+                tok_path = os.path.join(model_dir, 'tokenizer.json')
+                if os.path.exists(tok_path):
+                    tok = Tokenizer.from_file(tok_path)
+                    mt = max([mt] + [len(tok.encode(t).ids) for t in texts])
+            except Exception:
+                pass
+        E = np.asarray(Store(os.path.join(vectors, '.embed-cache.npz'), model_dir, threads).get(texts, mt, 'job-only rows to realign', images=None, log=log), np.float32)
+        M = unit_rows(E[:, :dim] - np.array(vo['mean'], np.float32))
+        if vo.get('lang_dirs'):
+            M = langfix.project(M, np.array(vo['lang_dirs'], np.float32))
+        q = np.clip(np.round(M * 127), -127, 127).astype(np.int8)
+        fresh = {rid: q[i] for i, rid in enumerate(todo)}
+        vo['max_tokens'] = mt
+    out = np.zeros((len(vj['ids']), dim), np.int8)
+    for i, rid in enumerate(vj['ids']):
+        if rid in where:
+            out[i] = old[where[rid]]
+        elif rid in fresh:
+            out[i] = fresh[rid]
+    with open(bin_jo, 'wb') as fh:
+        fh.write(out.tobytes())
+    dropped = len(set(where) - set(vj['ids']))
+    vo['ids'] = list(vj['ids'])
+    with open(json_jo, 'w', encoding='utf-8') as fh:
+        json.dump(vo, fh, separators=(',', ':'))
+    log(f'job-only vectors realigned to match-vec: {len(todo)} embedded, {len(missing) - len(todo)} left empty, {dropped} dropped')
+    return len(todo)
+
+
 def embed_missing(site, prompt, text_chars, max_tokens, model_dir, vectors, threads=4, log=print):
     """Adds vectors for the board roles that have none; the stored rows, mean and directions stay as they are."""
     import numpy as np
@@ -253,6 +310,7 @@ def embed_missing(site, prompt, text_chars, max_tokens, model_dir, vectors, thre
         raise RoleVectorError(f'no vectors in {vectors} yet: run jobcrawl embed without --only-missing first')
     with open(json_path, encoding='utf-8') as fh:
         vj = json.load(fh)
+    align_jobonly(site, prompt, text_chars, max_tokens, model_dir, vectors, threads, log)       # the two files must list the same roles in the same order
     have = set(vj['ids']); dim = vj['dim']; mean = np.array(vj['mean'], np.float32)
     texts, keep_roles, images, todo = [], [], [], 0
     base_assets = os.path.join(site, 'assets', 'company')

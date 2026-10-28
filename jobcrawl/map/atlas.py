@@ -63,8 +63,26 @@ class MapError(ValueError):
     pass
 
 
-def load(site, vectors, use_jobonly=True):
-    """(board rows that have a vector, their normalised vectors, description entries)."""
+def retired_rows(traces, vj, on_board):
+    """Index rows [id, title, company, url, slug] and desc entries ({sc, tg, off}) for the roles that have a vector but are no longer on the
+    board, from role-traces.json (jobcrawl traces). Their bit sets are decoded over the traces' own lists. Empty without the traces."""
+    path = os.path.join(traces or '', 'role-traces.json')
+    if not traces or not os.path.exists(path):
+        return [], {}
+    with open(path, encoding='utf-8') as fh:
+        t = json.load(fh)
+    scopes, fields = t['conv']['scopes'], t['conv']['fields']
+    have = set(vj['ids']); rows, extra = [], {}
+    for k, rid in enumerate(t['ids']):
+        if rid in have and rid not in on_board:
+            rows.append([rid, t['t'][k], t['c'][k], t['u'][k], t['cs'][k]])
+            extra[rid] = {'sc': [n for b, n in enumerate(scopes) if t['sc'][k] >> b & 1], 'tg': [n for b, n in enumerate(fields) if t['tg'][k] >> b & 1], 'off': True}
+    return rows, extra
+
+
+def load(site, vectors, use_jobonly=True, traces=None):
+    """(board rows that have a vector, their normalised vectors, description entries). With traces (a jobcrawl traces folder), the roles that
+    left the board follow the board's, marked {'off': True} in the entries: they stay in the map as context, shaping it, and are not selectable."""
     jobonly_json = os.path.join(vectors, 'match-vec-jobonly.json')
     jobonly_bin = os.path.join(vectors, 'match-vec-jobonly.bin')
     if use_jobonly and os.path.exists(jobonly_json) and os.path.exists(jobonly_bin):
@@ -82,6 +100,10 @@ def load(site, vectors, use_jobonly=True):
     index, desc = read_site(site)
     row = {rid: k for k, rid in enumerate(vj['ids'])}
     keep = [r for r in index if r[0] in row]
+    old, extra = retired_rows(traces, vj, {r[0] for r in index})
+    old = [r for r in old if np.abs(V[row[r[0]]]).sum() > 0]               # a zero row is a role that never had a vector
+    desc = dict(desc, **{r[0]: extra[r[0]] for r in old})
+    keep = keep + old
     X = V[[row[r[0]] for r in keep]]
     return keep, X, desc, vj
 
@@ -239,10 +261,10 @@ def relax(Y, dmin, even, iters=60):
     return 0.03 + 0.94 * (Y - lo) / np.maximum(hi - lo, 1e-9)
 
 
-def layout(X, n_neighbors, min_dist, even, seed=1):
+def layout(X, n_neighbors, min_dist, even, seed=1, init=None):
     """UMAP with n_neighbors (map.layout_k for roles: more than the grouping graph, the global arrangement improves), then relax()."""
     import umap
-    Y = umap.UMAP(n_neighbors=min(n_neighbors, len(X) - 1), min_dist=min_dist, metric='cosine', random_state=seed, init='spectral').fit_transform(X)
+    Y = umap.UMAP(n_neighbors=min(n_neighbors, len(X) - 1), min_dist=min_dist, metric='cosine', random_state=seed, init='spectral' if init is None else init).fit_transform(X)
     return relax(Y, dmin=0.6 / math.sqrt(len(Y)), even=even)
 
 
@@ -262,7 +284,41 @@ def leiden_target(idx, sim, target, min_size):
     return best
 
 
-def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print, base_coords=None):
+def previous_layout(vectors):
+    """The layout already built in vectors (parsed atlas-layout.json), or None."""
+    try:
+        with open(os.path.join(vectors, 'atlas-layout.json'), encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def previous_positions(layout):
+    """{role id: (x, y)} of a previous layout, or {} (the next layout starts from these so a rebuild reshapes the map slightly
+    instead of rotating or mirroring it)."""
+    try:
+        r = layout['roles']
+        return {i: (x, y) for i, x, y in zip(r['ids'], r['x'], r['y'])}
+    except (TypeError, KeyError):
+        return {}
+
+
+def start_from(prev, ids, X, k=8):
+    """UMAP start positions for the rows (ids, X): the previous place of a role that had one, else the mean of its k most similar placed roles. None when
+    fewer than half the roles had a place before (then the usual spectral start is better)."""
+    have = np.array([i in prev for i in ids])
+    if have.sum() < len(ids) / 2:
+        return None
+    Y = np.zeros((len(ids), 2), np.float32)
+    Y[have] = [prev[i] for i, h in zip(ids, have) if h]
+    P = X[have]
+    for a in np.where(~have)[0]:
+        s = P @ X[a]; top = np.argpartition(-s, min(k, len(s) - 1))[:k]
+        Y[a] = Y[have][top].mean(0)
+    return Y
+
+
+def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print, base_coords=None, prev=None):
     k = cfg['k']
     idx0, sim0 = knn(X, k)
     rep_of = representatives(employer, relabel_small(leiden(idx0, sim0, EMPLOYER_RESOLUTION), idx0, EMPLOYER_MIN_GROUP), X, cfg['reps'])      # neighbourhoods of all roles, only to pick representatives
@@ -280,7 +336,8 @@ def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print, base_c
         YR = 0.03 + 0.94 * (YR - lo) / np.maximum(hi - lo, 1e-9)
         YR = relax(YR, dmin=0.6 / math.sqrt(len(YR)), even=cfg['even'])
     else:
-        YR = layout(XR, cfg['layout_k'], cfg['min_dist'], cfg['even'])
+        init = start_from(prev, [keep[i][0] for i in reps], XR) if prev else None
+        YR = layout(XR, cfg['layout_k'], cfg['min_dist'], cfg['even'], init=init)
     tr = [titles[i] for i in reps]; fr = [fields_of[i] for i in reps]
     rng = np.random.default_rng(3); jit = 0.25 / math.sqrt(len(reps))
     ri = np.array([pos_in[int(rep_of[i])] for i in range(len(keep))])
@@ -470,7 +527,8 @@ def prepare(site, vectors, profile):
     X is the role vectors without the employer signature (the worldwide map), X0 the language-neutral ones (the company centres)."""
     m = profile['map']
     cfg = {'k': m['k'], 'layout_k': m['layout_k'], 'min_dist': m['min_dist'], 'even': m['even'], 'reps': m['reps'], 'signature': m['signature']}
-    keep, X, desc, vj = load(site, vectors)
+    keep, X, desc, vj = load(site, vectors, traces=os.environ.get('JOBCRAWL_TRACES'))
+    cfg['n_live'] = sum(1 for r in keep if not (desc.get(r[0]) or {}).get('off'))
     if len(keep) <= cfg['k'] + 1:
         raise MapError(f'{len(keep)} roles with vectors: a map needs more than {cfg["k"] + 1}')
     prefs_file = os.path.join(site, 'match', 'match-prefs.json')
@@ -527,14 +585,121 @@ def name_companies(companies, names):
             r['label'] = nm
 
 
-def build(site, vectors, profile, log=print):
+def previous_namer(prev):
+    """A namer without any model: names a group after the group of the previous layout (prev, the parsed atlas-layout.json) that holds most
+    of its roles, by the whole membership and not only the 25 sample ids of the labels file. When several new groups descend from one old group
+    (it split), the largest keeps the name and the others get it with their own distinguishing board field or key words added ("Systems
+    Engineering . Thermal"); the German name takes the same field or words. A group with less than 30 % of its roles in a named old group stays unnamed."""
+    old = {}
+    for scope, R in [('worldwide', (prev or {}).get('roles'))] + list(((prev or {}).get('scopes') or {}).items()):
+        if not R:
+            continue
+        for kind, key in (('regions', 'c1'), ('hoods', 'c2')):
+            mem = collections.defaultdict(set)
+            for i, g in zip(R['ids'], R[key]):
+                mem[g].add(i)
+            old[(scope, kind)] = [(mem.get(g, set()), grp['label']) for g, grp in enumerate(R[kind]) if grp.get('label')]
+
+    def namer(requests):
+        used, out, cand = collections.defaultdict(set), {}, []
+        for r in requests:
+            used[(r['scope'], r['kind'])] |= r.get('taken', set())
+        for r in requests:
+            best, share, ov = None, 0.0, 0
+            for m, lb in old.get((r['scope'], r['kind']), []):
+                n = len(r['members'] & m)
+                if n / max(1, len(r['members'])) > share:
+                    best, share, ov = lb, n / max(1, len(r['members'])), n
+            if best and share >= 0.3:
+                cand.append((ov, r, best))
+        taken = set()
+        for ov, r, lb in sorted(cand, key=lambda c: -c[0]):                 # the group with most roles from an old group keeps its name as it is
+            scope = (r['scope'], r['kind'])
+            if tuple(lb) not in taken and lb[0].lower() not in used[scope]:
+                taken.add(tuple(lb)); out[r['key']] = tuple(lb); used[scope].add(lb[0].lower()); continue
+            base = [x.split(' · ')[0] for x in lb]
+            extra = [x for x in r['fields'] + [w.title() for w in r['words']] if x.lower() not in base[0].lower()]
+            for take in (1, 2, 3):
+                if not extra:
+                    break
+                cand_name = tuple(f'{b} · {" & ".join(extra[:take])}' for b in base)
+                if cand_name[0].lower() not in used[scope]:
+                    out[r['key']] = cand_name; used[scope].add(cand_name[0].lower()); break
+        for r in requests:                                                  # a topic new since the last map: named by what sets it apart
+            if r['key'] in out:
+                continue
+            parts = []
+            for x in r['fields'][:1] + [w.title() for w in r['words']]:
+                if x.lower() not in [p.lower() for p in parts] and not any(x.lower() in p.lower() or p.lower() in x.lower() for p in parts):
+                    parts.append(x)
+            parts = parts[:3]
+            for take in (len(parts), 2, 3, 1):
+                nm = ' & '.join(parts[:take]) if parts else ''
+                if nm and nm.lower() not in used[(r['scope'], r['kind'])]:
+                    out[r['key']] = (nm, nm); used[(r['scope'], r['kind'])].add(nm.lower()); break
+        return out
+    namer.batch = None
+    namer.auto = True
+    return namer
+
+
+def name_missing(out, lab, lab_path, titles_of, namer, log=print, batch=12):
+    """Names the groups apply_labels left without a name. namer(requests) -> {key: (en, de)}; a request is {key, scope, kind, words, fields, titles}
+    (titles: up to 30 distinct member titles; members: the ids of all members; the namer decides what to use). The names go into the labels file with 25 member ids as the sample, so
+    the next rebuild carries them over like the hand-written ones; groups the namer does not answer keep their word list. Returns the number named."""
+    if not (lab and namer and lab_path):
+        return 0
+    todo = []
+    for scope, R in [('worldwide', out['roles'])] + list((out.get('scopes') or {}).items()):
+        for kind, key in (('regions', 'c1'), ('hoods', 'c2')):
+            taken = {grp['label'][0].lower() for grp in R[kind] if grp.get('label')}       # names the namer must not repeat in this map
+            mem = collections.defaultdict(list)
+            for i, g in zip(R['ids'], R[key]):
+                mem[g].append(i)
+            for g, grp in enumerate(R[kind]):
+                if grp.get('label') or not mem.get(g):
+                    continue
+                ids = mem[g]; seen, titles = set(), []
+                for i in ids:
+                    t = titles_of.get(i)
+                    if t and t.lower() not in seen:
+                        seen.add(t.lower()); titles.append(t)
+                    if len(titles) == 30:
+                        break
+                todo.append({'key': f'{scope}/{kind}/{g}', 'scope': scope, 'kind': kind, 'words': grp.get('words') or [], 'fields': grp.get('fields') or [],
+                             'titles': titles, 'members': set(ids), 'taken': taken, 'sample': ids[:25]})
+    if not todo:
+        return 0
+    answers = {}
+    step = getattr(namer, 'batch', batch) or len(todo)                      # a namer that needs to see all groups at once sets .batch = None
+    for a in range(0, len(todo), step):
+        try:
+            answers.update(namer([{k: v for k, v in t.items() if k != 'sample'} for t in todo[a:a + step]]) or {})
+        except Exception as e:
+            log(f'  naming: a request failed ({type(e).__name__}: {e}); those groups keep their word list')
+    added = 0
+    for t in todo:
+        nm = answers.get(t['key'])
+        if nm and all(isinstance(x, str) and 2 <= len(x.strip()) <= 70 for x in nm):
+            lab.setdefault('roles', {}).setdefault(t['scope'], {}).setdefault(t['kind'], []).append(dict({'en': nm[0].strip(), 'de': nm[1].strip(), 'sample': t['sample']}, **({'auto': True} if getattr(namer, 'auto', False) else {})))
+            added += 1
+    if added:
+        with open(lab_path, 'w', encoding='utf-8') as fh:
+            json.dump(lab, fh, ensure_ascii=False, indent=2)
+        apply_labels(out, lab)
+    log(f'  naming: {added} of {len(todo)} unnamed groups named')
+    return added
+
+
+def build(site, vectors, profile, log=print, namer=None):
     """Builds the layout and writes VECTORS/atlas-layout.json. Returns the file's path."""
     cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of = prepare(site, vectors, profile)
     m = profile['map']
     any_scopes = {s['id'] for s in profile['scopes'] if (s.get('match') or {}).get('any')}
-    roles = role_map(keep, X, employer, titles, fields_of, prefs, cfg, log)
+    prev_layout = previous_layout(vectors)
+    roles = role_map(keep, X, employer, titles, fields_of, prefs, cfg, log, prev=previous_positions(prev_layout))
     global_coords = np.column_stack([roles['x'], roles['y']])
-    log(f'worldwide: {len(keep)} roles, {len(roles["regions"])} regions')
+    log(f'worldwide: {len(keep)} roles ({len(keep) - cfg["n_live"]} no longer on the board, kept as context), {len(roles["regions"])} regions')
     maps = {}
     for s in reversed(profile['scopes']):                           # widest first, as the reference's SCOPES list
         sid = s['id']
@@ -547,12 +712,19 @@ def build(site, vectors, profile, log=print):
         maps[sid] = role_map_excerpt(sel, roles, cfg)
     # companies: every catalogue company, from its own vector (companies.py), combined with the centre of its open roles where it has any
     lab = load_labels(profile, log)
-    companies, names = companies_layout(vectors, profile, keep, X0, titles, fields_of, prefs, cfg, lab, log)
+    nl = cfg['n_live']                                              # the roles that left the board shape the role map, not the companies' centres or counts
+    companies, names = companies_layout(vectors, profile, keep[:nl], X0[:nl], titles[:nl], fields_of[:nl], prefs, cfg, lab, log)
     out = {'version': 2, 'k': cfg['k'], 'layout_k': cfg['layout_k'], 'scopes': maps, 'resolution': m['resolution'], 'language_removed': ['de', 'fr', 'es'],
            'reps_per_company_and_group': cfg['reps'], 'roles': roles, 'companies': companies}
     named = apply_labels(out, lab)
     name_companies(companies, names)
     log(f'  {named} groups named from the labels file')
+    if lab:
+        lab_path, titles_of = os.path.join(profile['_dir'], m['labels_file']), {r[0]: r[1] for r in keep}
+        name_missing(out, lab, lab_path, titles_of, previous_namer(prev_layout), log)
+        if namer:
+            name_missing(out, lab, lab_path, titles_of, namer, log)
+        name_companies(companies, names)                # apply_labels ran again: the company regions' names from the company graph are set again
     path = os.path.join(vectors, 'atlas-layout.json')
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
@@ -569,7 +741,7 @@ def companies_only(site, vectors, profile, log=print):
         out = json.load(fh)
     cfg, keep, X, X0, desc, prefs, employer, titles, fields_of, scope_of = prepare(site, vectors, profile)
     # the company centres use the roles the kept roles section has (the board may have moved on since): the same roles on both sides
-    ids = set(out['roles']['ids']); sel = [i for i, r in enumerate(keep) if r[0] in ids]
+    ids = set(out['roles']['ids']); sel = [i for i, r in enumerate(keep) if r[0] in ids and not (desc.get(r[0]) or {}).get('off')]
     if len(sel) != len(keep):
         log(f'  {len(keep) - len(sel)} board roles are not in the layout and are left out of the company centres; '
             f'{len(ids) - len(sel)} layout roles are not on the board')

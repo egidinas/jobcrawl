@@ -70,6 +70,7 @@ def build(site, vectors, out, log=print, use_jobonly=True):
         # a vector whose role is no longer on this board (closed since it was embedded) is nobody's neighbour, joins no duplicate group
         # and gets no neighbours: the page could not show it
         on = np.array([i in rows for i in ids])
+    on &= np.abs(V).sum(1) > 0                       # a zero row is a role with no vector (kept for the row order only)
     emp = [rows[i][2] if i in rows else '?' + i for i in ids]; slug = [rows[i][4] if i in rows else '' for i in ids]
     tw = [title_words(rows[i][1]) if i in rows else set() for i in ids]
     parent = list(range(n))
