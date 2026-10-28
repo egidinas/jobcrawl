@@ -13,6 +13,7 @@ COMMANDS = {
     "map": "build the atlas layout from the vectors (needs the map extra)",
     "traces": "record each role's first and last seen time, the weekly trends and the atlas timeline (into --traces, default the vectors folder; needs numpy)",
     "company-network": "build the company nearest-neighbor graph and community clusters from company vectors",
+    "geomap": "build the geographic cartogram (areas swollen to their share of the roles, per scope) into the vectors folder (needs numpy)",
 }
 
 
@@ -54,6 +55,12 @@ def build_parser():
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--labels-only", action="store_true", help="apply the profile's group names to the layout already built")
             sp.add_argument("--companies-only", action="store_true", help="rebuild only the companies section of the layout already built (roles and scopes stay as they are)")
+        if name == "geomap":
+            sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
+            sp.add_argument("--profile", metavar="DIR", help="profile folder (its scopes; without it the worldwide scope only)")
+            sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors); geo-map.json goes there")
+            sp.add_argument("--companies", metavar="FILE", help="companies catalogue (companies[].coordinates): their points go on the map")
+            sp.add_argument("--cache", metavar="DIR", help="folder for the Natural Earth files (default: VECTORS/.geo-cache)")
         if name == "traces":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", help="profile folder (scope, field and level order; without it the board's order)")
@@ -192,6 +199,24 @@ def cmd_map(args):
     return 0
 
 
+def cmd_geomap(args):
+    from jobcrawl.map import geomap
+    if err := _check_site("geomap", args.site):
+        return err
+    try:
+        profile = load_profile(args.profile) if args.profile else None
+    except (ProfileError, OSError) as e:
+        return _usage_error("geomap", e)
+    vectors = args.vectors or default_vectors(args.site)
+    try:
+        geomap.build(args.site, profile, vectors, companies=args.companies, cache=args.cache)
+    except (geomap.GeoMapError, OSError, ValueError) as e:
+        return _usage_error("geomap", e)
+    except ImportError as e:
+        return _usage_error("geomap", f"{e}. The cartogram needs numpy: pip install -r requirements-embed.txt")
+    return 0
+
+
 def cmd_traces(args):
     from jobcrawl.index import traces
     if err := _check_site("traces", args.site):
@@ -223,7 +248,8 @@ def main(argv=None):
     if not args.command:
         parser.print_help()
         return 2
-    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "traces": cmd_traces, "company-network": cmd_company_network}
+    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "traces": cmd_traces, "company-network": cmd_company_network,
+                "geomap": cmd_geomap}
     return handlers[args.command](args)
 
 

@@ -48,6 +48,8 @@ python3 -m jobcrawl publish --site data/site --profile profiles/aerospace
 python3 -m jobcrawl map --site data/site --profile profiles/aerospace
 python3 -m jobcrawl publish --site data/site --profile profiles/aerospace
 
+# 5b. optional: the geographic cartogram, areas swollen to their share of the roles (needs numpy, Natural Earth downloaded once; then publish): python3 -m jobcrawl geomap --site data/site --profile profiles/aerospace
+
 # 6. explore (--models models only when step 2 was run)
 python3 scripts/serve.py --data data/site --models models
 ```

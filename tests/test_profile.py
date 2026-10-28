@@ -45,7 +45,7 @@ class ShippedProfiles(unittest.TestCase):
         self.assertEqual(p['personas'][0]['flags'], 'i')
         self.assertEqual(len(p['glossary']), 115)
         self.assertEqual(p['map']['min_scope'], 600)
-        self.assertEqual(p['map']['resolution'], [1.6, 5.0])
+        self.assertEqual(p['map']['resolution'], [1.45, 5.3])
         self.assertEqual(p['crawl']['relevance']['keywords'][0], 'word:space')
 
     def test_aerospace_levels_are_the_default_bands(self):

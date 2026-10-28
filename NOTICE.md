@@ -16,6 +16,7 @@ under the terms stated here. Where a licence text is shipped, it sits next to th
 | component | licence | where | notes |
 |---|---|---|---|
 | GeoNames gazetteer | Creative Commons Attribution 4.0 (CC BY 4.0), https://www.geonames.org | `jobcrawl/geo/gazetteer.tsv.gz` and `jobcrawl/geo/geo_coords.json`, built by `jobcrawl/geo/build_gazetteer.py` and `geo_coords.py` | place names with population, country and state, filtered to the places the profiles need. Attribution: "GeoNames geographical database, https://www.geonames.org, CC BY 4.0" |
+| Natural Earth country and state polygons, Natural Earth (https://www.naturalearthdata.com) | public domain | downloaded by `jobcrawl/map/geo_base.py` into the cache of `jobcrawl geomap` (not shipped) | the cartogram's base map (110m countries, 10m states of Germany). Attribution: "Natural Earth (public domain)" |
 
 ## Downloaded, not included
 
