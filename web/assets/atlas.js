@@ -62,6 +62,7 @@ style.textContent = `
 .atlas-scrub{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--ink)}
 .atlas-scrub[hidden]{display:none}
 .atlas-scrub button{all:unset;cursor:pointer;width:28px;height:26px;text-align:center;line-height:26px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:12px}.atlas-scrub button:focus-visible{outline:2px solid var(--accent)}
+.atlas-seg{display:inline-flex}.atlas-seg button{width:auto;padding:0 10px;white-space:nowrap;border-radius:0;margin-left:-1px}.atlas-seg button:first-child{border-radius:6px 0 0 6px;margin-left:0}.atlas-seg button:last-child{border-radius:0 6px 6px 0}.atlas-seg button[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:var(--paper)}.atlas-seg button[hidden]{display:none}
 .atlas-scrub input[type=range]{flex:1 1 200px;min-width:120px;margin:0;accent-color:var(--accent)}
 .atlas-scrub label{display:flex;gap:5px;align-items:center;font-size:12.5px;color:var(--muted);white-space:nowrap}
 .tl-label{white-space:nowrap;font-variant-numeric:tabular-nums;min-width:12em}
@@ -78,7 +79,7 @@ document.head.appendChild(style);
 mount.innerHTML = `<div class="atlas-bar">
 <div class="atlas-views" id="atlas-mode" role="group"><button type="button" data-m="roles" aria-pressed="true">${L('Roles', 'Stellen')}</button><button type="button" data-m="companies" aria-pressed="false">${L('Companies', 'Firmen')}</button>${cfg.geomap ? `<button type="button" data-m="geo" aria-pressed="false">${L('Geography', 'Geografie')}</button>` : ''}</div>
 <label>${L('Where', 'Wo')}<select id="atlas-scope">${scopeOpts}</select></label>
-<label>${L('Lens size', 'Lupengröße')}<select id="atlas-size"><option value="0.05" selected>${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option></select></label>
+<label>${L('Lens size', 'Lupengröße')}<select id="atlas-size"><option value="0.05" selected>${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option><option value="0">${L('off', 'aus')}</option></select></label>
 <label class="atlas-link-t"><input type="checkbox" id="atlas-linked" checked> ${L('Linked', 'Verknüpft')}</label>
 </div>
 <div class="atlas-fields" id="atlas-fields" role="group"></div>
@@ -89,9 +90,9 @@ mount.innerHTML = `<div class="atlas-bar">
 <label class="shape-toggle"><input type="checkbox" id="atlas-taste" checked> ${L('Show how well each area fits me (bright: close to my profile, faint: far from it)', 'Zeigen, wie gut jeder Bereich zu mir passt (hell: nah an meinem Profil, blass: weit weg)')}</label>
 <label class="shape-toggle"><input type="checkbox" id="atlas-all"> ${L('Show every role (otherwise at most three per employer and neighbourhood, so big employers do not crowd the map)', 'Jede Stelle zeigen (sonst höchstens drei je Arbeitgeber und Nachbarschaft, damit große Arbeitgeber die Karte nicht füllen)')}</label></div></details>
 <div class="atlas-grid"><div>
-<div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-fs" aria-label="${esc(pick('Full screen', 'Vollbild'))}" title="${esc(pick('Full screen', 'Vollbild'))}">⛶</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div><div class="atlas-scrub" id="atlas-scrub" hidden><button type="button" id="atlas-play" aria-label="${esc(pick('Play', 'Abspielen'))}" title="${esc(pick('Play through time', 'Durch die Zeit abspielen'))}">▶</button><input type="range" id="atlas-time" min="0" max="0" value="0" aria-label="${esc(pick('Time', 'Zeitpunkt'))}"><span class="tl-label" id="atlas-tlabel"></span><label><input type="checkbox" id="atlas-heat"> ${L('Hot and cold spots', 'Wo es wächst und schrumpft')}</label></div>${cfg.geomap ? `<div class="atlas-scrub" id="atlas-geo" hidden><button type="button" id="atlas-morph" aria-label="${esc(pick('Play the morph', 'Übergang abspielen'))}" title="${esc(pick('Play the morph (1.2 s)', 'Übergang abspielen (1,2 s)'))}">⟲</button><span>${L('True map', 'Echte Karte')}</span><input type="range" id="atlas-morph-t" min="0" max="1" step="0.005" value="1" aria-label="${esc(pick('True map to by roles', 'Echte Karte bis nach Stellen'))}"><span>${L('By roles', 'Nach Stellen')}</span></div>` : ''}</div>
+<div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-fs" aria-label="${esc(pick('Full screen', 'Vollbild'))}" title="${esc(pick('Full screen', 'Vollbild'))}">⛶</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div><div class="atlas-scrub" id="atlas-scrub" hidden><button type="button" id="atlas-play" aria-label="${esc(pick('Play', 'Abspielen'))}" title="${esc(pick('Play through time', 'Durch die Zeit abspielen'))}">▶</button><input type="range" id="atlas-time" min="0" max="0" value="0" aria-label="${esc(pick('Time', 'Zeitpunkt'))}"><span class="tl-label" id="atlas-tlabel"></span><label><input type="checkbox" id="atlas-heat"> ${L('Hot and cold spots', 'Wo es wächst und schrumpft')}</label></div>${cfg.geomap ? `<div class="atlas-scrub" id="atlas-geo" hidden><span>${L('Distortion', 'Verzerrung')}</span><span class="atlas-seg" id="atlas-morph" role="group" aria-label="${esc(pick('Distortion by roles', 'Verzerrung nach Stellen'))}"><button type="button" data-t="0" aria-pressed="false" title="${esc(pick('The true map', 'Die echte Karte'))}">${L('Off', 'Aus')}</button><button type="button" data-t="0.5" aria-pressed="true" title="${esc(pick('Areas follow the roles in part: the unequal spread, with the shapes kept recognisable', 'Flächen folgen den Stellen zum Teil: die ungleiche Verteilung, die Formen bleiben erkennbar'))}">${L('Moderate', 'Mäßig')}</button><button type="button" data-t="1" aria-pressed="false" title="${esc(pick('Every area sized by its share of the roles', 'Jede Fläche nach ihrem Anteil an den Stellen'))}">${L('Full', 'Voll')}</button></span><input type="range" id="atlas-morph-t" min="0" max="1" step="0.005" value="0.5" aria-label="${esc(pick('Distortion, from the true map to areas by roles', 'Verzerrung, von der echten Karte bis zu Flächen nach Stellen'))}"></div>` : ''}</div>
 <p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
-<div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong>${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
+<div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong id="atlas-in">${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
 <ul class="atlas-list" id="atlas-list"></ul>
 <p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens. ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.', 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe. ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.')}</p></div></div>`;
 const $ = (id) => mount.querySelector('#' + id);
@@ -493,7 +494,7 @@ function paintMap(ctx, P, o) {
   // labels, largest first. A label is drawn only where its box fits inside the map, clear of the lens and the zoom buttons (on
   // screen) and of every label already placed; otherwise it is left out. Areas first, then role labels or company names.
   if (!light) {
-  const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW + 6, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
+  const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = lensOn() ? st.size * BW + 6 : 0, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
   // pad: an opportunistic label (a representative or a new role's title) needs that much free space around it, twice that around
   // area names, so it only appears where the map has room; area names and lens labels pass 0
   const place = (lines, cands, free, pad = 0) => { for (const [x, y, a] of cands) { const lay = labelLayout(ctx, lines, x, y, a, ts), b = lay.box;
@@ -526,7 +527,7 @@ function paintMap(ctx, P, o) {
   // areas: regions at full view, neighbourhoods when zoomed in (or, in an image, always, after the regions, in a smaller weight)
   const regP = patches(regs, 'c1', Ly.regions);
   // on screen the area that holds most of the lens's points is named in the lens, first of all (at the mean of those points)
-  if (screen && stat) { const lr2 = (st.size * BW) ** 2, lx = sx(st.lens.x), ly = sy(st.lens.y), by = new Map();
+  if (screen && stat && lensOn()) { const lr2 = (st.size * BW) ** 2, lx = sx(st.lens.x), ly = sy(st.lens.y), by = new Map();
     Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if ((X0 - lx) ** 2 + (Y0 - ly) ** 2 > lr2) return; const g = by.get(e.c1) || { n: 0, x: 0, y: 0 }; g.n++; g.x += e.x; g.y += e.y; by.set(e.c1, g); });
     const top = [...by].sort((a, b) => b[1].n - a[1].n)[0], R0 = top && Ly.regions[top[0]];
     if (R0 && top[1].n >= 3) regP.unshift({ r: R0, n: Math.max(top[1].n, stat.min), xy: [top[1].x / top[1].n, top[1].y / top[1].n], lens: true }); }
@@ -557,14 +558,14 @@ function paintMap(ctx, P, o) {
     if (!place(lines, cand(X0, Y0, lines), free, free ? 0 : OPP)) return false;
     seenT.add(title.toLowerCase()); labelled.add(k); ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); return true; };
   if (roles && !Ly.past) {
-    const pool = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); }); pool.sort(byAge);
+    const pool = []; Ly.ents.forEach((e, k) => { if (rL > 0 && vis[k] && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); }); pool.sort(byAge);
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], row = rows[e.idx[0]], title = cleanTitle(row[1]), tk = title.toLowerCase() + '|' + row[2];
       if (!title || !inMap(sx(e.x), sy(e.y)) || seenC.has(tk)) continue; if (roleLab(k, true)) { seenC.add(tk); counts.lens++; } }
     if (screen) { const fresh = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && wOf(e.idx[0]) > 0 && !labelled.has(k) && inMap(sx(e.x), sy(e.y))) fresh.push(k); }); fresh.sort(byAge);
       for (const k of fresh) { if (counts.fresh >= newCap) break; const t = cleanTitle(rows[Ly.ents[k].idx[0]][1]).toLowerCase(); if (!t || seenT.has(t)) continue; if (roleLab(k, false)) counts.fresh++; } }
   } else if (!roles) {
     // the companies in the lens, with their open roles in brackets (a company with none: its name only)
-    const pool = []; Ly.ents.forEach((e, k) => { if (vis[k] && e.name && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); });
+    const pool = []; Ly.ents.forEach((e, k) => { if (rL > 0 && vis[k] && e.name && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); });
     pool.sort((a, b) => cn[b] - cn[a] || d2(a) - d2(b));
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), nm = shortName(e.name);
       if (!nm || !inMap(X0, Y0) || seenC.has(nm)) continue; const col = T.tintL ? tintOf(e.c1) : ink, lines = wrapText(coLabel(nm, cn[k]), 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
@@ -597,7 +598,7 @@ function paintMap(ctx, P, o) {
   }
   }
   if (screen) {   // the lens and the sampled points
-    const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     ctx.fillStyle = ink; st.sample.forEach((k) => { const e = Ly.ents[k]; if (!e) return; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), 4, 0, 7); ctx.fill(); });
   }
   return { shown, counts };
@@ -607,7 +608,7 @@ function paintMap(ctx, P, o) {
 // open roles and the companies, each at its true position (t = 0) or at its cartogram position (t = 1, by roles: an area's size follows
 // its roles). The shapes' box at t is fitted to the map box (aspect kept, centred); every entity then takes the map units of the other views.
 let GEO = null, geoLoading = null;
-const geo = { t: 1, raf: 0, morph: false, lays: new Map() };   // t: 0 the true map, 1 by roles; morph: the ⟲ play runs (no labels meanwhile)
+const geo = { t: 0.5, to: 0.5, mod: true, raf: 0, morph: false, lays: new Map() };   // t: 0 the true map, 0.5 the moderate map, 1 by roles; mod: the file has the moderate map; morph: an animation runs (no labels meanwhile), heading to `to`
 const geoHue = (q) => 240 + 170 * q, hueC = (h) => Math.round(h) / 137.508;   // the density ramp: deep blue (few), magenta, amber (many); hueC: a region index whose hue() is h (for star())
 const STATE_DE = { 'DE-BW': 'Baden-Württemberg', 'DE-BY': 'Bayern', 'DE-BE': 'Berlin', 'DE-BB': 'Brandenburg', 'DE-HB': 'Bremen', 'DE-HH': 'Hamburg', 'DE-HE': 'Hessen', 'DE-MV': 'Mecklenburg-Vorpommern', 'DE-NI': 'Niedersachsen', 'DE-NW': 'Nordrhein-Westfalen', 'DE-RP': 'Rheinland-Pfalz', 'DE-SL': 'Saarland', 'DE-SN': 'Sachsen', 'DE-ST': 'Sachsen-Anhalt', 'DE-SH': 'Schleswig-Holstein', 'DE-TH': 'Thüringen' };
 let deNames = null;
@@ -621,35 +622,39 @@ function coFieldsOk(e) { if (!st.fields.size) return true; if (ix.fields.some((f
   return false; }
 function coScopeOk(e) { if (st.scope >= cfg.scopes.length - 1) return true; const co = coRows[e.slug]; if (!co) return true; return (SCOPE_RANKS[co[12]] ?? 3) <= st.scope; }
 // the file: read on the first use of the view, once
-function geoLoad() { if (!geoLoading) geoLoading = fetch(dataUrl(cfg.geomap)).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => { GEO = j && j.version === 1 ? j : null; geo.lays.clear(); return GEO; }); return geoLoading; }
+function geoLoad() { if (!geoLoading) geoLoading = fetch(dataUrl(cfg.geomap)).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => { GEO = j && j.version === 1 ? j : null; geo.lays.clear();
+  geo.mod = !!(GEO && Object.values(GEO.scopes || {}).some((S) => S.moderate)); if (!geo.mod && geo.t === 0.5) geo.t = geo.to = 1;
+  const mb = document.querySelector('#atlas-morph [data-t="0.5"]'); if (mb) mb.hidden = !geo.mod; geoMarks(); return GEO; }); return geoLoading; }
 // a scope's layer: its shapes (q: the density rank, -1 with no role), its places (q: the rank by roles) and its companies (the catalogue entity
 // with the geo position, so the company cards work); coAt: the companies at each place, within 1.2 % of the box (by their geo position)
 function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
   const S = (GEO && GEO.scopes && GEO.scopes[sid]) || {};
   const shapes = (S.shapes || []).map((s) => { let a = 0; for (const r of s.rings) { let q = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) q += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); a += Math.abs(q) / 2; } return { ...s, area: a, q: -1, path: null, pr: [], lx: 0, ly: 0 }; });
   const dens = shapes.filter((s) => s.roles > 0).sort((a, b) => a.roles / a.area - b.roles / b.area); dens.forEach((s, i) => { s.q = dens.length > 1 ? i / (dens.length - 1) : 0.5; });
-  const places = (S.places || []).map((p) => ({ id: 'pl:' + p.id, place: true, name: p.name, n: p.n, idx: [], slug: null, c1: 0, c2: 0, gx: p.x, gy: p.y, kx: p.cx, ky: p.cy, x: 0, y: 0 }));
+  const places = (S.places || []).map((p) => ({ id: 'pl:' + p.id, place: true, name: p.name, n: p.n, idx: [], slug: null, c1: 0, c2: 0, gx: p.x, gy: p.y, hx: p.mx ?? (p.x + p.cx) / 2, hy: p.my ?? (p.y + p.cy) / 2, kx: p.cx, ky: p.cy, x: 0, y: 0 }));
   const byN = [...places].sort((a, b) => a.n - b.n); byN.forEach((e, i) => { e.q = byN.length > 1 ? i / (byN.length - 1) : 0.5; });
-  const cos = (S.companies || []).map((c) => { const e = coBy.get(c.slug), base = e ? { ...e } : { id: 'co:' + c.slug, slug: c.slug, name: c.slug, about: '', field: '', idx: [], vec: null, c1: 0, c2: 0, f: new Float32Array(ix.fields.length) }; return { ...base, gx: c.x, gy: c.y, kx: c.cx, ky: c.cy, x: 0, y: 0 }; });
+  const cos = (S.companies || []).map((c) => { const e = coBy.get(c.slug), base = e ? { ...e } : { id: 'co:' + c.slug, slug: c.slug, name: c.slug, about: '', field: '', idx: [], vec: null, c1: 0, c2: 0, f: new Float32Array(ix.fields.length) }; return { ...base, gx: c.x, gy: c.y, hx: c.mx ?? (c.x + c.cx) / 2, hy: c.my ?? (c.y + c.cy) / 2, kx: c.cx, ky: c.cy, x: 0, y: 0 }; });
   const coAt = new Map(); cos.forEach((c, j) => { let best = -1, bd = 0.012 ** 2; places.forEach((p, i) => { const d = (p.gx - c.gx) ** 2 + (p.gy - c.gy) ** 2; if (d < bd) { bd = d; best = i; } }); if (best >= 0) { if (!coAt.has(best)) coAt.set(best, []); coAt.get(best).push(places.length + j); } });
-  const V = []; if (shapes.length) shapes.forEach((s) => s.rings.forEach((r) => r.forEach((v) => V.push(v[0], v[1], v[2], v[3])))); else [...places, ...cos].forEach((e) => V.push(e.gx, e.gy, e.kx, e.ky));
+  const V = []; if (shapes.length) shapes.forEach((s) => s.rings.forEach((r) => r.forEach((v) => V.push(v[0], v[1], v[4] ?? (v[0] + v[2]) / 2, v[5] ?? (v[1] + v[3]) / 2, v[2], v[3])))); else [...places, ...cos].forEach((e) => V.push(e.gx, e.gy, e.hx, e.hy, e.kx, e.ky));
   const Lg = { kind: 'geo', sid, shapes, ents: [...places, ...cos], n: places.length + cos.length, coAt, nMax: Math.max(1, ...places.map((p) => p.n)), V: Float64Array.from(V), key: '', pkey: '', fit: null };
   geo.lays.set(sid, Lg); return Lg; }
+// a coordinate at t from its true (a), moderate (m) and full (k) value: 0 to 0.5 true to moderate, 0.5 to 1 moderate to full
+const geoAt = (a, m, k, t) => (t <= 0.5 ? a + (m - a) * 2 * t : m + (k - m) * (2 * t - 1));
 const geoLay = () => { const sc = cfg.scopes[st.scope], Lg = geoLayer(sc ? sc.id : ''); geoSync(Lg); return Lg; };
 // the layer at the morph t, fitted to the map box BW x BH: the box of the shapes at t (of the places when there are none), its centre and one
 // scale for both axes (94 % of the box, aspect kept); every entity takes its position in map units (see sx and sy)
 function geoSync(Lg) { const t = geo.t, key = t + '|' + BW + '|' + BH; if (Lg.key === key) return; Lg.key = key;
   const V = Lg.V; let X0 = Infinity, X1 = -Infinity, Y0 = Infinity, Y1 = -Infinity;
-  for (let i = 0; i < V.length; i += 4) { const x = V[i] + (V[i + 2] - V[i]) * t, y = V[i + 1] + (V[i + 3] - V[i + 1]) * t; if (x < X0) X0 = x; if (x > X1) X1 = x; if (y < Y0) Y0 = y; if (y > Y1) Y1 = y; }
+  for (let i = 0; i < V.length; i += 6) { const x = geoAt(V[i], V[i + 2], V[i + 4], t), y = geoAt(V[i + 1], V[i + 3], V[i + 5], t); if (x < X0) X0 = x; if (x > X1) X1 = x; if (y < Y0) Y0 = y; if (y > Y1) Y1 = y; }
   if (X0 === Infinity) { X0 = Y0 = 0; X1 = Y1 = 1; }
   const f = Lg.fit = { mx: (X0 + X1) / 2, my: (Y0 + Y1) / 2, p: Math.min(BW * 0.94 / Math.max(X1 - X0, 1e-9), BH * 0.94 / Math.max(Y1 - Y0, 1e-9)) };
-  for (const e of Lg.ents) { const x = e.gx + (e.kx - e.gx) * t, y = e.gy + (e.ky - e.gy) * t; e.x = 0.5 + (x - f.mx) * f.p / BW; e.y = 0.5 + (y - f.my) * f.p / BH; } }
+  for (const e of Lg.ents) { const x = geoAt(e.gx, e.hx, e.kx, t), y = geoAt(e.gy, e.hy, e.ky, t); e.x = 0.5 + (x - f.mx) * f.p / BW; e.y = 0.5 + (y - f.my) * f.p / BH; } }
 // the shapes as paths in screen pixels at the view and t (cached until one changes); s.pr: their rings in pixels (for the lens: which shape it is
 // over); s.lx, s.ly: the label point (the middle of the largest ring)
 function geoPaths(Lg) { const key = [geo.t, W, H, BW, BH, st.z.s, st.z.cx, st.z.cy].join('|'); if (Lg.pkey === key) return; Lg.pkey = key;
   const t = geo.t, f = Lg.fit, X = (x) => sx(0.5 + (x - f.mx) * f.p / BW), Y = (y) => sy(0.5 + (y - f.my) * f.p / BH);
   for (const s of Lg.shapes) { const path = new Path2D(); s.pr = []; let big = null;
-    for (const r of s.rings) { const q = []; for (const v of r) q.push(X(v[0] + (v[2] - v[0]) * t), Y(v[1] + (v[3] - v[1]) * t)); if (!q.length) continue;
+    for (const r of s.rings) { const q = []; for (const v of r) q.push(X(geoAt(v[0], v[4] ?? (v[0] + v[2]) / 2, v[2], t)), Y(geoAt(v[1], v[5] ?? (v[1] + v[3]) / 2, v[3], t))); if (!q.length) continue;
       path.moveTo(q[0], q[1]); for (let i = 2; i < q.length; i += 2) path.lineTo(q[i], q[i + 1]); path.closePath(); s.pr.push(q); if (!big || q.length > big.length) big = q; }
     s.path = path; s.lx = s.ly = 0; s.ar = 0;
     if (big) { const [lx, ly, ar] = labelPoint(big); s.lx = lx; s.ly = ly; s.ar = ar; } } }
@@ -709,7 +714,7 @@ function paintGeo(ctx, P, o) {
   if (o.keep) { const kf = base || (base = { c: document.createElement('canvas') }); kf.c.width = ctx.canvas.width; kf.c.height = ctx.canvas.height; kf.c.getContext('2d').drawImage(ctx.canvas, 0, 0); kf.z = { ...st.z }; }
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
   if (!light) {
-    const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
+    const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
     const place = (lines, cands, free, pad = 0) => { for (const [x, y, a] of cands) { const lg = labelLayout(ctx, lines, x, y, a, ts), b = lg.box;
         if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
         if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) continue; }
@@ -727,7 +732,7 @@ function paintGeo(ctx, P, o) {
       if (place(lines, [[X0 + r + 3 * ts, Y0, 'left'], [X0 - r - 3 * ts, Y0, 'right'], [X0, Y0 - r - hh - 2 * ts, 'center'], [X0, Y0 + r + hh + 2 * ts, 'center']], free, free ? 0 : OPP)) named++; }
   }
   if (screen) {   // the lens, its sample and the open point's ring
-    const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]);
+    const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     ctx.fillStyle = ink; st.sample.forEach((k) => { const e = Lg.ents[k]; if (!e) return; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), 4, 0, 7); ctx.fill(); });
     if (sel && sel.ly === Lg && vis[sel.k]) { const e = Lg.ents[sel.k]; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), (e.place ? rOf(e) : 3) + 4, 0, 7); ctx.stroke(); } }
   return { shown: pl.length + nCo, counts };
@@ -735,10 +740,10 @@ function paintGeo(ctx, P, o) {
 // the view's painter: the geography, or the atlas's own (roles, companies)
 const paintAny = (ctx, P, o) => (P.geo ? paintGeo(ctx, P, o) : paintMap(ctx, P, o));
 // the area panel in the geography: the shape under the lens, and the places and companies in the lens
-function renderGeoArea(pool) { const Lg = lay(), s = geoShapeAt(Lg, sx(st.lens.x), sy(st.lens.y)), pls = pool.filter((k) => Lg.ents[k].place), cos = pool.length - pls.length, n = pls.reduce((t, k) => t + Lg.ents[k].n, 0);
+function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, sx(st.lens.x), sy(st.lens.y)) : null, pls = pool.filter((k) => Lg.ents[k].place), cos = pool.length - pls.length, n = pls.reduce((t, k) => t + Lg.ents[k].n, 0);
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}</span>`
-    + (s ? `<b>${esc(geoNameOf(s))}</b><span class="atlas-note">${s.roles.toLocaleString()} ${L('roles in it', 'Stellen darin')}</span>` : `<span class="atlas-note">${L('No area under the lens', 'Keine Fläche unter der Lupe')}</span>`)
-    + `<span>${pls.length} ${L('places', 'Orte')} · ${n.toLocaleString()} ${L('open roles in them', 'offene Stellen darin')} · ${cos} ${L('companies in the lens', 'Firmen in der Lupe')}</span>`; }
+    + (s ? `<b>${esc(geoNameOf(s))}</b><span class="atlas-note">${s.roles.toLocaleString()} ${L('roles in it', 'Stellen darin')}</span>` : lensOn() ? `<span class="atlas-note">${L('No area under the lens', 'Keine Fläche unter der Lupe')}</span>` : `<b>${L('The map in view', 'Die Karte im Blick')}</b>`)
+    + `<span>${pls.length} ${L('places', 'Orte')} · ${n.toLocaleString()} ${L('open roles in them', 'offene Stellen darin')} · ${cos} ${lensOn() ? L('companies in the lens', 'Firmen in der Lupe') : L('companies in view', 'Firmen im Blick')}</span>`; }
 // the status line of the geography: what is shown, and the morph and the lens in brief
 function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
   if (!Lg.shapes.length && !Lg.ents.length) return L('There is no geography for this area in the file.', 'Für diesen Bereich gibt es in der Datei keine Geografie.');
@@ -747,11 +752,16 @@ function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
     `${c.places.toLocaleString('de-DE')} Orte und ${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Orte sind nach ihren offenen Stellen groß (die Filter ändern sie nicht). Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
 function geoBar() { const el = $('atlas-geo'); if (el) el.hidden = st.mode !== 'geo'; }
 function geoStop() { if (geo.raf) cancelAnimationFrame(geo.raf); geo.raf = 0; geo.morph = false; }
-function geoSetT(t) { geo.t = Math.max(0, Math.min(1, t)); const sl = $('atlas-morph-t'); if (sl) sl.value = String(geo.t); draw(); }
-// the morph: from the true map (t 0) to the map by roles (t 1) in 1.2 s, eased; at once with reduced motion
-function geoPlay() { geoStop(); if (noMotion()) { geoSetT(1); return; }
-  const t0 = performance.now(), step = (now) => { const p = Math.min(1, (now - t0) / 1200); if (p >= 1) { geoStop(); geoSetT(1); return; } geo.raf = requestAnimationFrame(step); geoSetT(easeIO(p)); };
-  geo.morph = true; geoSetT(0); geo.raf = requestAnimationFrame(step); }
+function geoSetT(t) { geo.t = Math.max(0, Math.min(1, t)); geoMarks(); draw(); }
+function geoMarks() { const sl = $('atlas-morph-t'); if (sl) sl.value = String(geo.t);
+  const at = geo.morph ? geo.to : geo.t;   // the stop it is at, or heading to; none while the slider sits between them
+  document.querySelectorAll('#atlas-morph button').forEach((b) => { const on = Math.abs(+b.dataset.t - at) < 0.02; if (b.getAttribute('aria-pressed') !== String(on)) b.setAttribute('aria-pressed', String(on)); }); }
+// the morph between the stops, eased (1.2 s for the whole way); at once with reduced motion
+function geoPlay(to) {   // animate to t = to (0 the true map, 0.5 moderate, 1 full); with no target, to the next stop (off, moderate, full, off …)
+  if (to == null) { const at = geo.morph ? geo.to : geo.t, stops = geo.mod ? [0, 0.5, 1] : [0, 1]; to = stops.find((v) => v > at + 0.02) ?? 0; }
+  geoStop(); if (noMotion()) { geoSetT(to); return; }
+  const a = geo.t, ms = 1200 * Math.max(0.25, Math.abs(to - a)), t0 = performance.now(), step = (now) => { const p = Math.min(1, (now - t0) / ms); if (p >= 1) { geoStop(); geoSetT(to); return; } geo.raf = requestAnimationFrame(step); geoSetT(a + (to - a) * easeIO(p)); };
+  geo.morph = true; geo.to = to; geo.raf = requestAnimationFrame(step); }
 // the view of the geography: the whole map, the lens on the biggest place
 function fitGeo() { const Lg = lay(), big = Lg.ents.filter((e) => e.place).sort((a, b) => b.n - a.n)[0]; st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = big ? { x: big.x, y: big.y } : { x: 0.5, y: 0.5 }; }
 
@@ -910,15 +920,17 @@ function drawTaste(Ly) {
     paint(g, A, GW, GH, rgb, (a) => Math.min(0.75, Math.pow(a, 0.8) * 0.75));
   }
 }
+// the lens can be switched off (lens size "off"): then the points in view stand in for it (the cards, the area panel, the link)
+const lensOn = () => st.size > 0;
 function inLens() {
-  const Ly = lay(), r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y), out = [];
-  Ly.ents.forEach((e, k) => { if (!vis[k]) return; const dx = sx(e.x) - lx, dy = sy(e.y) - ly; if (dx * dx + dy * dy <= r * r) out.push(k); });
+  const Ly = lay(), r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y), out = [], on = lensOn();
+  Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y), dx = X0 - lx, dy = Y0 - ly; if (on ? dx * dx + dy * dy <= r * r : X0 >= 0 && Y0 >= 0 && X0 <= W && Y0 <= H) out.push(k); });
   return out;
 }
 // what the lens is on: the neighbourhood most of its points belong to, with its words, fields and leanings
 function renderArea(pool) {
   if (st.mode === 'geo') return renderGeoArea(pool);
-  const Ly = lay(); if (Ly.past && pool.length) return renderPastArea(pool, Ly); if (!pool.length) { $('atlas-area').innerHTML = `<span class="atlas-note">${L('Move the lens onto the map.', 'Die Lupe auf die Karte ziehen.')}</span>`; return; }
+  const Ly = lay(); if (Ly.past && pool.length) return renderPastArea(pool, Ly); if (!pool.length) { $('atlas-area').innerHTML = `<span class="atlas-note">${lensOn() ? L('Move the lens onto the map.', 'Die Lupe auf die Karte ziehen.') : L('Nothing in view.', 'Nichts im Blick.')}</span>`; return; }
   const c = new Map(); pool.forEach((k) => c.set(Ly.ents[k].c2, (c.get(Ly.ents[k].c2) || 0) + 1)); const h = Ly.hoods[[...c].sort((a, b) => b[1] - a[1])[0][0]];
   const hk = [...c].sort((a, b) => b[1] - a[1])[0][0], total = Ly.ents.filter((e, k) => e.c2 === hk && (perScope || vis[k])).length;
   const reg = Ly.regions[Ly.ents[pool[0]].c1], lean = leanText(h.lean);
@@ -1176,7 +1188,7 @@ function hitAt(px, py) { const h = hitG; if (!h) return -1; let best = -1, bd = 
   return best; }
 // hover: a point within 10 px shows its title (the canvas tooltip) and a hand; inside the lens a move cursor, elsewhere a grab
 function hover(e) { const [px, py] = ptr(e), k = hitAt(px, py), t = k >= 0 ? (st.mode === 'roles' ? (lay().ents[k].past ? '' : cleanTitle(rows[lay().ents[k].idx[0]][1])) : lay().ents[k].name) : '';
-  cv.style.cursor = k >= 0 ? 'pointer' : Math.hypot(px - sx(st.lens.x), py - sy(st.lens.y)) <= st.size * BW + 8 ? 'move' : 'grab'; if (cv.title !== t) cv.title = t; }
+  cv.style.cursor = k >= 0 ? 'pointer' : lensOn() && Math.hypot(px - sx(st.lens.x), py - sy(st.lens.y)) <= st.size * BW + 8 ? 'move' : 'grab'; if (cv.title !== t) cv.title = t; }
 // the card of the selected point (on the stage, so it also works in full screen): a role with its title as a link, company, region,
 // level, age and the marks; or a company with its name, about text and open roles
 const pop = document.createElement('div'); pop.className = 'atlas-pop'; pop.hidden = true; stage.appendChild(pop);
@@ -1214,7 +1226,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sel) { h
 cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); stopAnim(); touches.set(e.pointerId, ptr(e));
   if (touches.size === 2) { const [a1, b1] = [...touches.values()]; pinch = { d: Math.hypot(a1[0] - b1[0], a1[1] - b1[1]), s: st.z.s }; drag = null; return; }
   const [px, py] = ptr(e), dx = px - sx(st.lens.x), dy = py - sy(st.lens.y);
-  drag = Math.hypot(dx, dy) <= st.size * BW + 8 ? { kind: 'lens', px, py, moved: 0 } : { kind: 'pan', px, py, cx: st.z.cx, cy: st.z.cy, moved: 0 }; });
+  drag = lensOn() && Math.hypot(dx, dy) <= st.size * BW + 8 ? { kind: 'lens', px, py, moved: 0 } : { kind: 'pan', px, py, cx: st.z.cx, cy: st.z.cy, moved: 0 }; });
 cv.addEventListener('pointermove', (e) => { if (!touches.has(e.pointerId)) { if (e.pointerType === 'mouse' && !e.buttons) hover(e); return; } touches.set(e.pointerId, ptr(e));
   if (pinch && touches.size === 2) { const [a1, b1] = [...touches.values()], d = Math.hypot(a1[0] - b1[0], a1[1] - b1[1]); zoomTo(pinch.s * d / Math.max(pinch.d, 1), (a1[0] + b1[0]) / 2, (a1[1] + b1[1]) / 2, false); return; }
   if (!drag) return; const [px, py] = ptr(e); drag.moved = Math.max(drag.moved, Math.hypot(px - drag.px, py - drag.py));
@@ -1224,7 +1236,7 @@ const endPtr = (e) => { touches.delete(e.pointerId); if (pinch) { if (touches.si
   if (!drag) return; const [px, py] = ptr(e), tap = drag.moved < 5, k = tap ? hitAt(px, py) : -1, kind = drag.kind; drag = null;
   if (k >= 0) { showPop(k); draw(); return; }   // a tap on a point opens its card; the lens stays where it is
   if (tap) hidePop();
-  const moved = kind === 'lens' || tap; if (kind === 'pan' && tap) { st.lens.x = ux(px); st.lens.y = uy(py); }
+  const moved = kind === 'lens' || (tap && lensOn()); if (kind === 'pan' && tap && lensOn()) { st.lens.x = ux(px); st.lens.y = uy(py); }
   if (moved) PF.bumpExplored(); resample(); if (moved) { computeTaste(); renderPersonas(); draw(); } };
 cv.addEventListener('pointerup', endPtr); cv.addEventListener('pointercancel', endPtr);
 function zoomTo(s1, px, py, then = true) { const x0 = ux(px), y0 = uy(py); st.z.s = Math.max(1, Math.min(24, s1)); if (st.z.s === 1) { st.z.cx = 0.5; st.z.cy = 0.5; } else { st.z.cx = x0 - (px - W / 2) / (st.z.s * BW); st.z.cy = y0 - (py - H / 2) / (st.z.s * BH); } if (then) resample(); else draw(); }
@@ -1232,8 +1244,9 @@ function zoom(f, px = W / 2, py = H / 2) { zoomTo(st.z.s * f, px, py); }
 cv.addEventListener('mousedown', (e) => { if (e.detail > 1) e.preventDefault(); });      // a double click zooms; it should not select page text
 cv.addEventListener('dblclick', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(2, px, py); });
 cv.addEventListener('wheel', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
-$('atlas-zin').addEventListener('click', () => viewChange(() => zoom(1.5, sx(st.lens.x), sy(st.lens.y))));
-$('atlas-zout').addEventListener('click', () => viewChange(() => zoom(1 / 1.5, sx(st.lens.x), sy(st.lens.y))));
+const zAt = () => (lensOn() ? [sx(st.lens.x), sy(st.lens.y)] : [W / 2, H / 2]);   // the buttons zoom about the lens, or the middle without it
+$('atlas-zin').addEventListener('click', () => viewChange(() => zoom(1.5, ...zAt())));
+$('atlas-zout').addEventListener('click', () => viewChange(() => zoom(1 / 1.5, ...zAt())));
 $('atlas-zreset').addEventListener('click', () => viewChange(() => { fitOrWhole(); resample(); }));
 function updateModeHeader() {
   const eyebrow = document.querySelector('.section.atlas .eyebrow');
@@ -1270,7 +1283,7 @@ mount.addEventListener('click', (e) => {
   else if (b.closest('#atlas-fields')) viewChange(() => { const f = b.dataset.f; if (st.fields.has(f)) st.fields.delete(f); else st.fields.add(f); b.setAttribute('aria-pressed', String(st.fields.has(f))); if (lnk) { linkBuild(lnk); fitLinked(); } else if (!perScope) fitTo(); resample(); });
   else if (b.id === 'atlas-shuffle') resample();
   else if (b.id === 'atlas-play') tlPlay();
-  else if (b.id === 'atlas-morph') geoPlay();
+  else if (b.closest('#atlas-morph')) geoPlay(+b.dataset.t);
   else if (b.classList.contains('hd')) { const li = b.closest('li'), id = li.dataset.id, on = li.classList.toggle('open'); b.setAttribute('aria-expanded', String(on)); if (on) st.open.add(id); else st.open.delete(id); fillRole(li); }
   else if (b.classList.contains('atlas-pop-x')) { hidePop(); draw(); }
   else if (b.classList.contains('atlas-pop-go')) linkFromCard();
@@ -1315,13 +1328,14 @@ $('atlas-scope').addEventListener('change', (e) => viewChange(() => { st.scope =
   if (perScope) { if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } }
   else if (lnk) fitLinked(); else fitTo();
   resample(); }));
-$('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; resample(); });
+const lensHead = () => { $('atlas-in').textContent = lensOn() ? pick('In the lens', 'In der Lupe') : pick('In view', 'Im Blick'); };
+$('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; lensHead(); resample(); });
 if (cfg.geomap) { const sl = $('atlas-morph-t'); sl.addEventListener('input', (e) => { geoStop(); geoSetT(+e.target.value); }); sl.addEventListener('pointerdown', () => geoStop()); }
 if (TL) { $('atlas-time').addEventListener('input', (e) => { tlStop(); setScrub(+e.target.value); }); ['pointerdown', 'keydown'].forEach((ev) => $('atlas-time').addEventListener(ev, () => tlStop())); }
 window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); draw(); });
 fitOrWhole();
 resample();
 // for scripts (scripts/export_atlas.mjs): the image export and the view switch
-window.jobcrawlAtlas = { renderImage, setView, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: () => geoPlay(), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
+window.jobcrawlAtlas = { renderImage, setView, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
   lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; },
   timeline: () => (TL ? { steps: TL.steps.length, kind: TL.kind, idx: scrub.idx, tm: scrub.tm, end: TL.end, records: TLN } : null), scrubTo: (i) => { tlStop(); setScrub(i); }, play: () => tlPlay(), heatMean: (c) => heatMeanOf(c), heatOn: (on) => { $('atlas-heat').checked = !!on; draw(); }, layer: () => { const Ly = lay(); return { n: Ly.ents.length, embers: Ly.ents.filter((e) => e.ember).length }; }, heatCells: () => { if (!lastHeat) return null; let mx = 0, big = 0, pos = 0, neg = 0; for (const v of lastHeat.sc) { const m = Math.abs(v); if (m > mx) mx = m; if (m >= 0.05) { big++; if (v > 0) pos++; else neg++; } } return { cells: lastHeat.sc.length, max: +mx.toFixed(3), warm: pos, cool: neg }; } };
