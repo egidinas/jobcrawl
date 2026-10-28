@@ -531,11 +531,22 @@ function paintMap(ctx, P, o) {
   const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = lensOn() ? st.size * BW + 6 : 0, lcx = sx(st.lens.x), lcy = sy(st.lens.y);
   // pad: an opportunistic label (a representative or a new role's title) needs that much free space around it, twice that around
   // area names, so it only appears where the map has room; area names and lens labels pass 0
-  const place = (lines, cands, free, pad = 0) => { for (const [x, y, a] of cands) { const lay = labelLayout(ctx, lines, x, y, a, ts), b = lay.box;
-      if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) continue;
-      if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) continue; }
-      if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) continue;
-      boxes.push(b); labelDraw(ctx, lay, halo); return b; } return false; };
+  // what a name must keep clear of, besides the other names and the lens: the bright points (new roles, stars, linked points; never covered, except by
+  // an area's name, where it counts against the position) and, as a cost, the crowd of points under it. Every candidate is scored (points per grid
+  // cell under it, 4 per bright point, a little more for each step down the list) and the best is drawn; o2.self is the point the name belongs to.
+  const CELL2 = 24 * ts, gw2 = Math.ceil(W / CELL2) + 1, gh2 = Math.ceil(H / CELL2) + 1, grid2 = new Uint16Array(gw2 * gh2), bright = [];
+  Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 >= W || Y0 >= H) return; grid2[Math.floor(Y0 / CELL2) * gw2 + Math.floor(X0 / CELL2)]++;
+    const w = roles ? wE(e) : starOf(k); if (w > 0) bright.push([X0, Y0, (roles ? dot * (1 + 1.6 * w) : rcOf(k) * (1 + 1.6 * w)) + 2 * ts]); });
+  const crowd = (b) => { let c = 0, n = 0; for (let gy = Math.max(0, Math.floor(b[1] / CELL2)); gy <= Math.min(gh2 - 1, Math.floor(b[3] / CELL2)); gy++) for (let gx = Math.max(0, Math.floor(b[0] / CELL2)); gx <= Math.min(gw2 - 1, Math.floor(b[2] / CELL2)); gx++) { c += grid2[gy * gw2 + gx]; n++; } return n ? c / n : 0; };
+  const hitBright = (b, self) => { let n = 0; for (const q of bright) { if (self && Math.abs(q[0] - self[0]) < 1 && Math.abs(q[1] - self[1]) < 1) continue; if (!(q[0] + q[2] < b[0] || q[0] - q[2] > b[2] || q[1] + q[2] < b[1] || q[1] - q[2] > b[3])) n++; } return n; };
+  const place = (lines, cands, free, pad = 0, o2 = {}) => { let best = null;
+    cands.forEach(([x, y, a], idx) => { const lay = labelLayout(ctx, lines, x, y, a, ts), b = lay.box;
+      if (b[0] < 4 || b[1] < 4 || b[2] > W - 4 || b[3] > H - 4) return;
+      if (screen && !free) { const nx = Math.max(b[0], Math.min(lcx, b[2])), ny = Math.max(b[1], Math.min(lcy, b[3])); if (Math.hypot(nx - lcx, ny - lcy) < lr) return; }
+      if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) return;
+      const hb = hitBright(b, o2.self); if (hb && !o2.soft) return;
+      const sc = crowd(b) + 4 * hb + (o2.step ?? 0.15) * idx; if (!best || sc < best.sc) best = { lay, b, sc }; });
+    if (!best) return false; boxes.push(best.b); labelDraw(ctx, best.lay, halo); return best.b; };
   const OPP = screen ? 8 * ts : 0;   // the free margin for opportunistic labels on screen (images stay dense)
   const ENT_FS = 9;   // employer and company names: 9 px (about 72 % of the neighbourhood names, never below 9)
   // the regions and neighbourhoods as { r, n, xy }: with the one map, the visible roles and their mean position (see visStats)
@@ -574,7 +585,8 @@ function paintMap(ctx, P, o) {
     const lines = wrapText(nameOf(r), roles ? 16 : 20, roles ? 2 : 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
     const X0 = sx(xy[0]), Y0 = sy(xy[1]), dy = 1.4 * fs * ts * lines.length;   // the patch centre, else just above or below it
     // area names may sit inside the lens (free): placed first, the lens's own labels fit around them
-    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center']], true); if (ab) { ab.area = true; counts.areas++; }
+    const ring = []; for (const f of [1, 2]) for (let q = 0; q < 8; q++) ring.push([X0 + Math.cos(q * Math.PI / 4) * f * dy * 1.7, Y0 + Math.sin(q * Math.PI / 4) * f * dy, 'center']);
+    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center'], ...ring], true, 0, { soft: true, step: 0.8 }); if (ab) { ab.area = true; counts.areas++; }
   }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
   // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
@@ -583,13 +595,16 @@ function paintMap(ctx, P, o) {
   const d2 = (k) => (sx(Ly.ents[k].x) - ccx) ** 2 + (sy(Ly.ents[k].y) - ccy) ** 2, inMap = (X0, Y0) => X0 >= 0 && Y0 >= 0 && X0 <= W && Y0 <= H;
   const seenT = new Set(), seenC = new Set(), labelled = new Set();
   const byAge = (a, b) => { const x = AGE[Ly.ents[a].idx[0]], y = AGE[Ly.ents[b].idx[0]]; return x !== y ? (x < y ? -1 : 1) : d2(a) - d2(b); };
-  const cand = (X0, Y0, lines) => { const b = labelLayout(ctx, lines, 0, 0, 'center', ts).box, hh = (b[3] - b[1]) / 2; return [[X0 + 6 * ts, Y0, 'left'], [X0 - 6 * ts, Y0, 'right'], [X0, Y0 - 6 * ts - hh, 'center'], [X0, Y0 + 6 * ts + hh, 'center']]; };
+  const cand = (X0, Y0, lines) => { const b = labelLayout(ctx, lines, 0, 0, 'center', ts).box, hh = (b[3] - b[1]) / 2, out = [];
+    for (const g of [6, 14]) { const d = g * ts, e = d * 0.72; out.push([X0 + d, Y0, 'left'], [X0 - d, Y0, 'right'], [X0, Y0 - d - hh, 'center'], [X0, Y0 + d + hh, 'center'],
+      [X0 + e, Y0 - e - hh * 0.5, 'left'], [X0 - e, Y0 - e - hh * 0.5, 'right'], [X0 + e, Y0 + e + hh * 0.5, 'left'], [X0 - e, Y0 + e + hh * 0.5, 'right']); }
+    return out; };
   // a role's label: its title (up to 2 lines of about 26 characters, "✦ " before the first line when new today), then its company in brackets
   const roleLines = (title, row, col, pre = '') => { const ls = wrapText(title, 26, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col })); ls[0].t = pre + ls[0].t;
     return ls.concat([{ t: `(${cutWords(coInLabel(row[2]), 28)})`, fs: ENT_FS * 0.9, face: 'italic 400', alpha: 0.8, color: col }]); };
   const roleLab = (k, free) => { const e = Ly.ents[k], row = rows[e.idx[0]], title = cleanTitle(row[1]), X0 = sx(e.x), Y0 = sy(e.y), col = T.tintL ? tintOf(e) : ink;
     if (!title) return false; const lines = roleLines(title, row, col, wOf(e.idx[0]) >= 1 ? '✦ ' : '');
-    if (!place(lines, cand(X0, Y0, lines), free, free ? 0 : OPP)) return false;
+    if (!place(lines, cand(X0, Y0, lines), free, free ? 0 : OPP, { self: [X0, Y0] })) return false;
     seenT.add(title.toLowerCase()); labelled.add(k); ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); return true; };
   if (roles && !Ly.past) {
     const pool = []; Ly.ents.forEach((e, k) => { if (rL > 0 && vis[k] && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); }); pool.sort(byAge);
@@ -603,7 +618,7 @@ function paintMap(ctx, P, o) {
     pool.sort((a, b) => cn[b] - cn[a] || d2(a) - d2(b));
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y), nm = shortName(e.name);
       if (!nm || !inMap(X0, Y0) || seenC.has(nm)) continue; const col = T.tintL ? tintOf(e) : ink, lines = wrapText(coLabel(nm, cn[k]), 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
-      if (place(lines, cand(X0, Y0, lines), true)) { seenC.add(nm); counts.lens++; } }
+      if (place(lines, cand(X0, Y0, lines), true, 0, { self: [X0, Y0] })) { seenC.add(nm); counts.lens++; } }
   }
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
@@ -618,7 +633,7 @@ function paintMap(ctx, P, o) {
         const col = T.tintL ? tintOf(e) : ink;
         // the title (up to 2 lines of about 26 characters), then the company in brackets on its own line: a little smaller and dimmer
         const lines = roleLines(title, row, col);
-        if (place(lines, [[X0 + 6 * ts, Y0, 'left'], [X0 - 6 * ts, Y0, 'right']], false, OPP)) { seenT.add(key); counts.roles++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); } }
+        if (place(lines, cand(X0, Y0, lines), false, OPP, { self: [X0, Y0] })) { seenT.add(key); counts.roles++; ctx.globalAlpha = 0.95; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X0, Y0, 2.4 * ts, 0, 7); ctx.fill(); } }
       if (!any) break; }
   }
   // companies (companies map): next to their dot, right of it or else left, the companies with most open roles first; the companies
@@ -628,7 +643,7 @@ function paintMap(ctx, P, o) {
     for (const k of order) { if (counts.companies >= Math.round((many ? 300 : 15) * ks)) break; const e = Ly.ents[k], X0 = sx(e.x), Y0 = sy(e.y); if (X0 < 0 || Y0 < 0 || X0 > W || Y0 > H) continue;
       const nm = shortName(e.name); if (seenC.has(nm)) continue; seenC.add(nm);
       const col = T.tintL ? tintOf(e) : ink, rr = rcOf(k) + 3, lines = wrapText(coLabel(nm, cn[k]), 22, 2).map((t) => ({ t, fs: ENT_FS, face: 'italic 400', alpha: 0.9, color: col }));
-      if (place(lines, [[X0 + rr, Y0, 'left'], [X0 - rr, Y0, 'right']], false, OPP)) counts.companies++; }
+      if (place(lines, cand(X0, Y0, lines), false, OPP, { self: [X0, Y0] })) counts.companies++; }
   }
   }
   if (screen) {   // the lens and the sampled points
