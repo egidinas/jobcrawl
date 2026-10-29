@@ -166,7 +166,8 @@ const coBy = new Map(layers.companies.ents.map((e) => [e.slug, e]));   // a comp
 // ---- the role timeline (optional): when each role was on the board. match/role-timeline.json and .bin (16-byte records, little
 // endian: x, y, c1, sc, tg, fa, la; times in minutes after t0), the names in role-timeline-names-NNN.json. Without the files: as before.
 const DAY = 1440, EMBER = 30 * DAY;   // minutes; a role last seen this long before the scrubbed time still shows, fading
-const TLJ = cfg.timeline ? await fetch(dataUrl(cfg.timeline)).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;   // config.json names it when published
+const TIMELINE_ON = false;   /* the scrubber is off until the board is stable: the data was reshaped too much for a past time to read as change on one map; set true to bring it back */
+const TLJ = TIMELINE_ON && cfg.timeline ? await fetch(dataUrl(cfg.timeline)).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;   // config.json names it when published
 const TLBIN = TLJ && TLJ.version === 1 ? await fetch(dataUrl('match/role-timeline.bin')).then((r) => (r.ok ? r.arrayBuffer() : null)).catch(() => null) : null;
 const TLN = TLBIN && TLBIN.byteLength === TLJ.n * 16 ? TLJ.n : 0;
 const TLX = new Uint16Array(TLN), TLY = new Uint16Array(TLN), TLC = new Uint8Array(TLN), TLS = new Uint8Array(TLN), TLG = new Uint16Array(TLN), TLF = new Uint32Array(TLN), TLL = new Uint32Array(TLN);
