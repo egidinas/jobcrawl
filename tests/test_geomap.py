@@ -1,13 +1,16 @@
-"""geomap (jobcrawl geomap): the cartogram of two synthetic squares, the Natural Earth loader on a cache folder, and publish copying geo-map.json.
+"""geomap (jobcrawl geomap): the cartogram of two synthetic squares, the Web Mercator frame, the rivers (clipping, rank limits, the Natural Earth
+loader on a cache folder), the version 2 files (the index and one file per scope), and publish copying them.
 
 Two squares side by side with 3:1 roles: the area ratio is 3 +- 0.3, no cell folds, the total area is kept within 2 %, and the cartogram
-error is below 5 %. The square case needs numpy (skipped with the reason otherwise); the loader and publish cases do not.
+error is below 5 %. The square case needs numpy (skipped with the reason otherwise); the loader, frame, river and publish cases do not, and
+no case needs the network (the downloads are monkeypatched or the files are written into a cache folder).
 """
 import json
 import os
 import shutil
 import tempfile
 import unittest
+
 from unittest import mock
 
 from synthetic import HAVE_NUMPY, NUMPY_REASON
@@ -140,6 +143,157 @@ class ScopeMapOutput(unittest.TestCase):
         self.assertIn('my', out['companies'][0])
 
 
+class MercatorFrame(unittest.TestCase):
+    """Every scope's frame is Web Mercator: the extent's box is the Mercator box of its corners, and the extent's points fall inside 0..w x 0..h."""
+
+    def test_box_is_the_mercator_box_of_the_corners(self):
+        from jobcrawl.map import geomap as g
+        for box in ((8.0, 47.2, 13.9, 50.6), (-25.0, 34.0, 45.0, 72.0), g.WORLD):
+            f = g.Frame(box)
+            self.assertAlmostEqual(max(f.w, f.h), 1.0)
+            x0, y0 = g.merc(box[0], box[3])                     # north-west corner: the top left of the box
+            x1, y1 = g.merc(box[2], box[1])
+            self.assertAlmostEqual(f.box[0], float(x0), places=9)
+            self.assertAlmostEqual(f.box[1], float(y0), places=9)
+            self.assertAlmostEqual(f.box[2], float(x1), places=9)
+            self.assertAlmostEqual(f.box[3], float(y1), places=9)
+            nw = f.xy([box[0]], [box[3]])[0]
+            self.assertAlmostEqual(float(nw[0]), 0.0, places=9)
+            self.assertAlmostEqual(float(nw[1]), 0.0, places=9)
+
+    def test_points_inside_the_extent_are_inside_the_plane(self):
+        from jobcrawl.map import geomap as g
+        f = g.Frame((8.0, 47.2, 13.9, 50.6))
+        lon = [8.0, 9.5, 11.0, 13.9, 10.0]
+        lat = [47.2, 48.0, 49.5, 50.6, 49.0]
+        xy = f.xy(lon, lat)
+        self.assertTrue(((xy[:, 0] >= 0) & (xy[:, 0] <= f.w) & (xy[:, 1] >= 0) & (xy[:, 1] <= f.h)).all())
+        self.assertGreater(xy[0, 1], xy[3, 1])                 # the south is lower on the plane (y counts from the north)
+
+
+class RiversOutput(unittest.TestCase):
+    """The rivers of an extent: clipped to it, limited by rank (the world 3, Europe 6), the Europe file's duplicates left out, and output points with
+    the true and the two cartogram positions."""
+
+    def test_clip_line_splits_where_the_line_leaves_the_box(self):
+        import numpy as np
+        from jobcrawl.map import geomap as g
+        pts = np.array([[-0.5, 0.5], [0.5, 0.5], [1.5, 0.5], [1.5, 0.2], [0.5, 0.2], [-0.2, 0.2]])
+        pieces = g.clip_line(pts, 1.0, 1.0)
+        self.assertEqual(len(pieces), 2)
+        self.assertEqual(pieces[0].tolist(), [[0.0, 0.5], [0.5, 0.5], [1.0, 0.5]])
+        self.assertEqual(pieces[1].tolist(), [[1.0, 0.2], [0.5, 0.2], [0.0, 0.2]])
+        self.assertEqual(len(g.clip_line(np.array([[2.0, 2.0], [3.0, 3.0]]), 1.0, 1.0)), 0)
+
+    def test_rank_limit_follows_the_width(self):
+        from jobcrawl.map import geomap as g
+        self.assertEqual(g.river_rank_limit(360.0), 3)
+        self.assertEqual(g.river_rank_limit(70.0), 6)
+        self.assertIsNone(g.river_rank_limit(9.0))
+
+    def test_rows_are_limited_clipped_and_named_once(self):
+        from jobcrawl.map import geomap as g
+        ident = g.Composed([])                                  # no warp: the cartogram positions are the true ones
+        frame = g.Frame(g.WORLD)
+        rivers = [{'name': 'Big', 'rank': 1, 'lines': [[[0.0, 0.0], [10.0, 0.0], [20.0, 0.0]]], 'detail': False},
+                  {'name': 'Small', 'rank': 5, 'lines': [[[0.0, 1.0], [10.0, 1.0]]], 'detail': False},            # above the world's limit of 3
+                  {'name': 'Big', 'rank': 11, 'lines': [[[0.0, 2.0], [10.0, 2.0]]], 'detail': True},             # the same river in the detail file
+                  {'name': 'Tiny', 'rank': 11, 'lines': [[[0.0, 3.0], [1.0, 3.0]]], 'detail': True}]
+        rows = g.river_rows(frame, rivers, ident, ident, log=lambda m: None)
+        names = [r['name'] for r in rows]
+        self.assertEqual(names, ['Big', 'Tiny'])
+        self.assertEqual(rows[0]['rank'], 1)
+        for r in rows:
+            self.assertGreaterEqual(len(r['pts']), 2)
+            for pt in r['pts']:
+                self.assertEqual(len(pt), 6)                     # x, y, cx, cy, mx, my
+        self.assertEqual(g.river_rows(frame, [], ident, ident, log=lambda m: None), [])
+
+    def test_loader_reads_the_cache_and_survives_a_missing_file(self):
+        from unittest import mock
+        tmp = tempfile.mkdtemp(prefix='jc-geomap-rivers-')
+        try:
+            line = {'type': 'LineString', 'coordinates': [[8.0, 47.0], [9.0, 48.0]]}
+            multi = {'type': 'MultiLineString', 'coordinates': [[[1.0, 2.0], [1.5, 2.5]], [[3.0, 4.0], [3.5, 4.5]]]}
+            glob = {'type': 'FeatureCollection', 'features': [
+                {'geometry': line, 'properties': {'name': 'Rhine', 'scalerank': 4}},
+                {'geometry': multi, 'properties': {'name': 'Nile', 'scalerank': 1}},
+                {'geometry': {'type': 'Point', 'coordinates': [0, 0]}, 'properties': {'name': 'Dot', 'scalerank': 1}}]}
+            eu = {'type': 'FeatureCollection', 'features': [{'geometry': line, 'properties': {'name': 'Spree', 'scalerank': 10}}]}
+            for name, data in ((geo_base.RIVERS_FILE, glob), (geo_base.RIVERS_EUROPE_FILE, eu)):
+                with open(os.path.join(tmp, name), 'w', encoding='utf-8') as fh:
+                    json.dump(data, fh)
+            rivers = geo_base.load_rivers(tmp, europe=False, log=silent)
+            self.assertEqual([(r['name'], r['rank'], r['detail'], len(r['lines'])) for r in rivers], [('Rhine', 4, False, 1), ('Nile', 1, False, 2)])
+            self.assertEqual(rivers[0]['lines'], [[[8.0, 47.0], [9.0, 48.0]]])
+            both = geo_base.load_rivers(tmp, europe=True, log=silent)
+            self.assertEqual([r['name'] for r in both], ['Rhine', 'Nile', 'Spree'])
+            self.assertTrue(both[2]['detail'])
+            with mock.patch('urllib.request.urlopen', side_effect=OSError('offline')):
+                empty = tempfile.mkdtemp(prefix='jc-geomap-rivers-none-')
+                try:
+                    self.assertEqual(geo_base.load_rivers(empty, europe=True, log=silent), [])
+                finally:
+                    shutil.rmtree(empty, ignore_errors=True)
+                # the Europe file alone missing: the world's rivers are still there
+                os.remove(os.path.join(tmp, geo_base.RIVERS_EUROPE_FILE))
+                self.assertEqual([r['name'] for r in geo_base.load_rivers(tmp, europe=True, log=silent)], ['Rhine', 'Nile'])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+class VersionTwoFiles(unittest.TestCase):
+    """build writes one file per scope (geo-map-<id>.json: the scope with its id, shapes, places, companies, rivers) and the index geo-map.json (no
+    shapes in it). The outlines and the rivers are synthetic (no network); the world scope has a river, the Europe scope has none inside its extent."""
+
+    @need_numpy
+    def test_index_and_scope_files(self):
+        from jobcrawl.map import geomap as g
+        square = lambda x0: [[x0, 45.0], [x0 + 1.0, 45.0], [x0 + 1.0, 46.0], [x0, 46.0]]     # (lon, lat) squares inside Europe
+        shapes = {'countries': [{'id': 'AA', 'name': 'Alpha', 'kind': 'country', 'cc': 'AA', 'rings': [square(0.0)]},
+                                {'id': 'BB', 'name': 'Beta', 'kind': 'country', 'cc': 'BB', 'rings': [square(1.0)]}], 'states': [], 'unmatched': []}
+        rivers = [{'name': 'Test', 'rank': 1, 'lines': [[[0.2, 45.5], [1.8, 45.5]]], 'detail': False},
+                  {'name': 'Minor', 'rank': 5, 'lines': [[[0.2, 45.2], [1.8, 45.2]]], 'detail': False}]     # above the world's limit (3), within Europe's (6)
+        real = g.annealed
+        small = lambda *a, **k: real(*a, **dict({'grid': 96}, **k))
+        profile = {'scopes': [{'id': 'world', 'label': {'en': 'World'}, 'match': {'any': True}},
+                              {'id': 'eu', 'label': {'en': 'EU'}, 'match': {'continent': 'EU'}}]}
+        tmp = tempfile.mkdtemp(prefix='jc-geomap-v2-')
+        try:
+            site = os.path.join(tmp, 'site')
+            board.build(load_profile(PROFILE), FIXTURE, site)
+            vectors = os.path.join(tmp, 'vectors')
+            with mock.patch.object(g, 'GRID', 96), mock.patch.object(g, 'annealed', small), \
+                    mock.patch.object(geo_base, 'load', return_value=shapes), mock.patch.object(geo_base, 'load_scope', return_value=shapes), \
+                    mock.patch.object(geo_base, 'load_rivers', return_value=rivers):
+                path = g.build(site, profile, vectors, cache=os.path.join(tmp, 'cache'), log=silent)
+            self.assertEqual(os.path.basename(path), 'geo-map.json')
+            with open(path, encoding='utf-8') as fh:
+                index = json.load(fh)
+            self.assertEqual(index['version'], 2)
+            self.assertEqual(index['projection'], 'mercator')
+            self.assertNotIn('shapes', index)
+            self.assertEqual(set(index['scopes']), {'world', 'eu'})
+            for sid, entry in index['scopes'].items():
+                self.assertEqual(entry['file'], f'geo-map-{sid}.json')
+                self.assertEqual(len(entry['box']), 4)
+                self.assertIn('rivers', entry)
+                self.assertNotIn('shapes', entry)
+                with open(os.path.join(vectors, entry['file']), encoding='utf-8') as fh:
+                    full = json.load(fh)
+                self.assertEqual(full['id'], sid)
+                self.assertEqual(full['box'], entry['box'])
+                self.assertIn('rivers', full)
+                self.assertTrue(full['shapes'])
+                for r in full['rivers']:
+                    self.assertGreaterEqual(len(r['pts']), 2)
+                    self.assertEqual(len(r['pts'][0]), 6)
+            self.assertEqual(index['scopes']['world']['rivers'], 1)   # the rank 5 river is above the world's limit
+            self.assertEqual(index['scopes']['eu']['rivers'], 2)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 class NaturalEarthCache(unittest.TestCase):
     """geo_base.load reads the two files from the cache folder (no download) and keeps the countries other than the states' country."""
 
@@ -167,7 +321,8 @@ class NaturalEarthCache(unittest.TestCase):
 
 
 class PublishGeomap(unittest.TestCase):
-    """publish copies VECTORS/geo-map.json into SITE/match/ and names it in config.json (no numpy needed)."""
+    """publish copies VECTORS/geo-map.json (the index) and every VECTORS/geo-map-<id>.json into SITE/match/, and names the index in config.json
+    (no numpy needed)."""
 
     @classmethod
     def setUpClass(cls):
@@ -184,12 +339,16 @@ class PublishGeomap(unittest.TestCase):
         vectors = os.path.join(self.tmp, 'vectors-geo')
         os.makedirs(vectors)
         with open(os.path.join(vectors, 'geo-map.json'), 'w', encoding='utf-8') as fh:
-            json.dump({'version': 1, 'scopes': {}}, fh)
+            json.dump({'version': 2, 'projection': 'mercator', 'scopes': {'bavaria': {'file': 'geo-map-bavaria.json'}}}, fh)
+        with open(os.path.join(vectors, 'geo-map-bavaria.json'), 'w', encoding='utf-8') as fh:
+            json.dump({'id': 'bavaria', 'rivers': []}, fh)
         site = os.path.join(self.tmp, 'site-geo')
         shutil.copytree(self.site, site)
         files = publish.publish(site, self.profile, vectors, log=silent)
         self.assertIn('match/geo-map.json', files)
+        self.assertIn('match/geo-map-bavaria.json', files)
         self.assertTrue(os.path.exists(os.path.join(site, 'match', 'geo-map.json')))
+        self.assertTrue(os.path.exists(os.path.join(site, 'match', 'geo-map-bavaria.json')))
         with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
             self.assertEqual(json.load(fh)['geomap'], 'match/geo-map.json')
 

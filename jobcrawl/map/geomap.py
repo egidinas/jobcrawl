@@ -10,12 +10,18 @@ state's bounds + 5 %). Outside the land the density is the land's mean (so the e
 mean land density (FLOOR), so nothing vanishes. The role places, the land polygons and the companies are moved by the same displacement
 (bilinear between the nodes).
 
+Every scope is drawn in Web Mercator (one projection for all of them, so the scopes line up and the web view can zoom from one to the next):
+its extent is the box [x0, y0, x1, y1] in world Mercator units (0..1, y from the north edge), and its plane is that box normalised so the longer
+side is 1 (w, h). The outlines are Eurostat GISCO at each scope's level of detail, the rivers Natural Earth (rank filtered per scope).
+
 Reads: SITE/jobs-index.json and SITE/jobs-desc-XX.json (the location text l of every role; jobcrawl.geo.geo.resolve gives its places); the
 profile's scopes (without --profile: the worldwide scope); the companies catalogue (--companies: companies[].coordinates [lat, lon], optional);
-the Natural Earth polygons (jobcrawl/map/geo_base.py, downloaded into --cache when they are not there yet).
-Writes VECTORS/geo-map.json: {version, source, scopes: {id: {extent, w, h, shapes, places, companies, error, moderate}}}. Positions are 0..1 units with
-y counted from the north edge: x, y the true position, cx, cy the cartogram position (density as is), mx, my the moderate cartogram
-position (each area (1 - MODERATE) its true size plus MODERATE its cartogram size: a milder distortion). publish copies it into SITE/match/.
+the outlines and rivers (jobcrawl/map/geo_base.py, downloaded into --cache when they are not there yet).
+Writes VECTORS/geo-map-<scope id>.json (version 2, one file per scope: {id, extent, box, w, h, shapes, places, companies, rivers, error, method,
+moderate}) and VECTORS/geo-map.json, the index: {version, projection, source, scopes: {id: {file, box, extent, w, h, error, method, moderate,
+rivers}}}. Positions are 0..1 units with y counted from the north edge: x, y the true position, cx, cy the cartogram position (density as is), mx, my
+the moderate cartogram position (each area (1 - MODERATE) its true size plus MODERATE its cartogram size: a milder distortion). publish copies the
+index and every scope file into SITE/match/ (config.json names the index).
 """
 import collections
 import json
@@ -47,14 +53,15 @@ FIT_CG = 60                 # conjugate-gradient iterations per fit step
 FIT_SMOOTH = 1e-4           # weight of the node smoothness in the area fit
 CFL = 2.0                   # cells a node may move in one flow step
 DT0, GROW = 0.05, 1.0       # a flow step is at most DT0 + GROW * t long (the flow changes with t; longer steps fold cells)
-SIMPLIFY = 0.003            # Douglas-Peucker tolerance, in extent widths
-RING_MIN = 0.0005           # rings smaller than this share of the extent are dropped
+SIMPLIFY = 0.0003           # Douglas-Peucker tolerance, in units of the longer side (the outlines and the rivers; 0.003 before the x10 detail)
+RING_MIN = 0.0005           # rings smaller than this share of the extent are dropped (islands; never a shape's largest ring, never a hole)
 VALID_STEP = 0.25           # cells: edges are cut this finely before the areas are measured
 OUT_STEP = 2.0              # cells: output edges are cut this finely before the transform (the transform bends them)
+DEC = 5                     # decimals of the output positions (rings, rivers, places, companies): the web view zooms in on the extent
 WORLD = (-180.0, -60.0, 180.0, 80.0)
 EUROPE = (-25.0, 34.0, 45.0, 72.0)
 SOURCE = 'Eurostat GISCO boundaries (c) EuroGeographics; Natural Earth (public domain); GeoNames (CC BY 4.0)'
-FILE = 'geo-map.json'
+FILE = 'geo-map.json'       # the index (version 2); the scopes are in geo-map-<scope id>.json beside it
 
 
 class GeoMapError(ValueError):
@@ -113,6 +120,49 @@ def clip_box(pts, w, h):
         if len(pts) < 3:
             return np.zeros((0, 2))
     return pts
+
+
+def _clip_segment(a, b, w, h):
+    """The part of the segment a-b inside 0..w x 0..h (Liang-Barsky), or None when it lies outside."""
+    t0, t1 = 0.0, 1.0
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    for p, q in ((-dx, a[0]), (dx, w - a[0]), (-dy, a[1]), (dy, h - a[1])):
+        if p == 0:
+            if q < 0:
+                return None
+            continue
+        r = q / p
+        if p < 0:
+            if r > t1:
+                return None
+            t0 = max(t0, r)
+        else:
+            if r < t0:
+                return None
+            t1 = min(t1, r)
+    # the ends that are not cut stay exact, so consecutive segments meet at the same point
+    return (a if t0 == 0.0 else a + t0 * (b - a)), (b if t1 == 1.0 else a + t1 * (b - a))
+
+
+def clip_line(pts, w, h):
+    """The polyline (n, 2) cut to the rectangle 0..w x 0..h: a list of the pieces inside it (a line that leaves the box and comes back gives two)."""
+    pieces, cur = [], []
+    for a, b in zip(pts[:-1], pts[1:]):
+        seg = _clip_segment(a, b, w, h)
+        if seg is None:
+            if len(cur) >= 2:
+                pieces.append(np.array(cur))
+            cur = []
+            continue
+        p, q = seg
+        if not cur or not np.array_equal(cur[-1], p):
+            if len(cur) >= 2:
+                pieces.append(np.array(cur))
+            cur = [p]
+        cur.append(q)
+    if len(cur) >= 2:
+        pieces.append(np.array(cur))
+    return pieces
 
 
 def simplify(ring, tol):
@@ -445,19 +495,36 @@ def annealed(rings, points, roles, w, h, km_per_cell, grid=GRID, log=print, stag
     return res, 'single'
 
 
-class Frame:
-    """An extent's plane: x east from the west edge, y south from the north edge, in units of the longer side (max(w, h) = 1)."""
+def scope_file(scope_id):
+    """The file of one scope in the vectors folder (the index is FILE)."""
+    return f'geo-map-{scope_id}.json'
 
-    def __init__(self, box, kx):
+
+def merc(lon, lat):
+    """Web Mercator in world units: x 0 at 180 degrees west to 1 at 180 east, y 0 at the top (85.05 north) to 1 at the bottom."""
+    lat = np.clip(np.asarray(lat, float), -85.05, 85.05)
+    return (np.asarray(lon, float) + 180.0) / 360.0, 0.5 - np.log(np.tan(np.pi / 4 + np.radians(lat) / 2)) / (2 * np.pi)
+
+
+class Frame:
+    """An extent's plane: the extent in Web Mercator (one projection for every scope, so they line up), x east from the west edge, y south
+    from the north edge, in units of the longer side (max(w, h) = 1). box: the extent in world units (see merc); deg: plane units per degree
+    of latitude at the extent's middle (for distances given in degrees or km)."""
+
+    def __init__(self, box, kx=None):   # kx: no longer used (the projection is the same for every extent)
         self.lon0, self.lat0, self.lon1, self.lat1 = box
-        self.kx = kx
-        W, H = (self.lon1 - self.lon0) * kx, self.lat1 - self.lat0
+        (X0, X1), (Y1, Y0) = merc([self.lon0, self.lon1], [self.lat0, self.lat1])
+        self.X0, self.Y0 = float(X0), float(Y0)
+        W, H = float(X1 - X0), float(Y1 - Y0)
         self.s = max(W, H)
         self.w, self.h = W / self.s, H / self.s
+        self.box = [self.X0, self.Y0, float(X1), float(Y1)]
+        self.deg = 1.0 / (360.0 * math.cos(math.radians((self.lat0 + self.lat1) / 2)) * self.s)
 
     def xy(self, lon, lat):
         """(n, 2) plane points of lon, lat arrays."""
-        return np.stack([(np.asarray(lon, float) - self.lon0) * self.kx / self.s, (self.lat1 - np.asarray(lat, float)) / self.s], -1)
+        x, y = merc(lon, lat)
+        return np.stack([(x - self.X0) / self.s, (y - self.Y0) / self.s], -1)
 
 
 def ring_xy(frame, ring):
@@ -859,8 +926,57 @@ def land_snap(pts, ccs, rings, cc_of, tol, eps):
     return pts, moved, lost
 
 
-def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
-    """The map of one scope: shapes, places and companies with their true and cartogram positions, and the validation."""
+def _is_hole(ring, others):
+    """Whether a ring lies inside another ring of the same shape (its first point does, by the even-odd rule)."""
+    x, y = float(ring[0][0]), float(ring[0][1])
+    for o in others:
+        if len(o) < 3:
+            continue
+        inside, j = False, len(o) - 1
+        for i in range(len(o)):
+            xi, yi, xj, yj = float(o[i][0]), float(o[i][1]), float(o[j][0]), float(o[j][1])
+            if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                inside = not inside
+            j = i
+        if inside:
+            return True
+    return False
+
+
+def river_rank_limit(width):
+    """The largest scalerank drawn for an extent this many degrees of longitude wide: the world (wider than 90) its 3 largest rivers, Europe (wider than 20)
+    the 6 largest, a country or a state all of them (None)."""
+    return 3 if width > 90 else 6 if width > 20 else None
+
+
+def river_rows(frame, rivers, carto, carto_m, log=print):
+    """The rivers of an extent, as the output's 'rivers': [{'name', 'rank', 'pts': [[x, y, cx, cy, mx, my], ...]}] (see geo_base.load_rivers). Rivers
+    above the rank limit are left out, and a detail river (the Europe file) is left out when a kept river of the same name is drawn (the same river
+    in both files). Each river is cut to the extent, simplified with SIMPLIFY (the outlines' tolerance), cut finely and warped with the two maps the
+    outlines use. Pieces with fewer than 2 points are dropped."""
+    limit = river_rank_limit(frame.lon1 - frame.lon0)
+    keep = [r for r in rivers if r.get('detail') or limit is None or r['rank'] <= limit]
+    named = {r['name'] for r in keep if not r.get('detail') and r['name']}
+    rows = []
+    for r in keep:
+        if r.get('detail') and r['name'] in named:
+            continue
+        for line in r['lines']:
+            for piece in clip_line(ring_xy(frame, line), frame.w, frame.h):
+                sm = simplify_open(piece, SIMPLIFY)
+                d = densify_open(sm, OUT_STEP / GRID)
+                if len(d) < 2:
+                    continue
+                c, m = carto.apply(d), carto_m.apply(d)
+                pts = [[round(float(d[i, 0]), DEC), round(float(d[i, 1]), DEC), round(float(c[i, 0]), DEC), round(float(c[i, 1]), DEC),
+                        round(float(m[i, 0]), DEC), round(float(m[i, 1]), DEC)] for i in range(len(d))]
+                rows.append({'name': r['name'], 'rank': r['rank'], 'pts': pts})
+    log(f'  {len(rows)} river pieces ({sum(len(q["pts"]) for q in rows)} points) of {len(rivers)} rivers read (rank limit {limit or "none"})')
+    return rows
+
+
+def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, rivers=()):
+    """The map of one scope: shapes, places, companies and rivers with their true and cartogram positions, and the validation."""
     frame = Frame(box, kx)
     names = {s['id']: s for s in shapes['countries'] + shapes['states']}
     rings = {}                                    # id -> the shape's rings cut to the extent (full resolution)
@@ -873,8 +989,8 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     if not rings:
         raise GeoMapError(f'scope {scope["id"]!r}: no shape in the extent')
     cc_of = {sid: names[sid]['cc'] for sid in rings}
-    tol = 0.8 / frame.s                                     # 0.8 degrees: a city this close to its country's coast, in a coarse outline's sea, is moved ashore
-    eps = 0.004 / frame.s
+    tol = 0.8 * frame.deg                                   # 0.8 degrees: a city this close to its country's coast, in a coarse outline's sea, is moved ashore
+    eps = 0.004 * frame.deg
     inside_places = []
     for rec in table.values():
         if rec['ll'] is None:
@@ -889,7 +1005,7 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     for (rec, _x, _y), sid in zip(inside_places, place_shape):
         rec['shape'] = sid
     points = np.array([[x, y, rec['share']] for rec, x, y in inside_places]).reshape(-1, 3)
-    km_per_cell = 111.2 * frame.s / GRID                 # a plane unit is about one degree of latitude
+    km_per_cell = 111.2 / frame.deg / GRID               # a degree of latitude is 111.2 km
     roles_in = {}
     for rec, _x, _y in inside_places:
         if rec['shape'] in rings:
@@ -932,11 +1048,15 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
     welded = weld_rings(rings, SIMPLIFY, OUT_STEP * cell, carto, carto_m)         # borders in common stay one line, before and after the warp
     for sid in rings:
         out_rings = []
-        for sm, d, c, m in welded.get(sid, []):
-            if len(sm) < 3 or poly_area(sm) < RING_MIN * frame.w * frame.h:
+        parts = welded.get(sid, [])
+        big = max(range(len(parts)), key=lambda i: poly_area(parts[i][0]) if len(parts[i][0]) >= 3 else -1, default=-1)
+        for i, (sm, d, c, m) in enumerate(parts):
+            # a small ring goes, unless it is the shape's largest (a small state such as Bremen stays on a continent's map) or a hole
+            # (the hole of an enclave: without it the state around it would cover the enclave)
+            if len(sm) < 3 or (i != big and poly_area(sm) < RING_MIN * frame.w * frame.h and not _is_hole(sm, [q[0] for j, q in enumerate(parts) if j != i])):
                 continue
-            out_rings.append([[round(float(a), 4), round(float(b), 4), round(float(c_[0]), 4), round(float(c_[1]), 4),
-                               round(float(m_[0]), 4), round(float(m_[1]), 4)]
+            out_rings.append([[round(float(a), DEC), round(float(b), DEC), round(float(c_[0]), DEC), round(float(c_[1]), DEC),
+                               round(float(m_[0]), DEC), round(float(m_[1]), DEC)]
                               for (a, b), c_, m_ in zip(d, c, m)])
         if out_rings:
             sh = names[sid]
@@ -951,15 +1071,16 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
         pos = carto.apply([[x, y] for _rec, x, y in inside_places])
         pos_m = carto_m.apply([[x, y] for _rec, x, y in inside_places])
         for (rec, x, y), (cx, cy), (mx, my) in zip(inside_places, pos, pos_m):
-            out_places.append({'id': rec['key'], 'name': rec['name'], 'n': rec['n'], 'x': round(x, 4), 'y': round(y, 4),
-                               'cx': round(float(cx), 4), 'cy': round(float(cy), 4), 'mx': round(float(mx), 4), 'my': round(float(my), 4)})
+            out_places.append({'id': rec['key'], 'name': rec['name'], 'n': rec['n'], 'x': round(x, DEC), 'y': round(y, DEC),
+                               'cx': round(float(cx), DEC), 'cy': round(float(cy), DEC), 'mx': round(float(mx), DEC), 'my': round(float(my), DEC)})
+    out_rivers = river_rows(frame, rivers, carto, carto_m, log)
     out_companies = []
     if comp_in:
         pos = carto.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
         pos_m = carto_m.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
         for (slug, x, y, ids, key, meta), (cx, cy), (mx, my), cc in zip(comp_in, pos, pos_m, comp_cc):
-            row = {'slug': slug, 'x': round(x, 4), 'y': round(y, 4), 'cx': round(float(cx), 4), 'cy': round(float(cy), 4),
-                   'mx': round(float(mx), 4), 'my': round(float(my), 4)}
+            row = {'slug': slug, 'x': round(x, DEC), 'y': round(y, DEC), 'cx': round(float(cx), DEC), 'cy': round(float(cy), DEC),
+                   'mx': round(float(mx), DEC), 'my': round(float(my), DEC)}
             if cc:
                 row['cc'] = cc
             if ids is not None:
@@ -970,13 +1091,13 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print):
                 row.update({kk: vv for kk, vv in (('k', meta.get('k')), ('pn', meta.get('pn')), ('h', meta.get('h')), ('ls', meta.get('ls'))) if vv})
             out_companies.append(row)
     log(f'  {len(out_shapes)} shapes, {len(out_places)} places, {len(out_companies)} companies in the extent')
-    return {'extent': [round(v, 4) for v in box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
-            'places': out_places, 'companies': out_companies, 'error': round(res['error'], 4), 'method': method,
+    return {'extent': [round(v, 4) for v in box], 'box': [round(v, 7) for v in frame.box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
+            'places': out_places, 'companies': out_companies, 'rivers': out_rivers, 'error': round(res['error'], 4), 'method': method,
             'moderate': {'error': round(res_m['error'], 4), 'method': method_m, 'mix': MODERATE}}
 
 
 def build(site, profile, vectors, companies=None, cache=None, log=print, history=None, verified=None):
-    """Writes VECTORS/geo-map.json for the board in SITE. Returns its path."""
+    """Writes VECTORS/geo-map-<scope id>.json for each scope and the index VECTORS/geo-map.json for the board in SITE. Returns the index's path."""
     if not os.path.exists(os.path.join(site, 'jobs-index.json')):
         raise GeoMapError(f'no jobs-index.json in {site} (run jobcrawl build first)')
     cache = cache or os.path.join(vectors, '.geo-cache')
@@ -1023,14 +1144,23 @@ def build(site, profile, vectors, companies=None, cache=None, log=print, history
     log(f'company points by kind: {dict(collections.Counter(c[4]["k"] for c in comp))}')
     log(f'company points: {len(comp)} for {len(hq)} companies with coordinates, {sum(1 for c in comp if c[3])} of them at branch locations, {len({c[0] for c in comp} - set(hq))} companies without coordinates located by their roles')
     scopes = profile['scopes'] if profile else DEFAULT_SCOPES
-    out = {'version': 1, 'source': SOURCE, 'scopes': {}}
-    for scope in scopes:
-        sh = geo_base.load_scope(cache, scope, 'DE', log)                  # the outlines at this scope's level of detail (the world 1:20M, Europe 1:10M, Germany 1:3M, Bavaria's districts 1:3M)
-        box, kx = scope_box(scope, sh)
-        out['scopes'][scope['id']] = scope_map(scope, box, kx, sh, table, comp, shape_share, log)
     os.makedirs(vectors, exist_ok=True)
+    index = {'version': 2, 'projection': 'mercator', 'source': SOURCE, 'scopes': {}}
+    for scope in scopes:
+        sh = geo_base.load_scope(cache, scope, 'DE', log)                  # the outlines at this scope's level of detail (the world 1:10M, Europe 1:3M, Germany and Bavaria's districts 1:1M)
+        box, kx = scope_box(scope, sh)
+        rivers = geo_base.load_rivers(cache, geo_base.detail_of(scope) == 'europe', log)
+        m = dict(scope_map(scope, box, kx, sh, table, comp, shape_roles=shape_share, log=log, rivers=rivers), id=scope['id'])
+        name = scope_file(scope['id'])
+        path_scope = os.path.join(vectors, name)
+        with open(path_scope, 'w', encoding='utf-8') as fh:
+            json.dump(m, fh, ensure_ascii=False, separators=(',', ':'))
+        log(f'{name}: {os.path.getsize(path_scope) / 1e6:.2f} MB')
+        index['scopes'][scope['id']] = {'file': name, 'box': m['box'], 'extent': m['extent'], 'w': m['w'], 'h': m['h'], 'error': m['error'],
+                                        'method': m['method'], 'moderate': m['moderate'], 'rivers': len(m['rivers'])}
     path = os.path.join(vectors, FILE)
     with open(path, 'w', encoding='utf-8') as fh:
-        json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
-    log(f'geo-map: {len(scopes)} scopes, {os.path.getsize(path) / 1e6:.2f} MB -> {path}')
+        json.dump(index, fh, ensure_ascii=False, separators=(',', ':'))
+    total = os.path.getsize(path) + sum(os.path.getsize(os.path.join(vectors, v['file'])) for v in index['scopes'].values())
+    log(f'geo-map: index of {len(scopes)} scopes, {os.path.getsize(path)} bytes; {total / 1e6:.2f} MB in all -> {path}')
     return path
