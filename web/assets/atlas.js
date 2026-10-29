@@ -778,8 +778,10 @@ function geoPaths(Lg) { const key = [geo.t, W, H, BW, BH, st.z.s, st.z.cx, st.z.
       path.moveTo(q[0], q[1]); for (let i = 2; i < q.length; i += 2) path.lineTo(q[i], q[i + 1]); path.closePath(); s.pr.push(q); if (!big || q.length > big.length) big = q; }
     s.path = path; s.lx = s.ly = 0; s.ar = 0;
     if (big) { const [lx, ly, ar] = labelPoint(big); s.lx = lx; s.ly = ly; s.ar = ar; } }
-  // the rivers: one path per rank band (the big ones drawn a little wider)
-  Lg.rpath = [new Path2D(), new Path2D()]; for (const r of Lg.rivers) { const P2 = Lg.rpath[r.rank <= 3 ? 0 : 1]; r.pts.forEach((v, i) => { const x = X(geoAt(v[0], v[4] ?? (v[0] + v[2]) / 2, v[2], t)), y = Y(geoAt(v[1], v[5] ?? (v[1] + v[3]) / 2, v[3], t)); if (i) P2.lineTo(x, y); else P2.moveTo(x, y); }); } }
+  // the rivers: one path per rank band (the big ones drawn a little wider); the smaller ones only once the view is narrow enough (a continent
+  // shows its big rivers, a country all of them)
+  const span = geoUni() ? 360 * geoView().w : 0, lim = span > 120 ? 3 : span > 25 ? 7 : 99;
+  Lg.rpath = [new Path2D(), new Path2D()]; for (const r of Lg.rivers) { if (r.rank > lim) continue; const P2 = Lg.rpath[r.rank <= 3 ? 0 : 1]; r.pts.forEach((v, i) => { const x = X(geoAt(v[0], v[4] ?? (v[0] + v[2]) / 2, v[2], t)), y = Y(geoAt(v[1], v[5] ?? (v[1] + v[3]) / 2, v[3], t)); if (i) P2.lineTo(x, y); else P2.moveTo(x, y); }); } }
 // the label point of a shape's largest ring (a flat px list): the area-weighted centroid when it lies inside the ring, else the sample of a
 // 12 x 12 grid inside the ring that is farthest from its edge (the edge's vertices, at most 64). Also the ring's on-screen area
 function labelPoint(q) { const n = q.length / 2; let A = 0, cx = 0, cy = 0, a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
