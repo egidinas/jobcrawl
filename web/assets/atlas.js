@@ -587,12 +587,14 @@ function paintMap(ctx, P, o) {
     if (sub && areaNames.has(nameOf(r).toLowerCase())) continue;
     if (counts.areas >= Math.round((many ? 400 : 44) * ks) || (!r.words.length && !r.label)) continue;
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
-    const lines = wrapText(nameOf(r), roles ? 18 : 20, 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: areaInk(sub) }));   // company groups have long names
+    const ri = roles ? -1 : Ly.regions.indexOf(r), col = ri < 0 ? areaInk(sub) : (() => { const q = regionRgb(ri, T.glow ? 0.86 : 0.36, T.C); return `rgb(${q[0]},${q[1]},${q[2]})`; })();   // a company group's name in its own colour, so it is plain which group it names
+    const lines = wrapText(nameOf(r), roles ? 18 : 20, 3).map((t) => ({ t, fs, face: sub ? '500' : '600', alpha: 1, color: col }));   // company groups have long names
     const X0 = sx(xy[0]), Y0 = sy(xy[1]), dy = 1.4 * fs * ts * lines.length;   // the patch centre, else just above or below it
     // area names may sit inside the lens (free): placed first, the lens's own labels fit around them
     const ring = []; for (const f of [1, 2]) for (let q = 0; q < 8; q++) ring.push([X0 + Math.cos(q * Math.PI / 4) * f * dy * 1.7, Y0 + Math.sin(q * Math.PI / 4) * f * dy, 'center']);
-    // job clouds: an area is named at the centre of its patch, over its points (just above or below when another name is there); other maps: the emptiest position
-    const ab = roles ? place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center']], true, 0, { flat: true }) : place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center'], ...ring], true, 0, { soft: true, step: 0.8 }); if (ab) { ab.area = true; counts.areas++; areaNames.add(nameOf(r).toLowerCase()); }
+    // an area is named in the middle of its patch, over its points (just above or below when another name is there; a company group, coloured like it,
+    // else on the nearest ring around it, never farther: a name away from its group cannot be told apart)
+    const ab = place(lines, [[X0, Y0, 'center'], [X0, Y0 - dy, 'center'], [X0, Y0 + dy, 'center'], ...(roles ? [] : ring.slice(0, 8))], true, 0, { flat: true }); if (ab) { ab.area = true; counts.areas++; areaNames.add(nameOf(r).toLowerCase()); }
   }
   // the roles and companies in the lens are labelled at any zoom (roles: newest first, then nearest the lens centre; companies: most open
   // roles first). On screen the other new roles follow, newest first. They come after the area names and fit around them, and may lie
@@ -739,13 +741,6 @@ const placeCos = (k) => { const Lg = lay(); return (Lg.coAt.get(k) || []).map((j
 // a place in the lens: its name, its open roles and the companies located there (the data gives no city per role: a place card, not a role list)
 function placeCardHtml(k, e) { const cs = placeCos(k); return `<li class="atlas-item" data-k="${k}" data-id="${e.id}"><div class="t">${esc(e.name)}</div><div class="m">${e.n.toLocaleString()} ${L('open roles here', 'offene Stellen hier')} · ${cs.length} ${L('companies here', 'Firmen hier')}</div>${cs.length ? `<div class="m">${cs.slice(0, 6).map((c) => esc(shortName(c.name))).join(' · ')}${cs.length > 6 ? ` · +${cs.length - 6}` : ''}</div>` : ''}</li>`; }
 // the geography's marks for this view: the places always (their counts are all their roles), the companies by the chips and the Where scope
-// the regions the geography names at the widest level (a country not listed is named by itself)
-const SUBREGION = (() => { const R = {}, add = (en, de, ccs) => ccs.split(' ').forEach((c) => { R[c] = [en, de]; });
-  add('Central Europe', 'Mitteleuropa', 'DE AT CH CZ PL SK HU LI SI'); add('Western Europe', 'Westeuropa', 'FR BE NL LU MC'); add('British Isles', 'Britische Inseln', 'GB IE');
-  add('Nordics', 'Nordeuropa', 'SE NO DK FI IS'); add('Southern Europe', 'Südeuropa', 'ES PT IT GR MT HR RS BA AL MK ME XK CY SM VA AD'); add('Eastern Europe', 'Osteuropa', 'UA BY RU MD RO BG LT LV EE');
-  add('North America', 'Nordamerika', 'US CA'); add('Latin America', 'Lateinamerika', 'MX BR AR CL CO PE UY EC VE PA CR GT DO CU BO PY');
-  add('Middle East', 'Naher Osten', 'AE SA IL QA KW BH OM JO LB TR IR IQ'); add('South Asia', 'Südasien', 'IN PK BD LK NP'); add('East Asia', 'Ostasien', 'CN JP KR TW HK MN');
-  add('Southeast Asia', 'Südostasien', 'SG MY TH VN ID PH'); add('Oceania', 'Ozeanien', 'AU NZ'); add('Africa', 'Afrika', 'ZA EG MA NG KE TN GH ET DZ SN'); return R; })();
 // which branch points the geography shows (toggles, any mix): 'now' where roles are open now, 'past' where the company had roles before, 'file' the locations on file
 // (checked addresses, branch coordinates, the company's own places), also where nothing is open. Headquarters are always shown.
 const brOk = (e) => !e.kind || st.branches.has(e.kind === 'branch' ? 'now' : e.kind === 'addr' ? 'file' : e.kind);
@@ -753,6 +748,27 @@ function prepareGeo(T) { const Lg = geoLay(), n = Lg.n, cn = new Int32Array(n), 
   act = Lg.ents.map((e) => e.place || visibleRoles(e).length > 0); vis = Lg.ents.map((e) => e.place || (coFieldsOk(e) && coScopeOk(e) && brOk(e)));
   Lg.ents.forEach((e, k) => { if (!e.place) cn[k] = visibleRoles(e).length; }); fit = null;
   return { Ly: Lg, roles: false, geo: true, T, ink: css('--ink'), paper: css('--panel'), stat: null, fresh: { t: 0, w: 0, m: 0 }, heat: false, cn, cw, cNew, cwMax: 0, lw: linkWeights(Lg) }; }
+// the continents of the geography's widest names (ISO country codes)
+const CONTINENT = (() => { const R = {}, add = (k, ccs) => ccs.split(' ').forEach((c) => { R[c] = k; });
+  add('EU', 'AD AL AT AX BA BE BG BY CH CY CZ DE DK EE ES FI FO FR GB GG GI GR HR HU IE IM IS IT JE LI LT LU LV MC MD ME MK MT NL NO PL PT RO RS RU SE SI SJ SK SM UA VA XK');
+  add('NA', 'US CA MX GL BM PM GT BZ SV HN NI CR PA CU DO HT JM BS BB TT PR AG DM GD KN LC VC AW CW KY TC VG VI MQ GP');
+  add('SA', 'BR AR CL CO PE UY EC VE BO PY GY SR GF FK');
+  add('AS', 'CN JP KR KP TW HK MO MN IN PK BD LK NP BT MV AF KZ UZ TM KG TJ AE SA IL QA KW BH OM JO LB TR IR IQ SY YE PS GE AM AZ SG MY TH VN ID PH KH LA MM BN TL');
+  add('OC', 'AU NZ PG FJ SB VU NC PF WS TO KI FM MH PW NR TV GU');
+  add('AF', 'DZ AO BJ BW BF BI CM CV CF TD KM CG CD CI DJ EG GQ ER SZ ET GA GM GH GN GW KE LS LR LY MG MW ML MR MU MA MZ NA NE NG RW ST SN SC SL SO ZA SS SD TZ TG TN UG ZM ZW RE YT EH');
+  return R; })();
+const CONTINENT_NAME = { EU: ['Europe', 'Europa'], NA: ['North America', 'Nordamerika'], SA: ['South America', 'Südamerika'], AS: ['Asia', 'Asien'], OC: ['Oceania', 'Ozeanien'], AF: ['Africa', 'Afrika'] };
+// the level the geography names its areas at: by the width of the view in degrees (the scope's extent over the zoom): continents above 90, countries
+// above 20, else the shapes of the scope (states, districts)
+function geoLevel(Lg) { const S = (GEO && GEO.scopes && GEO.scopes[Lg.sid]) || {}, ex = S.extent || [-180, -60, 180, 80], span = (ex[2] - ex[0]) / Math.max(1, st.z.s);
+  return span > 90 ? 'continent' : span > 20 ? 'country' : 'shape'; }
+// the shape a company lies in, on the true map (the finest one: a district before a state before a country); kept on the entity
+function geoShapeOf(Lg, e) { if (e.shp !== undefined) return e.shp; const rank = { district: 0, state: 1, country: 2 }; let best = null;
+  for (const s of Lg.shapes) { if (best && (rank[s.kind] ?? 3) >= (rank[best.kind] ?? 3)) continue; if (!s.bb) { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const r of s.rings) for (const v of r) { if (v[0] < a) a = v[0]; if (v[0] > c) c = v[0]; if (v[1] < b) b = v[1]; if (v[1] > d) d = v[1]; } s.bb = [a, b, c, d]; }
+    if (e.gx < s.bb[0] || e.gx > s.bb[2] || e.gy < s.bb[1] || e.gy > s.bb[3]) continue;
+    let inside = false; for (const r of s.rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1]; if ((yi > e.gy) !== (yj > e.gy) && e.gx < (xj - xi) * (e.gy - yi) / (yj - yi) + xi) inside = !inside; }
+    if (inside) best = s; }
+  return (e.shp = best); }
 // the geography's paint: the shapes in their colours (a thin ink outline), the companies as small dots (a linked one with a halo), the places on top
 // like the stars, then the names: the shapes' first, the places' after them (in the lens first, then the biggest)
 function paintGeo(ctx, P, o) {
@@ -785,11 +801,10 @@ function paintGeo(ctx, P, o) {
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
   if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
-    // label scale: a small map (a phone) gets smaller names, rings and tags; LIM: the width (px) up to which one tag may stand for a region or a country
-    const fk = Math.max(0.6, Math.min(1.15, Math.sqrt(Math.min(W, H * 1.4) / 700))), tsl = ts * fk, LIM = Math.max(46, Math.min(150, 0.2 * Math.min(W, H)));
+    // label scale: a small map (a phone) gets smaller tags
+    const fk = Math.max(0.6, Math.min(1.15, Math.sqrt(Math.min(W, H * 1.4) / 700))), tsl = ts * fk;
     // what a name must keep clear of: the other names, every place's dot (hotspots: the big ones), and, as a soft cost, the companies' dots
     const pdots = [];   // no city dots are drawn: what names keep clear of is the companies' dots (the crowd cost)
-    const nMed = pdots.length ? pdots.map((q) => q.n).sort((x, y) => x - y)[pdots.length >> 1] : 0;
     const CELL = 24 * tsl, gw = Math.ceil(W / CELL) + 1, gh = Math.ceil(H / CELL) + 1, grid = new Uint16Array(gw * gh);
     Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) grid[Math.floor(Y0 / CELL) * gw + Math.floor(X0 / CELL)]++; });
     const dotsIn = (b) => { let c = 0; for (let gy = Math.max(0, Math.floor(b[1] / CELL)); gy <= Math.min(gh - 1, Math.floor(b[3] / CELL)); gy++) for (let gx = Math.max(0, Math.floor(b[0] / CELL)); gx <= Math.min(gw - 1, Math.floor(b[2] / CELL)); gx++) c += grid[gy * gw + gx]; return c; };
@@ -803,68 +818,41 @@ function paintGeo(ctx, P, o) {
         if (boxes.some((q) => { const m = pad * (q.area ? 2 : 1); return !(b[2] + m < q[0] || b[0] - m > q[2] || b[3] + m < q[1] || b[1] - m > q[3]); })) return;
         if (hitDot(b, o2.skip, o2.minN || 0, 2 * tsl)) return;
         const c = dotsIn(b); if (c > (o2.maxDots ?? 1e9)) return;
-        const sc = c + 0.2 * idx; if (!best || sc < best.sc) best = { lg, b, sc }; });
+        const sc = o2.first ? idx : c + 0.2 * idx; if (!best || sc < best.sc) best = { lg, b, sc }; });   // first: the first that fits (an area's name: its middle before anything else)
       if (!best) return false; boxes.push(best.b);
       if (o2.pill) { const b = best.b, q = 3 * tsl; ctx.save(); ctx.globalAlpha = 0.9; ctx.fillStyle = paper; ctx.strokeStyle = ink; ctx.lineWidth = 1; ctx.beginPath(); ctx.roundRect(b[0] - q, b[1] - q * 0.6, b[2] - b[0] + 2 * q, b[3] - b[1] + 1.2 * q, 5 * tsl); ctx.fill(); ctx.globalAlpha = 0.45; ctx.stroke(); ctx.restore(); }
       labelDraw(ctx, best.lg, halo); return best.b; };
-    // the shapes' names first, the largest first (only shapes with roles); they win over the places' names, and keep off the bigger places
-    ctx.letterSpacing = (1.6 * tsl) + 'px';   // area names are spaced out (and upper case): the cities' tags below are not
-    for (const s of Lg.shapes.filter((x) => x.roles > 0).sort((a, b) => b.roles - a.roles)) { if (counts.areas >= Math.round((many ? 60 : 24) * ks)) break;
-      const fs = Math.round(Math.max(10, Math.min(15, 6 + Math.sqrt(s.roles) * 0.28))), lines = wrapText(geoNameOf(s).toUpperCase(), 15, 2).map((t) => ({ t, fs, face: '500', alpha: 0.82, color: T.areaInk || ink })), dy = 1.4 * fs * tsl * lines.length;
-      const lb = labelLayout(ctx, lines, 0, 0, 'center', tsl).box; if (s.ar < 1.5 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // a shape too small for its name: none
-      const cands = [[s.lx, s.ly, 'center'], [s.lx, s.ly - dy, 'center'], [s.lx, s.ly + dy, 'center']];
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity; for (const q of s.pr) for (let j = 0; j < q.length; j += 2) { if (q[j] < x0) x0 = q[j]; if (q[j] > x1) x1 = q[j]; if (q[j + 1] < y0) y0 = q[j + 1]; if (q[j + 1] > y1) y1 = q[j + 1]; }
-      const step = Math.max(10 * tsl, (lb[2] - lb[0]) / 2), lat = [];
-      const tm = ctx.getTransform();   // the point is in device pixels, the path is drawn through the transform
-      for (let y = y0; y <= y1; y += step * 0.6) for (let x = x0; x <= x1; x += step) if (ctx.isPointInPath(s.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd')) lat.push([x, y, 'center']);
-      lat.sort((p1, p2) => Math.hypot(p1[0] - s.lx, p1[1] - s.ly) - Math.hypot(p2[0] - s.lx, p2[1] - s.ly)); cands.push(...lat.slice(0, 40));
-      const ab = place(lines, cands, true, 0, { minN: Math.max(nMed, 1) }); if (ab) { ab.area = true; counts.areas++; } }
+    // the areas are named, each once, at the level the view calls for: the continents on a world map, the countries on a continent, then the shapes the scope is
+    // drawn in (states, districts). A name sits inside its area (in the middle of its shapes, weighted by their roles, else inside the one with most roles), with the number of companies in it
+    // under it; an area too small on screen for its name has none. The companies are only their dots (their names come with the lens and the cards).
+    const level = geoLevel(Lg), ccOfId = (id) => String(id).slice(0, 2);
+    const gkey = (s) => (level === 'continent' ? (CONTINENT[ccOfId(s.id)] ? 'k:' + CONTINENT[ccOfId(s.id)] : '') : level === 'country' ? 'c:' + ccOfId(s.id) : 's:' + s.id);
+    const groups = new Map();
+    for (const s of Lg.shapes) { if (!s.pr.length) continue; const key = gkey(s); if (!key) continue; let g = groups.get(key);
+      if (!g) groups.set(key, (g = { key, shapes: [], ar: 0, w: 0, x: 0, y: 0, roles: 0, cos: 0 })); const w = ((s.roles || 0) + 1) * Math.sqrt(s.ar);   // the middle leans to where the roles are
+      g.shapes.push(s); g.ar += s.ar; g.w += w; g.x += s.lx * w; g.y += s.ly * w; g.roles += s.roles || 0; }
+    Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const sh = geoShapeOf(Lg, e), g = sh && groups.get(gkey(sh)); if (g) g.cos++; });
+    const nameOfGroup = (g) => { const v = g.key.slice(2);
+      if (g.key[0] === 'k') return pick(CONTINENT_NAME[v][0], CONTINENT_NAME[v][1]);
+      if (g.key[0] === 'c') { const one = g.shapes.find((x) => x.kind === 'country'); if (one) return geoNameOf(one); try { return new Intl.DisplayNames([isDe() ? 'de' : 'en'], { type: 'region' }).of(v) || v; } catch (e) { return v; } }
+      return geoNameOf(g.shapes[0]); };
+    const tm = ctx.getTransform(), inGroup = (g, x, y) => g.shapes.some((sh) => ctx.isPointInPath(sh.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd'));   // the point is in device pixels
+    const capA = Math.round((many ? 80 : 40) * ks);
+    ctx.letterSpacing = (1.6 * tsl) + 'px';
+    for (const g of [...groups.values()].filter((x) => x.roles > 0 || x.cos > 0).sort((a, b) => b.roles - a.roles || b.cos - a.cos)) { if (counts.areas >= capA) break;
+      const fs = Math.round(Math.max(10, Math.min(17, 7 + Math.sqrt(g.roles + g.cos) * 0.3))), nm = nameOfGroup(g);
+      const lines = wrapText(nm.toUpperCase(), 16, 2).map((t) => ({ t, fs, face: '600', alpha: 0.9, color: T.areaInk || ink }));
+      if (g.cos) lines.push({ t: g.cos.toLocaleString() + ' ' + (g.cos === 1 ? pick('company', 'Firma') : pick('companies', 'Firmen')), fs: Math.max(9, Math.round(fs * 0.72)), face: '500', alpha: 0.8, color: T.subInk || ink });
+      const lb = labelLayout(ctx, lines, 0, 0, 'center', tsl).box; if (g.ar < 0.9 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // too small on screen for its name
+      const cx = g.x / g.w, cy = g.y / g.w, cands = [], big = [...g.shapes].sort((a, b) => (b.roles || 0) - (a.roles || 0) || b.ar - a.ar);
+      if (inGroup(g, cx, cy)) cands.push([cx, cy, 'center']);
+      for (const sh of big.slice(0, 6)) cands.push([sh.lx, sh.ly, 'center']);
+      const s0 = big[0], step = Math.max(10 * tsl, (lb[2] - lb[0]) / 2), lat = []; let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;   // and a lattice inside the largest shape
+      for (const q of s0.pr) for (let k2 = 0; k2 < q.length; k2 += 2) { x0 = Math.min(x0, q[k2]); x1 = Math.max(x1, q[k2]); y0 = Math.min(y0, q[k2 + 1]); y1 = Math.max(y1, q[k2 + 1]); }
+      for (let y = y0; y <= y1; y += step * 0.6) for (let x = x0; x <= x1; x += step) if (ctx.isPointInPath(s0.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd')) lat.push([x, y, 'center']);
+      lat.sort((p1, p2) => Math.hypot(p1[0] - cx, p1[1] - cy) - Math.hypot(p2[0] - cx, p2[1] - cy)); cands.push(...lat.slice(0, 40));
+      const ab = place(lines, cands, true, 0, { first: true }); if (ab) { ab.area = true; counts.areas++; } }
     ctx.letterSpacing = '0px';
-    // the companies as clusters, named at the level the view calls for. The world is read as regions (Central Europe, Southeast Asia); a region too wide for one tag
-    // (wider than LIM px, a fifth of the map) splits into its countries, a country that is still too wide into cities (dots closer than CR px; a long chain is split again and
-    // again). Each cluster has a ring, a tag "name · companies" and a leader line; a lone company is named only when zoomed in. Tags and rings scale with the map (fk).
-    const CR = 16 * tsl, coPl = new Map(); Lg.coAt.forEach((cs, pk) => cs.forEach((ci) => coPl.set(ci, pk)));
-    const ccOf = (k) => Lg.ents[k].cc || (coPl.has(k) ? String(Lg.ents[coPl.get(k)].id).replace(/^pl:/, '').split('|')[0] : '');
-    const pts = []; Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 >= 0 && Y0 >= 0 && X0 < W && Y0 < H) pts.push({ k, x: X0, y: Y0, cc: ccOf(k) }); });
-    const mid = (g, key) => g.reduce((a, q) => a + q[key], 0) / g.length, spreadOf = (g) => { const x = mid(g, 'x'), y = mid(g, 'y'); return { x, y, rad: Math.max(...g.map((q) => Math.hypot(q.x - x, q.y - y))) }; };
-    const countryName = (cc) => { try { return new Intl.DisplayNames([isDe() ? 'de' : 'en'], { type: 'region' }).of(cc) || cc; } catch (e) { return cc; } };
-    const regionName = (cc) => (SUBREGION[cc] ? pick(SUBREGION[cc][0], SUBREGION[cc][1]) : countryName(cc));
-    const cityClusters = (members) => {   // dots closer than CR px, a cluster wider than 3.2 CR split in two (2-means), again and again
-      const par = members.map((_, i) => i), root = (i) => { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; }, cellOf = new Map();
-      members.forEach((q, i) => { const cx = Math.floor(q.x / CR), cy = Math.floor(q.y / CR); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const j of (cellOf.get((cx + dx) + ',' + (cy + dy)) || [])) if (Math.hypot(q.x - members[j].x, q.y - members[j].y) <= CR) par[root(i)] = root(j);
-        const key = cx + ',' + cy; if (!cellOf.has(key)) cellOf.set(key, []); cellOf.get(key).push(i); });
-      const groups = new Map(); members.forEach((q, i) => { const r = root(i); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(q); });
-      const compact = [], split = (g, d) => { const sp = spreadOf(g);
-        if (sp.rad <= 3.2 * CR || g.length < 6 || d > 6) { compact.push(g); return; }
-        let a = g[0]; for (const q of g) if (Math.hypot(q.x - sp.x, q.y - sp.y) > Math.hypot(a.x - sp.x, a.y - sp.y)) a = q;
-        let b = g[0]; for (const q of g) if (Math.hypot(q.x - a.x, q.y - a.y) > Math.hypot(b.x - a.x, b.y - a.y)) b = q;
-        let ca = [a.x, a.y], cb = [b.x, b.y], A = [], B = [];
-        for (let it = 0; it < 6; it++) { A = []; B = []; for (const q of g) (Math.hypot(q.x - ca[0], q.y - ca[1]) <= Math.hypot(q.x - cb[0], q.y - cb[1]) ? A : B).push(q); if (!A.length || !B.length) break; ca = [mid(A, 'x'), mid(A, 'y')]; cb = [mid(B, 'x'), mid(B, 'y')]; }
-        if (!A.length || !B.length) { compact.push(g); return; } split(A, d + 1); split(B, d + 1); };
-      groups.forEach((g) => split(g, 0)); return compact; };
-    const topCity = (g, cc) => { const byPl = new Map(); g.forEach((q) => { const pk = coPl.get(q.k); if (pk !== undefined) byPl.set(pk, (byPl.get(pk) || 0) + 1); }); const top = [...byPl].sort((a, b) => b[1] - a[1])[0]; return top ? Lg.ents[top[0]].name : countryName(cc); };
-    const clusters = [], emit = (g, label) => { const sp = spreadOf(g), ds = g.map((q) => Math.hypot(q.x - sp.x, q.y - sp.y)).sort((u, v) => u - v); clusters.push({ n: g.length, x: sp.x, y: sp.y, rad: sp.rad, rr: ds[Math.floor(0.8 * (ds.length - 1))], label, one: g[0].k, near: g.some((q) => inl(Lg.ents[q.k])) }); };
-    const byKey = (list, f) => { const m = new Map(); list.forEach((q) => { const k = f(q); if (!m.has(k)) m.set(k, []); m.get(k).push(q); }); return m; };
-    for (const g of byKey(pts, (q) => (SUBREGION[q.cc] ? SUBREGION[q.cc][0] : 'c:' + q.cc)).values()) {
-      if (spreadOf(g).rad <= LIM) { emit(g, regionName(g[0].cc)); continue; }
-      for (const [cc, gc] of byKey(g, (q) => q.cc)) {
-        if (spreadOf(gc).rad <= LIM) emit(gc, countryName(cc));
-        else for (const part of cityClusters(gc)) emit(part, topCity(part, cc)); } }
-    clusters.sort((a, b) => (b.near - a.near) || b.n - a.n);
-    const capC = Math.round((many ? 120 : zoomed ? 60 : 24) * ks); let named = 0;
-    for (const c of clusters.filter((c) => c.n >= 2 ? c.label : zoomed)) { if (named >= capC) break;   // a cluster with no name (no country known) gets no tag
-      const solo = c.n < 2, text = solo ? Lg.ents[c.one].name : `${c.label} · ${c.n.toLocaleString()}`, big = Math.sqrt(Math.min(c.n, 400) / 400), fs = Math.round(10 + 3.5 * big), R = solo ? 0 : Math.min(0.8 * LIM, Math.max(7 * tsl, c.rr + 4 * tsl));   // the ring: the typical reach of the cluster (80th percentile), not its outliers
-      const lines = wrapText(text, 28, 1).map((t) => ({ t, fs, face: solo ? '500' : '600', alpha: 1, color: T.subInk || ink })), cands = [];
-      for (const gap of [5, 14, 26]) { const g = R + gap * tsl, d = g * 0.72, hh = 6 * tsl;
-        cands.push([c.x + g, c.y, 'left'], [c.x - g, c.y, 'right'], [c.x, c.y - g - hh, 'center'], [c.x, c.y + g + hh, 'center'],
-          [c.x + d, c.y - d - hh * 0.5, 'left'], [c.x - d, c.y - d - hh * 0.5, 'right'], [c.x + d, c.y + d + hh * 0.5, 'left'], [c.x - d, c.y + d + hh * 0.5, 'right']); }
-      const bx = place(lines, cands, c.near, c.near ? 0 : OPP, { pill: true, maxDots: 1e9 }); if (!bx) continue;
-      named++;
-      ctx.save(); ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.6;
-      if (!solo) { ctx.beginPath(); ctx.arc(c.x, c.y, R, 0, 7); ctx.stroke(); boxes.push([c.x - R, c.y - R, c.x + R, c.y + R]); }
-      const px = Math.max(bx[0], Math.min(c.x, bx[2])), py = Math.max(bx[1], Math.min(c.y, bx[3])), dd = Math.hypot(px - c.x, py - c.y);
-      if (dd > R + 2) { ctx.globalAlpha = 0.5; ctx.beginPath(); ctx.moveTo(c.x + (px - c.x) / dd * R, c.y + (py - c.y) / dd * R); ctx.lineTo(px, py); ctx.stroke(); }
-      ctx.restore(); }
   }
   if (screen) {   // the lens, its sample and the open point's ring
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
@@ -883,8 +871,8 @@ function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, s
 function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
   if (!Lg.shapes.length && !Lg.ents.length) return L('There is no geography for this area in the file.', 'Für diesen Bereich gibt es in der Datei keine Geografie.');
   const link = lnk && lnk.to === 'geo' ? L(' The link lights companies only: the data does not place roles in cities.', ' Die Verknüpfung hebt nur Firmen hervor: die Daten ordnen Stellen keinen Städten zu.') : '';
-  return L(`${c.companies.toLocaleString()} companies shown, ${c.places.toLocaleString()} cities with companies named (the bigger the name, the more companies). A company is a dot at its headquarters and at each branch, larger with open roles. Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
-    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt, ${c.places.toLocaleString('de-DE')} Orte mit Firmen benannt (je größer der Name, desto mehr Firmen). Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, größer mit offenen Stellen. Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
+  return L(`${c.companies.toLocaleString()} companies shown. Areas are named at the level of the view (continents, countries, states, districts) with the companies in them; zoom in for finer areas. A company is a dot at its headquarters and at each branch, larger with open roles. Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
+    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Flächen sind auf der Ebene der Ansicht benannt (Kontinente, Länder, Bundesländer, Kreise), mit den Firmen darin; für feinere Flächen hineinzoomen. Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, größer mit offenen Stellen. Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
 function geoBar() { const el = $('atlas-geo'); if (el) el.hidden = st.mode !== 'geo'; }
 function geoStop() { if (geo.raf) cancelAnimationFrame(geo.raf); geo.raf = 0; geo.morph = false; }
 function geoSetT(t) { geo.t = Math.max(0, Math.min(1, t)); geoMarks(); draw(); }
@@ -1082,8 +1070,8 @@ function fitTo() {
   Ly.ents.forEach((e, k) => { if (Ly.past || (st.mode === 'roles' ? visibleRoles(e).length : (vis && vis[k]))) { xs.push(e.x); ys.push(e.y); } });
   if (xs.length < 5) { st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = { x: 0.5, y: 0.5 }; return; }
   const pct = (a, p) => { const q = [...a].sort((u, v) => u - v); return q[Math.min(q.length - 1, Math.floor(p * q.length))]; };
-  const x0 = pct(xs, 0.02), x1 = pct(xs, 0.98), y0 = pct(ys, 0.02), y1 = pct(ys, 0.98);
-  const bw = (x1 - x0) * 1.12, bh = (y1 - y0) * 1.12, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const co = st.mode === 'companies', lo = co ? 0 : 0.02, x0 = pct(xs, lo), x1 = pct(xs, 1 - lo), y0 = pct(ys, lo), y1 = pct(ys, 1 - lo);   // companies: all of them (their groups sit apart)
+  const pad = co ? 1.18 : 1.12, bw = (x1 - x0) * pad, bh = (y1 - y0) * pad, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   // the lens goes to the visible point nearest the middle: on a map of separate islands the middle itself can be empty
   let best = 0, bd = Infinity; xs.forEach((x, i) => { const d = (x - cx) ** 2 + (ys[i] - cy) ** 2; if (d < bd) { bd = d; best = i; } });
   st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: xs[best], y: ys[best] };
