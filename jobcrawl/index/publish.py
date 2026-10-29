@@ -10,7 +10,7 @@ Port of the reference implementation's publish_match.py and the config part of t
     company-vec.bin, company-vec.json   copied when the companies were embedded (jobcrawl embed with a companies_catalogue)
     role-trends.json, role-timeline.*   copied when the traces were built (jobcrawl traces); the traces themselves stay in the vectors folder
     role-timeline-names-NNN.json        the timeline's title and company names, 2000 records per shard (copied with the timeline)
-    geo-map.json                        the geographic cartogram, copied when the vectors folder has it (jobcrawl geomap; needs no vectors)
+    geo-map.json, geo-map-<id>.json     the geographic cartogram: the index and one file per scope, copied when the vectors folder has the index (jobcrawl geomap; needs no vectors)
 Without vectors the keyword index and config.json are still written; the Match me panel then runs on keywords alone.
 Nothing personal is involved. Standard library only, except building the neighbours here, which needs numpy: a machine without
 numpy publishes from a vectors folder that already holds role-nb.bin and role-graph.json.
@@ -28,7 +28,8 @@ COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json', 'match-vec
 NEIGHBOUR_FILES = ('role-nb.bin', 'role-graph.json')
 TRENDS = ('role-trends.json', 'role-timeline.json', 'role-timeline.bin')     # built by jobcrawl traces; copied when present
 NAMES = re.compile(r'^role-timeline-names-\d{3}\.json$')
-GEOMAP = 'geo-map.json'                    # built by jobcrawl geomap (its own step, no numpy here); copied when present
+GEOMAP = 'geo-map.json'                    # built by jobcrawl geomap (its own step, no numpy here); copied when present: the index, and the geo-map-<id>.json scopes
+GEOMAP_SCOPE = re.compile(r'^geo-map-[\w-]+\.json$')
 
 
 class PublishError(ValueError):
@@ -99,7 +100,9 @@ def publish(site, profile, vectors=None, log=print, text_from=None, traces=None)
     match_index.build(site, out, profile, log, text_from=text_from)
     written += ['match-bm25.json', 'match-attrs.json']
     if vectors and os.path.exists(os.path.join(vectors, GEOMAP)):
-        shutil.copyfile(os.path.join(vectors, GEOMAP), os.path.join(out, GEOMAP)); written.append(GEOMAP)
+        scopes = sorted(f for f in os.listdir(vectors) if GEOMAP_SCOPE.match(f))
+        for name in [GEOMAP] + scopes:
+            shutil.copyfile(os.path.join(vectors, name), os.path.join(out, name)); written.append(name)
     cfg = web_config(profile)
     if 'role-timeline.json' in written:
         cfg['timeline'] = 'match/role-timeline.json'          # the atlas loads the timeline only when it is there

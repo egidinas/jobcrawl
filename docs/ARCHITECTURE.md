@@ -39,7 +39,7 @@ and the neighbours), and once after `map` to copy the atlas layout into the matc
 | statements and neighbours | `jobcrawl/index/prefs.py`, `jobcrawl/index/neighbours.py` | site folder, vectors, profile `statements` | `match-prefs.json`, `role-nb.bin`, `role-graph.json` | numpy (neighbours) |
 | publish | `jobcrawl/index/publish.py` (`jobcrawl publish`) | everything above, profile | `match/` folder, `config.json` | standard library, numpy with vectors |
 | map | `jobcrawl/map/atlas.py`, `jobcrawl/map/labels.py` (`jobcrawl map`) | vectors, site folder, match-prefs, profile `map`, `scopes`, and `company-graph.json` (the companies' groups, their links and, with `company-nb.bin`, their positions, if it covers the catalogue) | `atlas-layout.json` (in the vectors folder); `--companies-only` rebuilds its companies section | `requirements-map.txt` |
-| geomap | `jobcrawl/map/geomap.py` (`jobcrawl geomap`), `jobcrawl/map/geo_base.py` | site folder, profile `scopes`, companies catalogue, Natural Earth files (cache) | `geo-map.json` (in the vectors folder; publish copies it) | numpy |
+| geomap | `jobcrawl/map/geomap.py` (`jobcrawl geomap`), `jobcrawl/map/geo_base.py` | site folder, profile `scopes`, companies catalogue, Natural Earth files (cache) | `geo-map.json` (the index) and `geo-map-<id>.json` per scope (in the vectors folder; publish copies them) | numpy |
 | traces | `jobcrawl/index/traces.py` (`jobcrawl traces`) | site folder, vectors, `atlas-layout.json`, the earlier traces | `role-traces.*` (private), `role-trends.json`, `role-timeline.*` (in the vectors folder) | numpy |
 | web | `web/` (`index.html`, `match.html`, `atlas.html`), `scripts/serve.py` | `config.json`, `jobs-*.json`, `match/`, optional `models/` | the browser's own state only | a browser; a static server |
 
@@ -129,21 +129,34 @@ duplicate group); 65535 means none. `role-graph.json`: `{k, ids_from, sim, dup}`
 `mu` and `sd` the mean and spread of all roles along it (for the z-score in the browser), `auc` how well it separates held-out roles,
 `n` the number of labelled roles at each pole. Only statements with `auc` of at least 0.75 are published.
 
-### geo-map.json (geomap, copied by publish)
+### geo-map.json and geo-map-<id>.json (geomap, copied by publish)
 
-`{version, source, scopes}`; `scopes` is keyed by scope id, each `{extent, w, h, shapes, places, companies, error, moderate}`. `extent` is
-`[lon0, lat0, lon1, lat1]`; `w` and `h` the plane's size, normalised so the longer side is 1 (y counts from the north edge). Every position is
-in those units: `x, y` the true position, `cx, cy` the cartogram position (the role mass decides the area; both are kept so the web view can morph).
-`mx, my` the moderate cartogram: each area 70 % its true size plus 30 % its share of the roles (a milder distortion: none shrinks below 70 %).
-* `shapes`: `{id, name, kind ('country' | 'state'), roles, rings}`; `rings` is a list of rings of `[x, y, cx, cy, mx, my]` points (no repeated first point).
-  `roles` is the number of roles that name a place in the shape (any place, not only those inside the extent).
+Version 2. Every scope is drawn in Web Mercator, so the scopes line up and the web view can zoom from one to the next (one map, the scopes as
+its levels of detail). `geo-map.json` is the index: `{version: 2, projection: 'mercator', source, scopes}`, `scopes` keyed by scope id, each
+`{file, box, extent, w, h, error, method, moderate, rivers}`. `file` names the scope's own file, `geo-map-<id>.json`, which holds
+`{id, extent, box, w, h, shapes, places, companies, rivers, error, method, moderate}`. Files are written compactly; the index has no shapes.
+
+* `box`: the extent in world Mercator units `[x0, y0, x1, y1]`, each 0 to 1: x from the west edge at 180 degrees west, y from the north edge
+  (85.05 degrees north). The same box is the scope's place in the single map, so the web view can place every level by it.
+* `extent`: `[lon0, lat0, lon1, lat1]` in degrees (the same area as `box`).
+* `w` and `h`: the plane's size, normalised so the longer side is 1 (y counts from the north edge).
+Every position is in those plane units (5 decimals): `x, y` the true position, `cx, cy` the cartogram position (the role mass decides the area;
+both are kept so the web view can morph), `mx, my` the moderate cartogram: each area 70 % its true size plus 30 % its share of the roles (a
+milder distortion: none shrinks below 70 %).
+* `shapes`: `{id, name, kind ('country' | 'state' | 'district'), roles, rings}`; `rings` is a list of rings of `[x, y, cx, cy, mx, my]` points (no
+  repeated first point). `roles` is the number of roles that name a place in the shape (any place, not only those inside the extent).
 * `places`: `{id ('CC|City', or 'CC|State', or 'CC'), name, n (roles naming it), x, y, cx, cy, mx, my}`, inside the extent.
 * `companies`: `{slug, x, y, cx, cy, mx, my}` for the companies with coordinates inside the extent.
-* `error`: the largest relative area error of the cartogram over its grid (cell area against the role share).
+* `rivers`: `[{name, rank, pts}]`, one entry per piece of a river inside the extent; `pts` is `[[x, y, cx, cy, mx, my], ...]` (at least 2 points).
+  `rank` is the river's Natural Earth scalerank (0 the largest). The rivers kept are limited by the scope's width: worldwide the ranks up to 3,
+  Europe up to 6, a country or a state all. The Europe scope adds the finer rivers of Natural Earth's Europe file (ranks 10 to 12, their own scale;
+  a river of the same name as a kept one is left out). Rivers are optional: without the files the list is empty.
+* `error`: the largest relative area error of the cartogram over its grid (cell area against the role share); `method`: `staged` or `single`.
 * `moderate`: `{error, method, mix}` for the moderate cartogram: each area's target is (1 - `mix`) its true size plus `mix` its share of the roles
-  (`mix` is 0.3, so no area shrinks below 70 % of its true size; `method` as above).
+  (`mix` is 0.3, so no area shrinks below 70 % of its true size).
 
-Built with Natural Earth polygons (public domain) and the gazetteer's places; the cartogram itself is a Gastner-Newman (2004) diffusion
+Built with Eurostat GISCO outlines at one level of detail per scope (worldwide 1:10M, Europe 1:3M, a country's states and a state's districts
+1:1M), Natural Earth rivers and polygons (public domain) and the gazetteer's places. The cartogram itself is a Gastner-Newman (2004) diffusion
 followed by Gauss-Newton corrections of the cell areas (see the module's docstring).
 
 ### match/atlas-layout.json (map)

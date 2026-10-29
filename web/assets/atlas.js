@@ -665,9 +665,10 @@ function paintMap(ctx, P, o) {
 // open roles and the companies, each at its true position (t = 0) or at its cartogram position (t = 1, by roles: an area's size follows
 // its roles). The shapes' box at t is fitted to the map box (aspect kept, centred); every entity then takes the map units of the other views.
 let GEO = null, geoLoading = null;
-const geo = { t: 0.5, to: 0.5, mod: true, raf: 0, morph: false, lays: new Map() };   // t: 0 the true map, 0.5 the moderate map, 1 by roles; mod: the file has the moderate map; morph: an animation runs (no labels meanwhile), heading to `to`
+const geo = { t: 0.5, to: 0.5, mod: true, raf: 0, morph: false, lays: new Map(), data: new Map(), loading: new Map(), active: '', fade: null, fly: 0, dr: null };   // t: 0 the true map, 0.5 the moderate map, 1 by roles; mod: the file has the moderate map; morph: an animation runs (no labels meanwhile), heading to `to`
 const geoHue = (q) => 240 + 170 * q, hueC = (h) => Math.round(h) / 137.508;   // the density ramp: deep blue (few), magenta, amber (many); hueC: a region index whose hue() is h (for star())
-const STATE_DE = { 'DE-BW': 'Baden-Württemberg', 'DE-BY': 'Bayern', 'DE-BE': 'Berlin', 'DE-BB': 'Brandenburg', 'DE-HB': 'Bremen', 'DE-HH': 'Hamburg', 'DE-HE': 'Hessen', 'DE-MV': 'Mecklenburg-Vorpommern', 'DE-NI': 'Niedersachsen', 'DE-NW': 'Nordrhein-Westfalen', 'DE-RP': 'Rheinland-Pfalz', 'DE-SL': 'Saarland', 'DE-SN': 'Sachsen', 'DE-ST': 'Sachsen-Anhalt', 'DE-SH': 'Schleswig-Holstein', 'DE-TH': 'Thüringen' };
+const STATE_DE = { 'DE-BW': 'Baden-Württemberg', 'DE-BY': 'Bayern', 'DE-BE': 'Berlin', 'DE-BB': 'Brandenburg', 'DE-HB': 'Bremen', 'DE-HH': 'Hamburg', 'DE-HE': 'Hessen', 'DE-MV': 'Mecklenburg-Vorpommern', 'DE-NI': 'Niedersachsen', 'DE-NW': 'Nordrhein-Westfalen', 'DE-RP': 'Rheinland-Pfalz', 'DE-SL': 'Saarland', 'DE-SN': 'Sachsen', 'DE-ST': 'Sachsen-Anhalt', 'DE-SH': 'Schleswig-Holstein', 'DE-TH': 'Thüringen',
+  DE1: 'Baden-Württemberg', DE2: 'Bayern', DE3: 'Berlin', DE4: 'Brandenburg', DE5: 'Bremen', DE6: 'Hamburg', DE7: 'Hessen', DE8: 'Mecklenburg-Vorpommern', DE9: 'Niedersachsen', DEA: 'Nordrhein-Westfalen', DEB: 'Rheinland-Pfalz', DEC: 'Saarland', DED: 'Sachsen', DEE: 'Sachsen-Anhalt', DEF: 'Schleswig-Holstein', DEG: 'Thüringen' };   // ISO codes (older files) and NUTS codes
 let deNames = null;
 // a shape's name: countries in German through the browser's region names, the German states from the table above
 const geoNameOf = (s) => { if (!isDe()) return s.name; if (s.kind === 'state' || s.kind === 'district') return s.de || STATE_DE[s.id] || s.name; try { deNames = deNames || new Intl.DisplayNames(['de'], { type: 'region' }); return deNames.of(s.id) || s.name; } catch (e) { return s.name; } };
@@ -679,15 +680,60 @@ function coFieldsOk(e) { if (!st.fields.size) return true; if (ix.fields.some((f
   return false; }
 function coScopeOk(e) { if (st.scope >= cfg.scopes.length - 1) return true; const co = coRows[e.slug]; if (!co) return true; return (SCOPE_RANKS[co[12]] ?? 3) <= st.scope; }
 // the file: read on the first use of the view, once
-function geoLoad() { if (!geoLoading) geoLoading = fetch(dataUrl(cfg.geomap)).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => { GEO = j && j.version === 1 ? j : null; geo.lays.clear();
-  geo.mod = !!(GEO && Object.values(GEO.scopes || {}).some((S) => S.moderate)); if (!geo.mod && geo.t === 0.5) geo.t = geo.to = 1;
+// version 1: every scope in the one file, each its own map. Version 2: an index of levels (each with its box in Web Mercator world units and a file
+// of its own), read as they are needed; they share one projection, so they are one map that is zoomed through (see geoActive)
+function geoLoad() { if (!geoLoading) geoLoading = fetch(dataUrl(cfg.geomap)).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => { GEO = j && (j.version === 1 || j.version === 2) ? j : null; geo.lays.clear();
+  if (GEO && GEO.version === 2) { const top = geoLevels().slice(-1)[0]; return top ? geoFetchScope(top).then(() => GEO) : GEO; } return GEO; }).then(() => {
+  geo.mod = !!(GEO && Object.values(GEO.scopes || {}).some((S) => S.moderate)); if (geoUni()) geo.t = geo.to = 0; else if (!geo.mod && geo.t === 0.5) geo.t = geo.to = 1;   // the zoomable map starts on the true map (seamless through the levels)
   const mb = document.querySelector('#atlas-morph [data-t="0.5"]'); if (mb) mb.hidden = !geo.mod; geoMarks(); return GEO; }); return geoLoading; }
+const geoUni = () => !!(GEO && GEO.version === 2);
+const geoScopeData = (sid) => (geoUni() ? geo.data.get(sid) : GEO && GEO.scopes && GEO.scopes[sid]) || null;
+// the levels, finest first (by the width of their box)
+const geoLevels = () => Object.keys((GEO && GEO.scopes) || {}).filter((k) => GEO.scopes[k].box).sort((a, b) => (GEO.scopes[a].box[2] - GEO.scopes[a].box[0]) - (GEO.scopes[b].box[2] - GEO.scopes[b].box[0]));
+function geoFetchScope(sid) { if (geo.data.has(sid)) return Promise.resolve(geo.data.get(sid)); if (geo.loading.has(sid)) return geo.loading.get(sid);
+  const pr = fetch(dataUrl(cfg.geomap).replace(/[^/]*$/, GEO.scopes[sid].file)).then((r) => (r.ok ? r.json() : null)).catch(() => null)
+    .then((j) => { geo.loading.delete(sid); if (j) { geo.data.set(sid, j); geo.lays.delete(sid); if (st.mode === 'geo') requestAnimationFrame(() => draw()); } return j; });
+  geo.loading.set(sid, pr); return pr; }
+// the one frame of the levels: the widest level's box fitted into the map box (94 %), as { mx, my, p } in world units
+function geoFrame() { const lv = geoLevels(), b = lv.length ? GEO.scopes[lv[lv.length - 1]].box : [0, 0, 1, 1]; return { mx: (b[0] + b[2]) / 2, my: (b[1] + b[3]) / 2, p: Math.min(BW * 0.94 / Math.max(b[2] - b[0], 1e-9), BH * 0.94 / Math.max(b[3] - b[1], 1e-9)) }; }
+// the view in world units: its centre and width
+function geoView() { const F = geoFrame(); return { x: F.mx + (st.z.cx - 0.5) * BW / F.p, y: F.my + (st.z.cy - 0.5) * BH / F.p, w: BW / (F.p * st.z.s) }; }
+// the level drawn: the finest one whose box holds the middle of the view and is (nearly) as wide as the view; read when first needed (the
+// next coarser one is drawn meanwhile). With a distortion the levels do not meet (each warps its own extent), so the box must cover the view
+function geoActive() { const v = geoView(), thr = geo.t > 0.02 ? 0.98 : 0.6; let pickd = '';
+  for (const sid of geoLevels()) { const b = GEO.scopes[sid].box; if (v.x < b[0] || v.x > b[2] || v.y < b[1] || v.y > b[3] || b[2] - b[0] < thr * v.w) continue;
+    if (geo.data.has(sid)) { pickd = sid; break; } geoFetchScope(sid); }
+  if (!pickd) pickd = geoLevels().slice().reverse().find((sid) => geo.data.has(sid)) || '';
+  if (pickd !== geo.active) { const from = geo.active; geo.active = pickd;
+    if (from) { geo.fade = { from, t0: performance.now() }; const tick = () => { if (!geo.fade) return; draw(); if (performance.now() - geo.fade.t0 < 360) requestAnimationFrame(tick); else { geo.fade = null; draw(); } }; requestAnimationFrame(tick); }
+    if (sel && sel.ly && sel.ly.kind === 'geo') hidePop(); setTimeout(() => { if (st.mode === 'geo') resample(); }, 0); }
+  return pickd; }
+// the view onto a level's box (its centre, the zoom that fits it)
+function geoBoxZ(sid) { const F = geoFrame(), b = GEO.scopes[sid].box;
+  return { s: Math.max(1, Math.min(BW * 0.94 / ((b[2] - b[0]) * F.p), BH * 0.94 / ((b[3] - b[1]) * F.p))), cx: 0.5 + ((b[0] + b[2]) / 2 - F.mx) * F.p / BW, cy: 0.5 + ((b[1] + b[3]) / 2 - F.my) * F.p / BH }; }
+// fly to a view: the zoom on a log scale, the centre so that the path stays in sight; the levels switch on the way (drawn live, not from bitmaps)
+function geoFly(z1, then) { cancelAnimationFrame(geo.fly); const z0 = { ...st.z }; if (noMotion()) { st.z = z1; draw(); if (then) then(); return; }
+  const t0 = performance.now(), ms = 700 + 160 * Math.min(4, Math.abs(Math.log2(z1.s / z0.s)));
+  const step = (now) => { const p = Math.min(1, (now - t0) / ms), e = easeIO(p), s1 = z0.s * (z1.s / z0.s) ** e, q = z0.s === z1.s ? e : (1 / z0.s - 1 / s1) / (1 / z0.s - 1 / z1.s);
+    st.z = { s: s1, cx: z0.cx + (z1.cx - z0.cx) * q, cy: z0.cy + (z1.cy - z0.cy) * q }; draw(); if (p < 1) geo.fly = requestAnimationFrame(step); else if (then) then(); };
+  geo.fly = requestAnimationFrame(step); }
+const maxZoom = () => (st.mode === 'geo' && geoUni() ? 4000 : 24);
+// the colour of a density on the one zoomable map: log10 of roles per area (world units squared), from the widest level's lowest (5th percentile) to its highest
+// plus half a decade (a district can be denser than any country); the same area has about the same colour at every level
+function geoDensQ(d) { if (!geo.dr) { const top = geoLevels().slice(-1)[0], S = top && geo.data.get(top), b = S && S.box, k = b && S.w ? (b[2] - b[0]) / S.w : 0, v = [];
+    if (S && k) for (const sh of S.shapes || []) { if (!(sh.roles > 0)) continue; let a = 0; for (const r of sh.rings) { let q = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) q += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); a += Math.abs(q) / 2; } if (a > 0) v.push(Math.log10(sh.roles / (a * k * k))); }
+    v.sort((x, y) => x - y); geo.dr = v.length ? [v[Math.floor(0.05 * (v.length - 1))], v[v.length - 1] + 0.5] : [0, 1]; }
+  return Math.max(0, Math.min(1, (Math.log10(d) - geo.dr[0]) / Math.max(1e-9, geo.dr[1] - geo.dr[0]))); }
 // a scope's layer: its shapes (q: the density rank, -1 with no role), its places (q: the rank by roles) and its companies (the catalogue entity
 // with the geo position, so the company cards work); coAt: the companies at each place, within 1.2 % of the box (by their geo position)
 function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
-  const S = (GEO && GEO.scopes && GEO.scopes[sid]) || {};
+  const S = geoScopeData(sid) || {};
   const shapes = (S.shapes || []).map((s) => { let a = 0; for (const r of s.rings) { let q = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) q += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); a += Math.abs(q) / 2; } return { ...s, area: a, q: -1, path: null, pr: [], lx: 0, ly: 0 }; });
-  const dens = shapes.filter((s) => s.roles > 0).sort((a, b) => a.roles / a.area - b.roles / b.area); dens.forEach((s, i) => { s.q = dens.length > 1 ? i / (dens.length - 1) : 0.5; });
+  const box0 = S.box || (GEO.scopes[sid] || {}).box, k0 = box0 && S.w ? (box0[2] - box0[0]) / S.w : 0;
+  if (geoUni() && k0) shapes.forEach((s) => { if (s.roles > 0) s.q = geoDensQ(s.roles / (s.area * k0 * k0)); });   // one zoomable map: one colour scale for every level
+  else { const dens = shapes.filter((s) => s.roles > 0).sort((a, b) => a.roles / a.area - b.roles / b.area); dens.forEach((s, i) => { s.q = dens.length > 1 ? i / (dens.length - 1) : 0.5; }); }
+  // edge: a shape the level's box cuts (a neighbour shown for context); on the true map the coarser level draws it instead (no seam at the box)
+  shapes.forEach((s) => { s.edge = s.rings.some((r) => r.some((v) => v[0] <= 1e-4 || v[1] <= 1e-4 || v[0] >= (S.w || 1) - 1e-4 || v[1] >= (S.h || 1) - 1e-4)); });
   const places = (S.places || []).map((p) => ({ id: 'pl:' + p.id, place: true, name: p.name, n: p.n, idx: [], slug: null, c1: 0, c2: 0, gx: p.x, gy: p.y, hx: p.mx ?? (p.x + p.cx) / 2, hy: p.my ?? (p.y + p.cy) / 2, kx: p.cx, ky: p.cy, x: 0, y: 0 }));
   const byN = [...places].sort((a, b) => a.n - b.n); byN.forEach((e, i) => { e.q = byN.length > 1 ? i / (byN.length - 1) : 0.5; });
   const cos = (S.companies || []).map((c) => { const e = coBy.get(c.slug), base = e ? { ...e } : { id: 'co:' + c.slug, slug: c.slug, name: c.slug, about: '', field: '', idx: [], vec: null, c1: 0, c2: 0, f: new Float32Array(ix.fields.length) }; const own0 = c.cc ? { cc: c.cc } : {}, own = c.ids ? { idx: c.ids.map((id) => idIndex.get(id)).filter((i) => i !== undefined), ...(c.b ? { id: base.id + '@' + c.b, branch: c.b } : {}) } : {};
@@ -698,14 +744,19 @@ function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
   spot.forEach((g) => { if (g.length < 2) return; g.forEach((e, i) => { const r = 0.0035 * Math.sqrt(i + 0.5) * Math.max(1, S.w || 1), t = i * 2.399963, dx = Math.cos(t) * r, dy = Math.sin(t) * r; e.gx += dx; e.gy += dy; e.hx += dx; e.hy += dy; e.kx += dx; e.ky += dy; }); });
   const coAt = new Map(); cos.forEach((c, j) => { let best = -1, bd = 0.012 ** 2; places.forEach((p, i) => { const d = (p.gx - c.gx) ** 2 + (p.gy - c.gy) ** 2; if (d < bd) { bd = d; best = i; } }); if (best >= 0) { if (!coAt.has(best)) coAt.set(best, []); coAt.get(best).push(places.length + j); } });
   const V = []; if (shapes.length) shapes.forEach((s) => s.rings.forEach((r) => r.forEach((v) => V.push(v[0], v[1], v[4] ?? (v[0] + v[2]) / 2, v[5] ?? (v[1] + v[3]) / 2, v[2], v[3])))); else [...places, ...cos].forEach((e) => V.push(e.gx, e.gy, e.hx, e.hy, e.kx, e.ky));
-  const Lg = { kind: 'geo', sid, shapes, ents: [...places, ...cos], n: places.length + cos.length, coAt, nMax: Math.max(1, ...places.map((p) => p.n)), V: Float64Array.from(V), key: '', pkey: '', fit: null };
+  const rivers = (S.rivers || []).filter((r) => r.pts && r.pts.length > 1), box = S.box || (GEO.scopes[sid] || {}).box || null;
+  const Lg = { kind: 'geo', sid, shapes, rivers, box, k: box && S.w ? (box[2] - box[0]) / S.w : 1, ents: [...places, ...cos], n: places.length + cos.length, coAt, nMax: Math.max(1, ...places.map((p) => p.n)), V: Float64Array.from(V), key: '', pkey: '', fit: null, rpath: null };
   geo.lays.set(sid, Lg); return Lg; }
 // a coordinate at t from its true (a), moderate (m) and full (k) value: 0 to 0.5 true to moderate, 0.5 to 1 moderate to full
 const geoAt = (a, m, k, t) => (t <= 0.5 ? a + (m - a) * 2 * t : m + (k - m) * (2 * t - 1));
-const geoLay = () => { const sc = cfg.scopes[st.scope], Lg = geoLayer(sc ? sc.id : ''); geoSync(Lg); return Lg; };
+const geoLay = () => { const sc = cfg.scopes[st.scope], Lg = geoLayer(geoUni() ? geoActive() : sc ? sc.id : ''); geoSync(Lg); return Lg; };
 // the layer at the morph t, fitted to the map box BW x BH: the box of the shapes at t (of the places when there are none), its centre and one
 // scale for both axes (94 % of the box, aspect kept); every entity takes its position in map units (see sx and sy)
 function geoSync(Lg) { const t = geo.t, key = t + '|' + BW + '|' + BH; if (Lg.key === key) return; Lg.key = key;
+  if (geoUni() && Lg.box) {   // one frame for every level: a level's units go to world units through its box (x = box[0] + x * k)
+    const F = geoFrame(), f = Lg.fit = { mx: (F.mx - Lg.box[0]) / Lg.k, my: (F.my - Lg.box[1]) / Lg.k, p: F.p * Lg.k };
+    for (const e of Lg.ents) { const x = geoAt(e.gx, e.hx, e.kx, t), y = geoAt(e.gy, e.hy, e.ky, t); e.x = 0.5 + (x - f.mx) * f.p / BW; e.y = 0.5 + (y - f.my) * f.p / BH; }
+    return; }
   const V = Lg.V; let X0 = Infinity, X1 = -Infinity, Y0 = Infinity, Y1 = -Infinity;
   for (let i = 0; i < V.length; i += 6) { const x = geoAt(V[i], V[i + 2], V[i + 4], t), y = geoAt(V[i + 1], V[i + 3], V[i + 5], t); if (x < X0) X0 = x; if (x > X1) X1 = x; if (y < Y0) Y0 = y; if (y > Y1) Y1 = y; }
   if (X0 === Infinity) { X0 = Y0 = 0; X1 = Y1 = 1; }
@@ -715,11 +766,20 @@ function geoSync(Lg) { const t = geo.t, key = t + '|' + BW + '|' + BH; if (Lg.ke
 // over); s.lx, s.ly: the label point (the middle of the largest ring)
 function geoPaths(Lg) { const key = [geo.t, W, H, BW, BH, st.z.s, st.z.cx, st.z.cy].join('|'); if (Lg.pkey === key) return; Lg.pkey = key;
   const t = geo.t, f = Lg.fit, X = (x) => sx(0.5 + (x - f.mx) * f.p / BW), Y = (y) => sy(0.5 + (y - f.my) * f.p / BH);
-  for (const s of Lg.shapes) { const path = new Path2D(); s.pr = []; let big = null;
-    for (const r of s.rings) { const q = []; for (const v of r) q.push(X(geoAt(v[0], v[4] ?? (v[0] + v[2]) / 2, v[2], t)), Y(geoAt(v[1], v[5] ?? (v[1] + v[3]) / 2, v[3], t))); if (!q.length) continue;
+    for (const s of Lg.shapes) { const path = new Path2D(); s.pr = []; let big = null;
+    if (geoUni() && t < 0.02) { if (!s.tb) s.tb = s.rings.map((r) => { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const v of r) { if (v[0] < a) a = v[0]; if (v[0] > c) c = v[0]; if (v[1] < b) b = v[1]; if (v[1] > d) d = v[1]; } return [a, b, c, d]; });
+      const on = s.tb.some((q) => !(X(q[2]) < -20 || X(q[0]) > W + 20 || Y(q[3]) < -20 || Y(q[1]) > H + 20)); if (!on) { s.path = path; s.lx = s.ly = 0; s.ar = 0; continue; } }   // off screen on the true map: skipped
+    for (let ri = 0; ri < s.rings.length; ri++) { const r = s.rings[ri];
+      if (s.tb) { const q0 = s.tb[ri]; if (X(q0[2]) < -20 || X(q0[0]) > W + 20 || Y(q0[3]) < -20 || Y(q0[1]) > H + 20) continue; }   // a ring off screen (true map)
+      const q = []; let px = NaN, py = NaN;   // points closer than 0.6 px to the last one kept are left out (a fine outline seen from far)
+      for (let i = 0; i < r.length; i++) { const v = r[i], x = X(geoAt(v[0], v[4] ?? (v[0] + v[2]) / 2, v[2], t)), y = Y(geoAt(v[1], v[5] ?? (v[1] + v[3]) / 2, v[3], t));
+        if (i && i < r.length - 1 && Math.abs(x - px) < 0.6 && Math.abs(y - py) < 0.6) continue; q.push(x, y); px = x; py = y; }
+      if (q.length < 6) continue;
       path.moveTo(q[0], q[1]); for (let i = 2; i < q.length; i += 2) path.lineTo(q[i], q[i + 1]); path.closePath(); s.pr.push(q); if (!big || q.length > big.length) big = q; }
     s.path = path; s.lx = s.ly = 0; s.ar = 0;
-    if (big) { const [lx, ly, ar] = labelPoint(big); s.lx = lx; s.ly = ly; s.ar = ar; } } }
+    if (big) { const [lx, ly, ar] = labelPoint(big); s.lx = lx; s.ly = ly; s.ar = ar; } }
+  // the rivers: one path per rank band (the big ones drawn a little wider)
+  Lg.rpath = [new Path2D(), new Path2D()]; for (const r of Lg.rivers) { const P2 = Lg.rpath[r.rank <= 3 ? 0 : 1]; r.pts.forEach((v, i) => { const x = X(geoAt(v[0], v[4] ?? (v[0] + v[2]) / 2, v[2], t)), y = Y(geoAt(v[1], v[5] ?? (v[1] + v[3]) / 2, v[3], t)); if (i) P2.lineTo(x, y); else P2.moveTo(x, y); }); } }
 // the label point of a shape's largest ring (a flat px list): the area-weighted centroid when it lies inside the ring, else the sample of a
 // 12 x 12 grid inside the ring that is farthest from its edge (the edge's vertices, at most 64). Also the ring's on-screen area
 function labelPoint(q) { const n = q.length / 2; let A = 0, cx = 0, cy = 0, a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;
@@ -745,7 +805,7 @@ function placeCardHtml(k, e) { const cs = placeCos(k); return `<li class="atlas-
 // (checked addresses, branch coordinates, the company's own places), also where nothing is open. Headquarters are always shown.
 const brOk = (e) => !e.kind || st.branches.has(e.kind === 'branch' ? 'now' : e.kind === 'addr' ? 'file' : e.kind);
 function prepareGeo(T) { const Lg = geoLay(), n = Lg.n, cn = new Int32Array(n), cw = new Float32Array(n), cNew = new Uint8Array(n);
-  act = Lg.ents.map((e) => e.place || visibleRoles(e).length > 0); vis = Lg.ents.map((e) => e.place || (coFieldsOk(e) && coScopeOk(e) && brOk(e)));
+  act = Lg.ents.map((e) => e.place || visibleRoles(e).length > 0); vis = Lg.ents.map((e) => e.place || (coFieldsOk(e) && (geoUni() || coScopeOk(e)) && brOk(e)));   // one zoomable map: a level holds its extent's companies, no scope filter
   Lg.ents.forEach((e, k) => { if (!e.place) cn[k] = visibleRoles(e).length; }); fit = null;
   return { Ly: Lg, roles: false, geo: true, T, ink: css('--ink'), paper: css('--panel'), stat: null, fresh: { t: 0, w: 0, m: 0 }, heat: false, cn, cw, cNew, cwMax: 0, lw: linkWeights(Lg) }; }
 // the continents of the geography's widest names (ISO country codes)
@@ -758,13 +818,14 @@ const CONTINENT = (() => { const R = {}, add = (k, ccs) => ccs.split(' ').forEac
   add('AF', 'DZ AO BJ BW BF BI CM CV CF TD KM CG CD CI DJ EG GQ ER SZ ET GA GM GH GN GW KE LS LR LY MG MW ML MR MU MA MZ NA NE NG RW ST SN SC SL SO ZA SS SD TZ TG TN UG ZM ZW RE YT EH');
   return R; })();
 const CONTINENT_NAME = { EU: ['Europe', 'Europa'], NA: ['North America', 'Nordamerika'], SA: ['South America', 'Südamerika'], AS: ['Asia', 'Asien'], OC: ['Oceania', 'Ozeanien'], AF: ['Africa', 'Afrika'] };
-// the level the geography names its areas at: by the width of the view in degrees (the scope's extent over the zoom): continents above 90, countries
-// above 20, else the shapes of the scope (states, districts)
-function geoLevel(Lg) { const S = (GEO && GEO.scopes && GEO.scopes[Lg.sid]) || {}, ex = S.extent || [-180, -60, 180, 80], span = (ex[2] - ex[0]) / Math.max(1, st.z.s);
-  return span > 90 ? 'continent' : span > 20 ? 'country' : 'shape'; }
+// the level the geography names its areas at: by the width of the view in degrees (the scope's extent over the zoom): continents above 120 (a
+// continent fitted in the view is about 95 wide), countries above 25, else the shapes of the level (states, districts)
+function geoLevel(Lg) { const S = (GEO && GEO.scopes && GEO.scopes[Lg.sid]) || {}, ex = S.extent || [-180, -60, 180, 80], span = geoUni() ? 360 * geoView().w : (ex[2] - ex[0]) / Math.max(1, st.z.s);
+  return span > 120 ? 'continent' : span > 25 ? 'country' : 'shape'; }
 // the shape a company lies in, on the true map (the finest one: a district before a state before a country); kept on the entity
 function geoShapeOf(Lg, e) { if (e.shp !== undefined) return e.shp; const rank = { district: 0, state: 1, country: 2 }; let best = null;
-  for (const s of Lg.shapes) { if (best && (rank[s.kind] ?? 3) >= (rank[best.kind] ?? 3)) continue; if (!s.bb) { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const r of s.rings) for (const v of r) { if (v[0] < a) a = v[0]; if (v[0] > c) c = v[0]; if (v[1] < b) b = v[1]; if (v[1] > d) d = v[1]; } s.bb = [a, b, c, d]; }
+  for (const s of Lg.shapes) { if (best && ((rank[s.kind] ?? 3) > (rank[best.kind] ?? 3) || ((rank[s.kind] ?? 3) === (rank[best.kind] ?? 3) && s.area >= best.area))) continue;   // an enclave (Bremen) before the state around it
+    if (!s.bb) { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const r of s.rings) for (const v of r) { if (v[0] < a) a = v[0]; if (v[0] > c) c = v[0]; if (v[1] < b) b = v[1]; if (v[1] > d) d = v[1]; } s.bb = [a, b, c, d]; }
     if (e.gx < s.bb[0] || e.gx > s.bb[2] || e.gy < s.bb[1] || e.gy > s.bb[3]) continue;
     let inside = false; for (const r of s.rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1]; if ((yi > e.gy) !== (yj > e.gy) && e.gx < (xj - xi) * (e.gy - yi) / (yj - yi) + xi) inside = !inside; }
     if (inside) best = s; }
@@ -777,9 +838,20 @@ function paintGeo(ctx, P, o) {
   ctx.globalCompositeOperation = 'source-over';
   if (screen && !T.bg && !T.multiply) ctx.clearRect(0, 0, W, H); else { ctx.globalAlpha = 1; ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H); }
   geoPaths(Lg);
-  ctx.globalCompositeOperation = T.multiply ? 'multiply' : 'source-over'; ctx.globalAlpha = T.glow ? 0.82 : 1;
-  for (const s of Lg.shapes) { const c = geoShapeRgb(s, T); ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.fill(s.path, 'evenodd'); }
-  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.35; ctx.strokeStyle = ink; ctx.lineWidth = 0.6; for (const s of Lg.shapes) ctx.stroke(s.path);
+  // one zoomable map: on the true map the coarser levels lie under the level drawn (they meet, one projection), so outside its box the map goes
+  // on; a level that was just left fades out under the new one (360 ms)
+  const A0 = T.glow ? 0.82 : 1, fade = geo.fade && geoUni() ? Math.min(1, (performance.now() - geo.fade.t0) / 360) : 1, wOf = (sid) => GEO.scopes[sid].box[2] - GEO.scopes[sid].box[0];
+  const vw = geoUni() ? geoView() : null, covers = !!(vw && Lg.box && vw.x - vw.w / 2 >= Lg.box[0] && vw.x + vw.w / 2 <= Lg.box[2] && vw.y - vw.w * H / W / 2 >= Lg.box[1] && vw.y + vw.w * H / W / 2 <= Lg.box[3]);
+  const below = !geoUni() || covers ? [] : geo.t < 0.02 ? geoLevels().filter((sid) => sid !== Lg.sid && geo.data.has(sid) && (!Lg.box || wOf(sid) > Lg.box[2] - Lg.box[0])).reverse() : [];   // none when the level covers the view
+  if (geoUni() && geo.fade && geo.fade.from !== Lg.sid && geo.data.has(geo.fade.from) && !below.includes(geo.fade.from)) below.push(geo.fade.from);
+  const shapesOf = (L, a, cut = false) => { const sh = cut ? L.shapes.filter((s) => !s.edge) : L.shapes; ctx.globalCompositeOperation = T.multiply ? 'multiply' : 'source-over'; ctx.globalAlpha = a;
+    for (const s of sh) { const c = geoShapeRgb(s, T); ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.fill(s.path, 'evenodd'); }
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.35 * a / A0; ctx.strokeStyle = ink; ctx.lineWidth = 0.6; for (const s of sh) ctx.stroke(s.path); };
+  for (const sid of below) { const Lc = geoLayer(sid); geoSync(Lc); geoPaths(Lc); shapesOf(Lc, sid === (geo.fade && geo.fade.from) && geo.t >= 0.02 ? A0 * (1 - fade) : A0); }
+  shapesOf(Lg, A0 * fade, below.length > 0 && geo.t < 0.02);
+  // the rivers, a thin line in a water colour (the big ones wider), for finding one's way on the map
+  if (Lg.rpath) { const rw = Math.min(1.8, 0.8 + 0.25 * Math.log2(Math.max(1, st.z.s))); ctx.globalAlpha = (T.glow ? 0.9 : 0.85) * fade; ctx.strokeStyle = T.glow ? 'rgb(150,205,255)' : 'rgb(30,95,190)'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.lineWidth = 1.5 * rw; ctx.stroke(Lg.rpath[0]); ctx.lineWidth = 1.0 * rw; ctx.stroke(Lg.rpath[1]); }
   // the companies: tiny dots, one path per style and colour (a company with an open role in the filter: a larger, brighter dot); the linked
   // ones (lw > 0) get a halo; the rest of a link (lw 0) is dimmed to a quarter
   const dots = new Map(), linked = []; let nCo = 0;
@@ -797,7 +869,8 @@ function paintGeo(ctx, P, o) {
   pl.sort((a, b) => Lg.ents[a].n - Lg.ents[b].n);
   // no dots for the cities: the map is the borders and the companies; a city with companies is named (below)
   ctx.globalAlpha = 1;
-  if (o.keep) { const kf = base || (base = { c: document.createElement('canvas') }); kf.c.width = ctx.canvas.width; kf.c.height = ctx.canvas.height; kf.c.getContext('2d').drawImage(ctx.canvas, 0, 0); kf.z = { ...st.z }; }
+  // the frame is kept for the view tween, except on the one zoomable map (it flies live; a copy of the canvas every frame slows the zoom)
+  if (o.keep && !geoUni()) { const kf = base || (base = { c: document.createElement('canvas') }); kf.c.width = ctx.canvas.width; kf.c.height = ctx.canvas.height; kf.c.getContext('2d').drawImage(ctx.canvas, 0, 0); kf.z = { ...st.z }; }
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
   if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
@@ -886,7 +959,8 @@ function geoPlay(to) {   // animate to t = to (0 the true map, 0.5 moderate, 1 f
   const a = geo.t, ms = 1200 * Math.max(0.25, Math.abs(to - a)), t0 = performance.now(), step = (now) => { const p = Math.min(1, (now - t0) / ms); if (p >= 1) { geoStop(); geoSetT(to); return; } geo.raf = requestAnimationFrame(step); geoSetT(a + (to - a) * easeIO(p)); };
   geo.morph = true; geo.to = to; geo.raf = requestAnimationFrame(step); }
 // the view of the geography: the whole map, the lens on the biggest place
-function fitGeo() { const Lg = lay(), big = Lg.ents.filter((e) => e.place).sort((a, b) => b.n - a.n)[0]; st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = big ? { x: big.x, y: big.y } : { x: 0.5, y: 0.5 }; }
+function fitGeo() { if (geoUni()) { const sc = cfg.scopes[st.scope], sid = sc && GEO.scopes[sc.id] ? sc.id : geoLevels().slice(-1)[0]; if (sid) st.z = geoBoxZ(sid); }   // one map: the Where scope is a preset view
+  const Lg = lay(), big = Lg.ents.filter((e) => e.place).sort((a, b) => b.n - a.n)[0]; if (!geoUni()) st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = big ? { x: big.x, y: big.y } : { x: 0.5, y: 0.5 }; }
 
 function draw() {
   sizeCanvas();
@@ -1077,7 +1151,7 @@ function fitTo() {
   st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: xs[best], y: ys[best] };
 }
 // the view after a filter or a switch: fitted to the visible roles or companies (one map), else the whole map (as per_scope always did)
-const fitOrWhole = () => { if (!perScope) fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
+const fitOrWhole = () => { if (!perScope || st.mode === 'geo') fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
 function resample() {
   draw();   // refreshes which entities are visible under the current filters
   if (st.mode === 'geo') { const Lg = lay(), pool = inLens(), wOf2 = (e) => (e.place ? e.n : visibleRoles(e).length); st.sample = pool.sort((a, b) => wOf2(Lg.ents[b]) - wOf2(Lg.ents[a])).slice(0, 8); renderArea(pool); renderList(); draw(); return; }
@@ -1363,7 +1437,7 @@ const endPtr = (e) => { touches.delete(e.pointerId); if (pinch) { if (touches.si
   const moved = kind === 'lens' || (tap && lensOn()); if (kind === 'pan' && tap && lensOn()) { st.lens.x = ux(px); st.lens.y = uy(py); }
   if (moved) PF.bumpExplored(); resample(); if (moved) { computeTaste(); renderPersonas(); draw(); } };
 cv.addEventListener('pointerup', endPtr); cv.addEventListener('pointercancel', endPtr);
-function zoomTo(s1, px, py, then = true) { const x0 = ux(px), y0 = uy(py); st.z.s = Math.max(1, Math.min(24, s1)); if (st.z.s === 1) { st.z.cx = 0.5; st.z.cy = 0.5; } else { st.z.cx = x0 - (px - W / 2) / (st.z.s * BW); st.z.cy = y0 - (py - H / 2) / (st.z.s * BH); } if (then) resample(); else draw(); }
+function zoomTo(s1, px, py, then = true) { const x0 = ux(px), y0 = uy(py); st.z.s = Math.max(1, Math.min(maxZoom(), s1)); if (st.z.s === 1) { st.z.cx = 0.5; st.z.cy = 0.5; } else { st.z.cx = x0 - (px - W / 2) / (st.z.s * BW); st.z.cy = y0 - (py - H / 2) / (st.z.s * BH); } if (then) resample(); else draw(); }
 function zoom(f, px = W / 2, py = H / 2) { zoomTo(st.z.s * f, px, py); }
 cv.addEventListener('mousedown', (e) => { if (e.detail > 1) e.preventDefault(); });      // a double click zooms; it should not select page text
 cv.addEventListener('dblclick', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(2, px, py); });
@@ -1449,10 +1523,11 @@ mount.addEventListener('change', async (e) => {
   if (e.target.id === 'atlas-cv-on') { cvEmb.on = e.target.checked; setJ(K.cv, cvEmb); computeTaste(); draw(); }
   if (e.target.id === 'atlas-taste' || e.target.id === 'atlas-heat') draw();
 });
-$('atlas-scope').addEventListener('change', (e) => viewChange(() => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope); if (lnk) linkBuild(lnk);
+$('atlas-scope').addEventListener('change', (e) => { if (st.mode === 'geo' && geoUni()) { st.scope = +e.target.value; const sc = cfg.scopes[st.scope]; if (sc && GEO.scopes[sc.id]) { geoFetchScope(sc.id); geoFly(geoBoxZ(sc.id), () => resample()); } return; }
+  viewChange(() => { st.scope = +e.target.value; const before = layers.roles; layers.roles = roleMapFor(st.scope); if (lnk) linkBuild(lnk);
   if (perScope) { if (layers.roles !== before && st.mode === 'roles') { st.sample = []; st.z = { s: 1, cx: 0.5, cy: 0.5 }; } }
   else if (lnk) fitLinked(); else fitTo();
-  resample(); }));
+  resample(); }); });
 const lensHead = () => { $('atlas-in').textContent = lensOn() ? pick('In the lens', 'In der Lupe') : pick('In view', 'Im Blick'); };
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; lensHead(); resample(); });
 if (cfg.geomap) { const sl = $('atlas-morph-t'); sl.addEventListener('input', (e) => { geoStop(); geoSetT(+e.target.value); }); sl.addEventListener('pointerdown', () => geoStop()); }

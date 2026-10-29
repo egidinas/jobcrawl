@@ -6,6 +6,7 @@ Reads from the network (raw.githubusercontent.com, nvkelso/natural-earth-vector)
     ne_110m_admin_0_countries.geojson         countries (ISO_A2, or ISO_A2_EH where ISO_A2 is -99: France, Norway, Kosovo)
     ne_10m_admin_1_states_provinces.geojson   first-level divisions of the countries in state_countries (Germany's Lander)
 The 50m states file has no Germany, so the 10m one is used for the states. Writes the downloaded files into CACHE.
+The rivers (load_rivers): ne_10m_rivers_lake_centerlines.geojson, and for Europe ne_10m_rivers_europe.geojson, from the same place.
 Each shape: {'id': 'FR' or 'DE-BY', 'cc': 'FR', 'name': English name, 'match': names the gazetteer may call it by, 'kind': 'country' |
 'state', 'rings': [[(lon, lat), ...], ...]} (outer rings and holes, as in the GeoJSON). Natural Earth is public domain.
 """
@@ -141,8 +142,9 @@ def snap_borders(countries, states, tol=0.3, step=0.01):
 
 # ---- Eurostat GISCO outlines, one level of detail per scope ------------------------------------------------------------------------------------------
 # The countries and the NUTS regions come from one family of files, so their borders meet (no gaps between a state and its neighbour country), and every scale is
-# available: the world is drawn from the 1:20M countries, Europe from 1:10M with the German Laender, Germany from 1:3M with the Laender, and Bavaria from 1:3M with
+# available: the world is drawn from the 1:10M countries, Europe from 1:3M with the German Laender, Germany from 1:1M with the Laender, and Bavaria from 1:1M with
 # its 96 districts (71 Landkreise and the independent cities, NUTS 3) between the other Laender and the neighbouring countries. (c) EuroGeographics for the boundaries.
+# (Version 2 of the cartogram: each level one step finer than before, 20M -> 10M, 10M -> 3M, 3M -> 1M for the Laender and the districts.)
 GISCO = 'https://gisco-services.ec.europa.eu/distribution/v2/'
 GISCO_ISO = {'EL': 'GR', 'UK': 'GB'}                     # GISCO's country codes that differ from ISO 3166-1 alpha-2
 
@@ -181,7 +183,7 @@ def load_scope(cache, scope, state_country='DE', log=print):
     """The shapes of one scope at its level of detail, as geo_base.load returns them ({'countries', 'states', 'unmatched'}); the 'states' of a 'districts' scope are the
     districts of the scope's state (kind 'district', parent: the state) plus the other states as context (kind 'state')."""
     level = detail_of(scope)
-    res = {'world': ('20M', '20M', ()), 'europe': ('10M', '10M', (state_country,)), 'states': ('03M', '03M', (state_country,)), 'districts': ('03M', '03M', (state_country,))}[level]
+    res = {'world': ('10M', '10M', ()), 'europe': ('03M', '03M', (state_country,)), 'states': ('01M', '01M', (state_country,)), 'districts': ('01M', '01M', (state_country,))}[level]
     cres, nres, stc = res
     with open(_fetch_url(cache, f'{GISCO}countries/geojson/CNTR_RG_{cres}_2020_4326.geojson', log), encoding='utf-8') as fh:
         countries = []
@@ -224,3 +226,38 @@ def load_scope(cache, scope, state_country='DE', log=print):
                                            'parent': scope['match'].get('admin1'), 'rings': rings})
     log(f'shapes for scope {scope["id"]} ({level}, countries 1:{cres}): {len(countries)} countries, {len(states)} states/districts')
     return {'countries': countries, 'states': states, 'unmatched': []}
+
+
+# ---- Natural Earth rivers (optional: rivers are drawn when the files are there, and the build goes on without them) -----------------------------------
+RIVERS_FILE = 'ne_10m_rivers_lake_centerlines.geojson'       # the world's rivers and lake centre lines; scalerank 0 (the largest) to 10
+RIVERS_EUROPE_FILE = 'ne_10m_rivers_europe.geojson'          # Europe's finer rivers; its scalerank is 10 to 12 on its own scale (detail: True)
+
+
+def load_rivers(cache, europe=False, log=print):
+    """The rivers as [{'name', 'rank' (scalerank), 'lines': [[[lon, lat], ...], ...], 'detail': bool}], from the cache or downloaded into it. europe: the
+    Europe file's rivers are added too (detail True: they carry their own scalerank and are not limited by the scope's rank). A file that cannot be
+    read is logged and skipped; when the world file is missing the result is [] (the cartogram is then drawn without rivers)."""
+    out = []
+    for name, detail in ((RIVERS_FILE, False), (RIVERS_EUROPE_FILE, True)) if europe else ((RIVERS_FILE, False),):
+        try:
+            with open(_fetch(cache, name, log), encoding='utf-8') as fh:
+                feats = json.load(fh)['features']
+        except (BaseMapError, OSError, ValueError, KeyError) as e:
+            log(f'rivers: {name} not available, drawn without it ({e})')
+            if not detail:
+                return []
+            continue
+        for f in feats:
+            geom, p = f.get('geometry') or {}, f.get('properties') or {}
+            if geom.get('type') == 'LineString':
+                lines = [geom['coordinates']]
+            elif geom.get('type') == 'MultiLineString':
+                lines = geom['coordinates']
+            else:
+                continue
+            lines = [[[float(x), float(y)] for x, y in line] for line in lines if len(line) >= 2]
+            if lines:
+                rank = p.get('scalerank')
+                out.append({'name': p.get('name') or '', 'rank': int(rank) if rank is not None else 99, 'lines': lines, 'detail': detail})
+    log(f'rivers: {len(out)} lines read')
+    return out
