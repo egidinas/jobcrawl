@@ -25,14 +25,14 @@ let ratings = loadRatings();
 
 const style = document.createElement('style');
 style.textContent = `
-.atlas-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;margin-inline:calc(50% - min(820px,50vw - 24px))}
+.atlas-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;margin-inline:min(0px,calc(50% - min(820px,50vw - 24px)))}
 .atlas-bar{display:flex;gap:10px 16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
 .atlas-bar label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .atlas-bar select{padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:14px}
 .atlas-views button,.atlas-pills button,.atlas-fields button,.atlas-side button.sm,.atlas-shape button.sm{all:unset;cursor:pointer;font-size:13px;padding:5px 11px;border:1px solid var(--line);border-radius:14px;color:var(--muted)}
 .atlas-views button[aria-pressed=true],.atlas-pills button[aria-pressed=true],.atlas-fields button[aria-pressed=true]{border-color:var(--accent-text);color:var(--accent-text);font-weight:600}
 .atlas-fieldbox{margin-bottom:10px}.atlas-fieldbox summary{cursor:pointer;font-size:13px;color:var(--text)}.atlas-fieldbox summary>span:first-child{font-weight:600}.atlas-fieldbox[open] summary{margin-bottom:8px}
-.atlas-views{display:flex;gap:6px;flex-wrap:wrap}.atlas-ctl{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.atlas-ctl-l{font-size:12.5px;color:var(--muted);margin-right:2px}.atlas-pills{display:flex;gap:6px;flex-wrap:wrap}.atlas-hide{display:none!important}.atlas-fields{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.atlas-fields button[hidden]{display:none}.atlas-views{display:flex;gap:6px;flex-wrap:wrap}.atlas-ctl{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.atlas-ctl-l{font-size:12.5px;color:var(--muted);margin-right:2px}.atlas-pills{display:flex;gap:6px;flex-wrap:wrap}.atlas-hide{display:none!important}.atlas-fields{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .atlas-stage{user-select:none;-webkit-user-select:none;position:relative;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
 .atlas-stage canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
 .atlas-stage:fullscreen{border-radius:0;border:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
@@ -239,7 +239,12 @@ renderPersonas(); renderPrefs(); renderCv(); computeTaste();
 const st = { branches: new Set(['now', 'file']), all: false, mode: 'roles', scope: defaultScope(), size: 0, fields: new Set(), lens: { x: 0.5, y: 0.5 }, sample: [], open: new Set(), z: { s: 1, cx: 0.5, cy: 0.5 } };
 const fieldSum = () => { const on = [...st.fields]; $('atlas-fields-sum').innerHTML = `<span>${L('Fields', 'Fachgebiete')}</span> <span class="atlas-note">${on.length ? esc(on.map(fieldLabel).join(', ')) : L('all (click to narrow the map to some)', 'alle (zum Eingrenzen öffnen)')}</span>`; };
 fieldSum();
-$('atlas-fields').innerHTML = ix.fields.map((f) => `<button type="button" data-f="${esc(f)}" aria-pressed="false">${esc(fieldLabel(f))}</button>`).join('');
+// the fields as buttons: the first 14 (the profile's own fields come first), the rest behind a "more" button, so the map stays in sight
+const FIELDS_SHOWN = 14;
+$('atlas-fields').innerHTML = ix.fields.map((f, i) => `<button type="button" data-f="${esc(f)}" aria-pressed="false"${i >= FIELDS_SHOWN ? ' class="more" hidden' : ''}>${esc(fieldLabel(f))}</button>`).join('')
+  + (ix.fields.length > FIELDS_SHOWN ? `<button type="button" class="fields-more" aria-expanded="false">${L(`+ ${ix.fields.length - FIELDS_SHOWN} more`, `+ ${ix.fields.length - FIELDS_SHOWN} weitere`)}</button>` : '');
+$('atlas-fields').addEventListener('click', (e) => { const b = e.target.closest('.fields-more'); if (!b) return; e.stopImmediatePropagation(); const open = b.getAttribute('aria-expanded') !== 'true';
+  $('atlas-fields').querySelectorAll('button.more').forEach((x) => { x.hidden = !open; }); b.setAttribute('aria-expanded', String(open)); b.innerHTML = open ? L('fewer', 'weniger') : L(`+ ${ix.fields.length - FIELDS_SHOWN} more`, `+ ${ix.fields.length - FIELDS_SHOWN} weitere`); }, true);
 let W = 900, H = 640, BW = 900, BH = 640;      // the logical canvas (the stage's size); the map box BW x BH inside it: positions, labels and pointer maps are in these units; the canvas store is k times larger
 const cv = $('atlas-cv'), g = cv.getContext('2d'), css = (n, fb = '#888') => getComputedStyle(document.body).getPropertyValue(n).trim() || fb;
 const stage = cv.parentElement, fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
