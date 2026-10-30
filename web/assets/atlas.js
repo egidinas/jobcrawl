@@ -14,6 +14,8 @@ const mount = document.getElementById('atlas-mount'); if (!mount) throw new Erro
 // ({roles, companies, geo}, as JSON). The address and the title follow the view; links to those pages switch the view in place
 const jsonAttr = (k) => { try { return JSON.parse(mount.dataset[k] || 'null'); } catch (e) { return null; } };
 const PAGES = jsonAttr('pages'), TITLES = jsonAttr('titles');
+// data-shape="off" on the mount: no profile (statements, CV, the ▲ ● ▼ marks); the section keeps only the display options
+const SHAPE = mount.dataset.shape !== 'off';
 // the scopes of config.json, in order: a role's scope bits (match-attrs.json) follow this order
 const scopeOpts = cfg.scopes.map((x, k) => `<option value="${k}"${k === defaultScope() ? ' selected' : ''}>${L(x.label.en, x.label.de)}</option>`).join('');
 const fieldLabel = (id) => { const f = (cfg.fields || []).find((x) => x.id === id); return f ? pick(f.label.en, f.label.de) : id; };
@@ -55,7 +57,7 @@ style.textContent = `
 .atlas-tag-tier{display:inline-block;font-size:11px;padding:1px 7px;border-radius:10px;color:#fff;font-weight:600;margin-left:6px;vertical-align:middle}
 .co-has-roles{color:var(--accent-text);font-weight:600}
 .co-no-roles{color:var(--muted);font-style:italic}
-.atlas-shape{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:12px}.atlas-shape>summary{cursor:pointer;padding:10px 14px;list-style:none}.atlas-shape>summary::-webkit-details-marker{display:none}
+.atlas-shape.shape-off :is(.personas,.prefs,.shape-cv,.shape-save,label:has(#atlas-taste)){display:none}.atlas-shape{border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:12px}.atlas-shape>summary{cursor:pointer;padding:10px 14px;list-style:none}.atlas-shape>summary::-webkit-details-marker{display:none}
 .shape-body{padding:0 14px 14px;display:flex;flex-direction:column;gap:12px}.prefs{display:grid;grid-template-columns:1fr auto 1fr;gap:6px 10px;align-items:center;font-size:13px}
 .prefs .pa{text-align:right}.prefs .pb{text-align:left}.pref5{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}.pref5 button{all:unset;cursor:pointer;width:26px;height:24px;text-align:center;border-right:1px solid var(--line);color:var(--muted);font-size:12px}.pref5 button:last-child{border-right:0}.pref5 button.on{background:var(--accent);color:var(--btn-fg,#fff)}.pref5 button:focus-visible{outline:2px solid var(--accent)}
 @media(max-width:600px){.prefs{grid-template-columns:1fr}.prefs .pa,.prefs .pb{text-align:left}}
@@ -89,18 +91,18 @@ mount.innerHTML = `<div class="atlas-bar">
 <div class="atlas-ctl"><span class="atlas-pills" role="group"><button type="button" data-toggle="atlas-linked" title="${esc(pick('Carry the selection to the other view when switching', 'Die Auswahl beim Wechsel in die andere Ansicht mitnehmen'))}">${L('Linked views', 'Verknüpfte Ansichten')}</button></span><input type="checkbox" id="atlas-linked" class="atlas-hide" checked aria-hidden="true" tabindex="-1"></div>
 </div>
 <details class="atlas-fieldbox" id="atlas-fieldbox" open><summary id="atlas-fields-sum"></summary><div class="atlas-fields" id="atlas-fields" role="group"></div></details>
-<details class="atlas-shape" id="atlas-shape"><summary><strong>${L('Shape the map to you', 'Die Karte auf Sie zuschneiden')}</strong> <span class="atlas-note">${L('optional: a few statements, your CV, and the roles and companies you mark below', 'optional: ein paar Aussagen, Ihr CV und die Stellen und Firmen, die Sie unten markieren')}</span></summary>
+<details class="atlas-shape${SHAPE ? '' : ' shape-off'}" id="atlas-shape">${SHAPE ? `<summary><strong>${L('Shape the map to you', 'Die Karte auf Sie zuschneiden')}</strong> <span class="atlas-note">${L('optional: a few statements, your CV, and the roles and companies you mark below', 'optional: ein paar Aussagen, Ihr CV und die Stellen und Firmen, die Sie unten markieren')}</span></summary>` : `<summary><strong>${L('Display options', 'Anzeigeoptionen')}</strong></summary>`}
 <div class="shape-body"><div class="personas" id="atlas-personas"></div><div class="prefs" id="atlas-prefs"></div>
 <div class="shape-cv" id="atlas-cvbox"></div>
 <div class="shape-save"><button type="button" class="sm" id="atlas-forget">${L('Forget everything on this device', 'Alles auf diesem Gerät vergessen')}</button> <button type="button" class="sm" id="atlas-save">${L('Save my profile as a file', 'Mein Profil als Datei speichern')}</button> <label class="atlas-note"><input type="checkbox" id="atlas-save-cv"> ${L('include my CV (as numbers)', 'mit CV (als Zahlen)')}</label> <label class="atlas-note">${L('Load a saved profile: ', 'Gespeichertes Profil laden: ')}<input type="file" id="atlas-load" accept=".json,application/json"></label></div>
-<label class="shape-toggle"><input type="checkbox" id="atlas-taste" checked> ${L('Show how well each area fits me (bright: close to my profile, faint: far from it)', 'Zeigen, wie gut jeder Bereich zu mir passt (hell: nah an meinem Profil, blass: weit weg)')}</label>
+<label class="shape-toggle"><input type="checkbox" id="atlas-taste"${SHAPE ? " checked" : ""}> ${L('Show how well each area fits me (bright: close to my profile, faint: far from it)', 'Zeigen, wie gut jeder Bereich zu mir passt (hell: nah an meinem Profil, blass: weit weg)')}</label>
 <label class="shape-toggle"><input type="checkbox" id="atlas-all"> ${L('Show every role (otherwise at most three per employer and neighbourhood, so big employers do not crowd the map)', 'Jede Stelle zeigen (sonst höchstens drei je Arbeitgeber und Nachbarschaft, damit große Arbeitgeber die Karte nicht füllen)')}</label></div></details>
 <div class="atlas-grid"><div>
 <div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-fs" aria-label="${esc(pick('Full screen', 'Vollbild'))}" title="${esc(pick('Full screen', 'Vollbild'))}">⛶</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div><div class="atlas-scrub" id="atlas-scrub" hidden><button type="button" id="atlas-play" aria-label="${esc(pick('Play', 'Abspielen'))}" title="${esc(pick('Play through time', 'Durch die Zeit abspielen'))}">▶</button><input type="range" id="atlas-time" min="0" max="0" value="0" aria-label="${esc(pick('Time', 'Zeitpunkt'))}"><span class="tl-label" id="atlas-tlabel"></span><label><input type="checkbox" id="atlas-heat"> ${L('Hot and cold spots', 'Wo es wächst und schrumpft')}</label></div>${cfg.geomap ? `<div class="atlas-scrub" id="atlas-geo" hidden><span>${L('Distortion', 'Verzerrung')}</span><span class="atlas-seg" id="atlas-morph" role="group" aria-label="${esc(pick('Distortion by roles', 'Verzerrung nach Stellen'))}"><button type="button" data-t="0" aria-pressed="false" title="${esc(pick('The true map', 'Die echte Karte'))}">${L('Off', 'Aus')}</button><button type="button" data-t="0.5" aria-pressed="true" title="${esc(pick('Areas follow the roles in part: the unequal spread, with the shapes kept recognisable', 'Flächen folgen den Stellen zum Teil: die ungleiche Verteilung, die Formen bleiben erkennbar'))}">${L('Moderate', 'Mäßig')}</button><button type="button" data-t="1" aria-pressed="false" title="${esc(pick('Every area sized by its share of the roles', 'Jede Fläche nach ihrem Anteil an den Stellen'))}">${L('Full', 'Voll')}</button></span><span>${L('Branches', 'Standorte')}</span><span class="atlas-seg" id="atlas-branches" role="group"><button type="button" data-b="now" aria-pressed="true" title="${esc(pick('Where roles are open now', 'Wo Stellen offen sind'))}">${L('Open now', 'Offen')}</button><button type="button" data-b="file" aria-pressed="true" title="${esc(pick('Locations on file, also where nothing is open', 'Hinterlegte Standorte, auch ohne offene Stelle'))}">${L('On file', 'Hinterlegt')}</button><button type="button" data-b="past" aria-pressed="false" title="${esc(pick('Where the company had roles before', 'Wo das Unternehmen früher Stellen hatte'))}">${L('Past roles', 'Frühere')}</button></span><input type="range" id="atlas-morph-t" min="0" max="1" step="0.005" value="0.5" aria-label="${esc(pick('Distortion, from the true map to areas by roles', 'Verzerrung, von der echten Karte bis zu Flächen nach Stellen'))}"></div>` : ''}</div>
 <p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
 <div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong id="atlas-in">${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
 <ul class="atlas-list" id="atlas-list"></ul>
-<p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens. ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.', 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe. ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.')}</p></div></div>`;
+<p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens.' + (SHAPE ? ' ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.' : ''), 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe.' + (SHAPE ? ' ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.' : ''))}</p></div></div>`;
 const $ = (id) => mount.querySelector('#' + id);
 
 // ---- data
@@ -201,6 +203,7 @@ let prefVals = getJ(K.prefs, {}), cvEmb = getJ(K.cv, null);
 let taste = null;
 const personaVecs = PF.personaVectors(ix, rows);
 function computeTaste() {
+  if (!SHAPE) { taste = null; return; }   // no profile on this page
   const items = [], extra = [], bad = new Map(), empStars = new Map();
   for (const [id, r] of Object.entries(ratings)) {
     const w = tasteWeight(r);
@@ -336,7 +339,23 @@ function grid(GW, GH, add) {      // per screen cell: sums of add(k) over visibl
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x) / W, Y0 = sy(e.y) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) return; A[Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW)] += add(k); });
   return A;
 }
-function blur(A, GW, GH, passes) { for (let pass = 0; pass < passes; pass++) { const t = new Float32Array(A.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let q = 0, m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) { q += A[yy * GW + xx]; m++; } } t[y * GW + x] = q / m; } A.set(t); } }
+// a soft blur: as many passes of a 3 x 3 box (the mean of the in-bounds neighbours). Few passes run as such; more passes run as one separable
+// Gaussian of the same spread (a pass adds a variance of 2/3 per axis), cut at 3 sigma: the cost no longer grows with the passes (a fine grid when
+// zoomed in needs many), and the tails stay round (a few wide boxes would give square blobs where the colour ramp shows the far tail)
+function blur(A, GW, GH, passes) {
+  if (passes <= 6) { for (let pass = 0; pass < passes; pass++) { const t = new Float32Array(A.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let q = 0, m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) { q += A[yy * GW + xx]; m++; } } t[y * GW + x] = q / m; } A.set(t); } return; }
+  const sg = Math.sqrt(2 * passes / 3), r = Math.ceil(3 * sg), k = new Float32Array(2 * r + 1), t = new Float32Array(A.length);
+  for (let i = -r; i <= r; i++) k[i + r] = Math.exp(-i * i / (2 * sg * sg));
+  gaussLine(A, t, GW, GH, 1, GW, k, r); gaussLine(t, A, GH, GW, GW, 1, k, r);
+}
+// the kernel k (radius r) along one axis, from S into D: n lines of len cells, step the cell stride along a line, line the stride between lines;
+// near an edge the in-bounds taps are renormalised (as the box passes take the mean of the in-bounds neighbours)
+function gaussLine(S, D, len, n, step, line, k, r) {
+  for (let l = 0; l < n; l++) { const o = l * line;
+    for (let x = 0; x < len; x++) { const a = Math.max(0, x - r), b = Math.min(len - 1, x + r); let sum = 0, w = 0;
+      for (let j = a; j <= b; j++) { const kw = k[j - x + r]; sum += S[o + j * step] * kw; w += kw; }
+      D[o + x * step] = sum / w; } }
+}
 function paint(ctx, A, GW, GH, rgb, alphaOf) {
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);
   for (let k = 0; k < A.length; k++) { img.data[k * 4] = rgb[0]; img.data[k * 4 + 1] = rgb[1]; img.data[k * 4 + 2] = rgb[2]; img.data[k * 4 + 3] = Math.round(255 * alphaOf(A[k])); }
@@ -1287,7 +1306,7 @@ function renderBanner() { const on = !!lnk && lnk.to === st.mode && !lay().past;
 const levelName = (k) => { const b = cfg.levels.find((x) => x.code === ix.levels[k]); return b ? pick(b.label.en, b.label.de) : ''; };
 const shards = new Map();
 const shard = (id) => { const k = id.slice(0, 2); if (!shards.has(k)) shards.set(k, fetch(dataUrl('jobs-desc-' + k + '.json')).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))); return shards.get(k); };
-const voteHtml = (id) => `<div class="atlas-vote">${[[-1, '▼'], [0, '●'], [1, '▲']].map(([x, gl]) => `<button type="button" data-v="${x}" class="${ratings[id] && ratings[id].vote === x ? 'on' : ''}" aria-pressed="${ratings[id] && ratings[id].vote === x}">${gl}</button>`).join('')}</div>`;
+const voteHtml = (id) => !SHAPE ? '' : `<div class="atlas-vote">${[[-1, '▼'], [0, '●'], [1, '▲']].map(([x, gl]) => `<button type="button" data-v="${x}" class="${ratings[id] && ratings[id].vote === x ? 'on' : ''}" aria-pressed="${ratings[id] && ratings[id].vote === x}">${gl}</button>`).join('')}</div>`;
 const snip = (t, n) => { t = (t || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n).replace(/\s\S*$/, '') + '…' : t; };
 // the badge of a new role in the lens list: "new today", "this week", "this month" (none when older or unknown)
 const newBadge = (i) => { const a = AGE[i], t = a < 1 ? L('new today', 'neu heute') : a < 7 ? L('this week', 'diese Woche') : a < 30 ? L('this month', 'diesen Monat') : ''; return t ? ` <span class="atlas-new">${t}</span>` : ''; };
@@ -1481,7 +1500,10 @@ function zoomTo(s1, px, py, then = true) { const x0 = ux(px), y0 = uy(py); st.z.
 function zoom(f, px = W / 2, py = H / 2) { zoomTo(st.z.s * f, px, py); }
 cv.addEventListener('mousedown', (e) => { if (e.detail > 1) e.preventDefault(); });      // a double click zooms; it should not select page text
 cv.addEventListener('dblclick', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(2, px, py); });
-cv.addEventListener('wheel', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
+// wheel steps are gathered and applied once per frame, so a fast wheel or trackpad does not queue one full draw per step
+let wheelF = 1, wheelAt = null, wheelRaf = 0;
+cv.addEventListener('wheel', (e) => { e.preventDefault(); wheelAt = ptr(e); wheelF *= e.deltaY < 0 ? 1.25 : 0.8;
+  if (!wheelRaf) wheelRaf = requestAnimationFrame(() => { wheelRaf = 0; const f = wheelF; wheelF = 1; zoom(f, ...wheelAt); }); }, { passive: false });
 const zAt = () => (lensOn() ? [sx(st.lens.x), sy(st.lens.y)] : [W / 2, H / 2]);   // the buttons zoom about the lens, or the middle without it
 $('atlas-zin').addEventListener('click', () => viewChange(() => zoom(1.5, ...zAt())));
 $('atlas-zout').addEventListener('click', () => viewChange(() => zoom(1 / 1.5, ...zAt())));
