@@ -740,9 +740,9 @@ function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
   const cos = (S.companies || []).map((c) => { const e = coBy.get(c.slug), base = e ? { ...e } : { id: 'co:' + c.slug, slug: c.slug, name: c.slug, about: '', field: '', idx: [], vec: null, c1: 0, c2: 0, f: new Float32Array(ix.fields.length) }; const own0 = c.cc ? { cc: c.cc } : {}, own = c.ids ? { idx: c.ids.map((id) => idIndex.get(id)).filter((i) => i !== undefined), ...(c.b ? { id: base.id + '@' + c.b, branch: c.b } : {}) } : {};
     if (c.k) { own.kind = c.k; own.name = base.name + ' · ' + (c.pn || '') + (c.k === 'past' ? ' (past roles' + (c.h ? ': ' + c.h : '') + ')' : c.k === 'addr' ? ' (location on file)' : ''); if (!c.b) own.id = base.id + '@' + c.k + (c.pn || ''); own.idx = own.idx || []; }   // a branch (or the headquarters beside branches) stands for the roles listed
     return { ...base, ...own0, ...own, gx: c.x, gy: c.y, hx: c.mx ?? (c.x + c.cx) / 2, hy: c.my ?? (c.y + c.cy) / 2, kx: c.cx, ky: c.cy, x: 0, y: 0 }; });
-  // companies on one and the same point (a catalogue with only a city centre for them) are spread in a sunflower spiral around it, so a crowd shows as a crowd and not as one dot
-  const spot = new Map(); cos.forEach((e) => { const k = e.gx.toFixed(4) + ',' + e.gy.toFixed(4); if (!spot.has(k)) spot.set(k, []); spot.get(k).push(e); });
-  spot.forEach((g) => { if (g.length < 2) return; g.forEach((e, i) => { const r = 0.0035 * Math.sqrt(i + 0.5) * Math.max(1, S.w || 1), t = i * 2.399963, dx = Math.cos(t) * r, dy = Math.sin(t) * r; e.gx += dx; e.gy += dy; e.hx += dx; e.hy += dy; e.kx += dx; e.ky += dy; }); });
+  // companies on one and the same point (a catalogue with only a city centre for them) stay there, as one stack: drawn as one dot with their
+  // number beside it (see paintGeo), not spread into a made-up pattern
+  cos.forEach((e) => { e.spot = e.gx.toFixed(4) + ',' + e.gy.toFixed(4); });
   const coAt = new Map(); cos.forEach((c, j) => { let best = -1, bd = 0.012 ** 2; places.forEach((p, i) => { const d = (p.gx - c.gx) ** 2 + (p.gy - c.gy) ** 2; if (d < bd) { bd = d; best = i; } }); if (best >= 0) { if (!coAt.has(best)) coAt.set(best, []); coAt.get(best).push(places.length + j); } });
   const V = []; if (shapes.length) shapes.forEach((s) => s.rings.forEach((r) => r.forEach((v) => V.push(v[0], v[1], v[4] ?? (v[0] + v[2]) / 2, v[5] ?? (v[1] + v[3]) / 2, v[2], v[3])))); else [...places, ...cos].forEach((e) => V.push(e.gx, e.gy, e.hx, e.hy, e.kx, e.ky));
   const rivers = (S.rivers || []).filter((r) => r.pts && r.pts.length > 1), box = S.box || (GEO.scopes[sid] || {}).box || null;
@@ -866,15 +866,29 @@ function paintGeo(ctx, P, o) {
   // more of them), a ring has none. One path per colour, kind and size; filled dots on top, a dark rim so they stand out on any area. The
   // linked ones (lw > 0) get a halo; the rest of a link (lw 0) is dimmed to a quarter
   const dots = new Map(), linked = [], zd = Math.min(1.4, 0.85 + 0.12 * Math.log2(Math.max(1, st.z.s))); let nCo = 0;
-  Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return; nCo++;
-    const w = lw ? lw[k] : -1; if (w > 0) { linked.push(k); return; }
-    const on = cn[k] > 0, col = coTypeCol(e), r = Math.round((on ? 2.3 + 0.75 * Math.sqrt(Math.min(cn[k], 100)) : 2.1) * zd * 2) / 2, a = (on ? 0.95 : 0.75) * (w === 0 ? 0.3 : 1), key = col + '|' + on + '|' + r + '|' + a;
-    let b = dots.get(key); if (!b) dots.set(key, b = { col, on, a, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); });
+  // companies on one point (a catalogue with only a city centre for them) are spread around it on screen, by a few pixels: a tight cluster when
+  // zoomed out, opening up as one zooms in (the spacing grows with the zoom, in pixels, so it never becomes a pattern across the map)
+  const stacks = new Map(), piles = [];
+  Lg.ents.forEach((e, k) => { e.ox = e.oy = 0; if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return; nCo++;
+    const key = e.spot || k; let g = stacks.get(key); if (!g) stacks.set(key, g = []); g.push(k); });
+  const spread = Math.max(0, Math.min(1.25, 0.35 + 0.2 * Math.log2(Math.max(1, st.z.s) / 4)));   // spacing in dot diameters
+  for (const g of stacks.values()) {
+    g.sort((a, b) => (cn[b] || 0) - (cn[a] || 0));   // the ones with most open roles in the middle
+    g.forEach((k, i) => { const e = Lg.ents[k]; let X0 = sx(e.x), Y0 = sy(e.y);
+      const on = cn[k] > 0, r = Math.round((on ? 2.3 + 0.75 * Math.sqrt(Math.min(cn[k], 100)) : 2.1) * zd * 2) / 2;
+      if (i && spread > 0) { const d = spread * 2 * 2.6 * zd * Math.sqrt(i), t = i * 2.39996; e.ox = Math.cos(t) * d; e.oy = Math.sin(t) * d; X0 += e.ox; Y0 += e.oy; }
+      const w = lw ? lw[k] : -1; if (w > 0) { linked.push(k); return; }
+      const col = coTypeCol(e), a = (on ? 0.95 : 0.75) * (w === 0 ? 0.3 : 1), key = col + '|' + on + '|' + r + '|' + a;
+      let b = dots.get(key); if (!b) dots.set(key, b = { col, on, a, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); });
+    if (g.length >= 3 && spread < 0.6) { const e = Lg.ents[g[0]]; piles.push([{ X0: sx(e.x), Y0: sy(e.y), n: g.length }, 2.6 * zd * (1 + spread * 2 * Math.sqrt(g.length))]); } }   // still tight: its number beside it
   const dl = [...dots.values()].sort((x, y) => (x.on - y.on) || x.r - y.r);
   for (const b of dl) { ctx.globalAlpha = b.a;
     if (b.on) { ctx.strokeStyle = bg; ctx.lineWidth = 1.2; ctx.stroke(b.p); ctx.fillStyle = b.col; ctx.fill(b.p); }
     else { ctx.strokeStyle = b.col; ctx.lineWidth = 1.3; ctx.stroke(b.p); } }
-  for (const k of linked) { const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), hs = regionRgb(e.c1, T.pointL, T.C).join(','), r = (1.6 + 1.1 * Math.sqrt(cn[k] || 1)) * zf, R = r * (2 + 2.5 * lw[k]), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, R);
+  // the number of companies in a stack of three or more, small, beside its dot (on screen)
+  if (screen && piles.length) { ctx.save(); ctx.globalAlpha = 0.85; ctx.font = `600 ${Math.round(9 * Math.min(1.2, zd))}px 'Hanken Grotesk', sans-serif`; ctx.textBaseline = 'middle'; ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.fillStyle = ink;
+    for (const [g, r] of piles) { const t = String(g.n); ctx.strokeText(t, g.X0 + r + 2, g.Y0); ctx.fillText(t, g.X0 + r + 2, g.Y0); } ctx.restore(); }
+  for (const k of linked) { const e = Lg.ents[k], X0 = sx(e.x) + (e.ox || 0), Y0 = sy(e.y) + (e.oy || 0), hs = regionRgb(e.c1, T.pointL, T.C).join(','), r = (1.6 + 1.1 * Math.sqrt(cn[k] || 1)) * zf, R = r * (2 + 2.5 * lw[k]), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, R);
     gd.addColorStop(0, `rgba(${hs},${0.45 * lw[k] * Math.min(1, Math.sqrt(40 / Math.max(1, linked.length)))})`); gd.addColorStop(1, `rgba(${hs},0)`); ctx.globalAlpha = 1; ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7); ctx.fill();
     ctx.fillStyle = `rgb(${hs})`; ctx.beginPath(); ctx.arc(X0, Y0, r, 0, 7); ctx.fill(); }
   // the places: a dot sized by its open roles (1.5 to 7 px) in its density colour, like the stars; the big ones last, on top
@@ -943,17 +957,17 @@ function paintGeo(ctx, P, o) {
   }
   if (screen) {   // the lens, its sample and the open point's ring
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
-    ctx.fillStyle = ink; st.sample.forEach((k) => { const e = Lg.ents[k]; if (!e) return; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), 4, 0, 7); ctx.fill(); });
+    ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.8; st.sample.forEach((k) => { const e = Lg.ents[k]; if (!e) return; ctx.beginPath(); ctx.arc(sx(e.x) + (e.ox || 0), sy(e.y) + (e.oy || 0), 6, 0, 7); ctx.stroke(); }); ctx.globalAlpha = 1;   // the companies listed below: a ring round their dot
     if (sel && sel.ly === Lg && vis[sel.k]) { const e = Lg.ents[sel.k]; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), (e.place ? rOf(e) : 3) + 4, 0, 7); ctx.stroke(); } }
   return { shown: pl.length + nCo, counts };
 }
 // the view's painter: the geography, or the atlas's own (roles, companies)
 const paintAny = (ctx, P, o) => (P.geo ? paintGeo(ctx, P, o) : paintMap(ctx, P, o));
 // the area panel in the geography: the shape under the lens, and the places and companies in the lens
-function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, sx(st.lens.x), sy(st.lens.y)) : null, pls = pool.filter((k) => Lg.ents[k].place), cos = pool.length - pls.length, n = pls.reduce((t, k) => t + Lg.ents[k].n, 0);
+function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, sx(st.lens.x), sy(st.lens.y)) : null, co = pool.filter((k) => !Lg.ents[k].place), cos = co.length, n = co.reduce((t, k) => t + visibleRoles(Lg.ents[k]).length, 0);
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}</span>`
     + (s ? `<b>${esc(geoNameOf(s))}</b><span class="atlas-note">${s.roles.toLocaleString()} ${L('roles in it', 'Stellen darin')}</span>` : lensOn() ? `<span class="atlas-note">${L('No area under the lens', 'Keine Fläche unter der Lupe')}</span>` : `<b>${L('The map in view', 'Die Karte im Blick')}</b>`)
-    + `<span>${pls.length} ${L('places', 'Orte')} · ${n.toLocaleString()} ${L('open roles in them', 'offene Stellen darin')} · ${cos} ${lensOn() ? L('companies in the lens', 'Firmen in der Lupe') : L('companies in view', 'Firmen im Blick')}</span>`; }
+    + `<span>${cos} ${lensOn() ? L('companies in the lens', 'Firmen in der Lupe') : L('companies in view', 'Firmen im Blick')} · ${n.toLocaleString()} ${L('open roles at them', 'offene Stellen bei ihnen')} (${L('a company\'s card lists its roles', 'die Karte einer Firma nennt ihre Stellen')})</span>`; }
 // the status line of the geography: what is shown, and the morph and the lens in brief
 function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
   if (!Lg.shapes.length && !Lg.ents.length) return L('There is no geography for this area in the file.', 'Für diesen Bereich gibt es in der Datei keine Geografie.');
@@ -1168,7 +1182,8 @@ function fitTo() {
 const fitOrWhole = () => { if (!perScope || st.mode === 'geo') fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
 function resample() {
   draw();   // refreshes which entities are visible under the current filters
-  if (st.mode === 'geo') { const Lg = lay(), pool = inLens(), wOf2 = (e) => (e.place ? e.n : visibleRoles(e).length); st.sample = pool.sort((a, b) => wOf2(Lg.ents[b]) - wOf2(Lg.ents[a])).slice(0, 8); renderArea(pool); renderList(); draw(); return; }
+  // the geography's cards: the companies (their roles are on their cards; places are not drawn)
+  if (st.mode === 'geo') { const Lg = lay(), pool = inLens().filter((k) => !Lg.ents[k].place), wOf2 = (e) => visibleRoles(e).length; st.sample = pool.sort((a, b) => wOf2(Lg.ents[b]) - wOf2(Lg.ents[a])).slice(0, 8); renderArea(pool); renderList(); draw(); return; }
   const Ly = lay(), pool = inLens(), per = new Map(); pool.forEach((k) => { const c = st.mode === 'roles' ? (Ly.past ? '' : rows[Ly.ents[k].idx[0]][2]) : Ly.ents[k].name; per.set(c, (per.get(c) || 0) + 1); });
   // weighted draw without replacement: roles by 1/sqrt(roles of that employer in the lens), at most 2 per employer; companies all alike
   const out = [], taken = new Map(), w = pool.map((k) => (st.mode === 'roles' && !Ly.past ? 1 / Math.sqrt(per.get(rows[Ly.ents[k].idx[0]][2])) : 1));
@@ -1392,7 +1407,8 @@ let drag = null; const touches = new Map(); let pinch = null;
 const ptr = (e) => { const b = cv.getBoundingClientRect(); return [(e.clientX - b.left) / b.width * W, (e.clientY - b.top) / b.height * H]; };
 // the grid of the drawn points (rebuilt in draw): cells of 24 px; hitAt gives the nearest point within 10 px of a screen position, or -1
 function buildHit(Ly) { const cs = 24, nx = Math.ceil(W / cs) + 1, ny = Math.ceil(H / cs) + 1, cells = Array.from({ length: nx * ny }, () => []), X = new Float32Array(Ly.n), Y = new Float32Array(Ly.n);
-  Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all)) return; const x = sx(e.x), y = sy(e.y); if (x < -5 || y < -5 || x > W + 5 || y > H + 5) return; X[k] = x; Y[k] = y;
+  // places are not drawn on the geography: not pickable either; a company spread off its point (a stack) is picked where it is drawn
+  Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all) || e.place) return; const x = sx(e.x) + (e.ox || 0), y = sy(e.y) + (e.oy || 0); if (x < -5 || y < -5 || x > W + 5 || y > H + 5) return; X[k] = x; Y[k] = y;
     cells[Math.max(0, Math.min(ny - 1, Math.floor(y / cs))) * nx + Math.max(0, Math.min(nx - 1, Math.floor(x / cs)))].push(k); });
   hitG = { cs, nx, ny, cells, X, Y }; }
 function hitAt(px, py) { const h = hitG; if (!h) return -1; let best = -1, bd = 100; const cx = Math.floor(px / h.cs), cy = Math.floor(py / h.cs);

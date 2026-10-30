@@ -146,6 +146,7 @@ def snap_borders(countries, states, tol=0.3, step=0.01):
 # its 96 districts (71 Landkreise and the independent cities, NUTS 3) between the other Laender and the neighbouring countries. (c) EuroGeographics for the boundaries.
 # (Version 2 of the cartogram: each level one step finer than before, 20M -> 10M, 10M -> 3M, 3M -> 1M for the Laender and the districts.)
 GISCO = 'https://gisco-services.ec.europa.eu/distribution/v2/'
+NE_COUNTRIES_50M = 'ne_50m_admin_0_countries.geojson'   # fills in the countries GISCO leaves out
 GISCO_ISO = {'EL': 'GR', 'UK': 'GB'}                     # GISCO's country codes that differ from ISO 3166-1 alpha-2
 
 
@@ -192,6 +193,17 @@ def load_scope(cache, scope, state_country='DE', log=print):
             rings = _rings(f['geometry'])
             if cc and cc not in stc and rings:
                 countries.append({'id': cc, 'cc': cc, 'name': p.get('NAME_ENGL') or cc, 'match': [], 'kind': 'country', 'rings': rings})
+    # countries the GISCO file leaves out (Taiwan): from Natural Earth's 1:50M countries, so no company is left in the sea
+    have = {c['cc'] for c in countries} | set(stc)
+    try:
+        with open(_fetch(cache, NE_COUNTRIES_50M, log), encoding='utf-8') as fh:
+            for f in json.load(fh)['features']:
+                q = f['properties']; cc = next((v for v in (q.get('ISO_A2_EH'), q.get('ISO_A2'), q.get('iso_a2')) if v and len(v) == 2 and v.isalpha()), None)   # Taiwan: ISO_A2 'CN-TW', ISO_A2_EH 'TW'
+                rings = _rings(f['geometry'])
+                if cc and cc not in have and rings:
+                    countries.append({'id': cc, 'cc': cc, 'name': q.get('NAME_EN') or q.get('NAME') or cc, 'match': [], 'kind': 'country', 'rings': rings}); have.add(cc)
+    except Exception as e:   # optional: without it a missing country stays missing
+        log(f'  Natural Earth countries not read ({e}); countries missing from GISCO stay missing')
     states = []
     if stc:
         en_of = {}                                         # the German name of a state (NUTS) -> its English name, from the Natural Earth state names
