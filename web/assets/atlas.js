@@ -10,6 +10,10 @@ const cfg = await loadConfig();
 PF.setPersonas(cfg.personas);
 const K = PF.keys();
 const mount = document.getElementById('atlas-mount'); if (!mount) throw new Error('no #atlas-mount');
+// a page of its own for each view (optional): data-mode is the view of this page, data-pages the page of each view and data-titles its title
+// ({roles, companies, geo}, as JSON). The address and the title follow the view; links to those pages switch the view in place
+const jsonAttr = (k) => { try { return JSON.parse(mount.dataset[k] || 'null'); } catch (e) { return null; } };
+const PAGES = jsonAttr('pages'), TITLES = jsonAttr('titles');
 // the scopes of config.json, in order: a role's scope bits (match-attrs.json) follow this order
 const scopeOpts = cfg.scopes.map((x, k) => `<option value="${k}"${k === defaultScope() ? ' selected' : ''}>${L(x.label.en, x.label.de)}</option>`).join('');
 const fieldLabel = (id) => { const f = (cfg.fields || []).find((x) => x.id === id); return f ? pick(f.label.en, f.label.de) : id; };
@@ -25,10 +29,10 @@ style.textContent = `
 .atlas-bar{display:flex;gap:10px 16px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
 .atlas-bar label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
 .atlas-bar select{padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;font-size:14px}
-.atlas-views button,.atlas-fields button,.atlas-side button.sm,.atlas-shape button.sm{all:unset;cursor:pointer;font-size:13px;padding:5px 11px;border:1px solid var(--line);border-radius:14px;color:var(--muted)}
-.atlas-views button[aria-pressed=true],.atlas-fields button[aria-pressed=true]{border-color:var(--accent-text);color:var(--accent-text);font-weight:600}
+.atlas-views button,.atlas-pills button,.atlas-fields button,.atlas-side button.sm,.atlas-shape button.sm{all:unset;cursor:pointer;font-size:13px;padding:5px 11px;border:1px solid var(--line);border-radius:14px;color:var(--muted)}
+.atlas-views button[aria-pressed=true],.atlas-pills button[aria-pressed=true],.atlas-fields button[aria-pressed=true]{border-color:var(--accent-text);color:var(--accent-text);font-weight:600}
 .atlas-fieldbox{margin-bottom:10px}.atlas-fieldbox summary{cursor:pointer;font-size:13px;color:var(--text)}.atlas-fieldbox summary>span:first-child{font-weight:600}.atlas-fieldbox[open] summary{margin-bottom:8px}
-.atlas-views{display:flex;gap:6px;flex-wrap:wrap}.atlas-fields{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.atlas-views{display:flex;gap:6px;flex-wrap:wrap}.atlas-ctl{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.atlas-ctl-l{font-size:12.5px;color:var(--muted);margin-right:2px}.atlas-pills{display:flex;gap:6px;flex-wrap:wrap}.atlas-hide{display:none!important}.atlas-fields{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
 .atlas-stage{user-select:none;-webkit-user-select:none;position:relative;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
 .atlas-stage canvas{display:block;width:100%;height:auto;touch-action:none;cursor:grab}
 .atlas-stage:fullscreen{border-radius:0;border:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}
@@ -80,11 +84,11 @@ style.textContent = `
 document.head.appendChild(style);
 mount.innerHTML = `<div class="atlas-bar">
 <div class="atlas-views" id="atlas-mode" role="group"><button type="button" data-m="roles" aria-pressed="true">${L('Roles', 'Stellen')}</button><button type="button" data-m="companies" aria-pressed="false">${L('Companies', 'Firmen')}</button>${cfg.geomap ? `<button type="button" data-m="geo" aria-pressed="false">${L('Geography', 'Geografie')}</button>` : ''}</div>
-<label>${L('Where', 'Wo')}<select id="atlas-scope">${scopeOpts}</select></label>
-<label>${L('Lens size', 'Lupengröße')}<select id="atlas-size"><option value="0.05">${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option><option value="0" selected>${L('off', 'aus')}</option></select></label>
-<label class="atlas-link-t"><input type="checkbox" id="atlas-linked" checked> ${L('Linked', 'Verknüpft')}</label>
+<div class="atlas-ctl"><span class="atlas-ctl-l">${L('Where', 'Wo')}</span><span class="atlas-pills" data-for="atlas-scope" role="group"></span><select id="atlas-scope" class="atlas-hide" aria-hidden="true" tabindex="-1">${scopeOpts}</select></div>
+<div class="atlas-ctl"><span class="atlas-ctl-l">${L('Lens', 'Lupe')}</span><span class="atlas-pills" data-for="atlas-size" role="group"></span><select id="atlas-size" class="atlas-hide" aria-hidden="true" tabindex="-1"><option value="0.05">${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option><option value="0" selected>${L('off', 'aus')}</option></select></div>
+<div class="atlas-ctl"><span class="atlas-pills" role="group"><button type="button" data-toggle="atlas-linked" title="${esc(pick('Carry the selection to the other view when switching', 'Die Auswahl beim Wechsel in die andere Ansicht mitnehmen'))}">${L('Linked views', 'Verknüpfte Ansichten')}</button></span><input type="checkbox" id="atlas-linked" class="atlas-hide" checked aria-hidden="true" tabindex="-1"></div>
 </div>
-<details class="atlas-fieldbox" id="atlas-fieldbox"><summary id="atlas-fields-sum"></summary><div class="atlas-fields" id="atlas-fields" role="group"></div></details>
+<details class="atlas-fieldbox" id="atlas-fieldbox" open><summary id="atlas-fields-sum"></summary><div class="atlas-fields" id="atlas-fields" role="group"></div></details>
 <details class="atlas-shape" id="atlas-shape"><summary><strong>${L('Shape the map to you', 'Die Karte auf Sie zuschneiden')}</strong> <span class="atlas-note">${L('optional: a few statements, your CV, and the roles and companies you mark below', 'optional: ein paar Aussagen, Ihr CV und die Stellen und Firmen, die Sie unten markieren')}</span></summary>
 <div class="shape-body"><div class="personas" id="atlas-personas"></div><div class="prefs" id="atlas-prefs"></div>
 <div class="shape-cv" id="atlas-cvbox"></div>
@@ -991,6 +995,7 @@ function fitGeo() { if (geoUni()) { const sc = cfg.scopes[st.scope], sid = sc &&
   const Lg = lay(), big = Lg.ents.filter((e) => e.place).sort((a, b) => b.n - a.n)[0]; if (!geoUni()) st.z = { s: 1, cx: 0.5, cy: 0.5 }; st.lens = big ? { x: big.x, y: big.y } : { x: 0.5, y: 0.5 }; }
 
 function draw() {
+  syncPills();
   sizeCanvas();
   if (anim && anim.setting) { prepare(THEMES[themeFor()]); return; }   // a change of view is setting the view: its frames come from the bitmaps (see viewChange)
   if (anim && anim.light) { tweenDraw(); return; }
@@ -1079,7 +1084,7 @@ function setView({ mode = st.mode, scope = st.scope } = {}) {
   if (mode === 'geo' && !GEO) return geoLoad().then(() => (GEO ? setView({ mode, scope }) : null));
   stopAnim(); lnk = null; st.mode = mode; st.scope = scope; st.open.clear(); st.sample = [];
   mount.querySelectorAll('#atlas-mode button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.m === mode)));
-  $('atlas-scope').value = String(scope); layers.roles = roleMapFor(scope); fitOrWhole(); resample();
+  $('atlas-scope').value = String(scope); layers.roles = roleMapFor(scope); fitOrWhole(); updateModeHeader(); resample();
 }
 // the page's colour scheme changed: redraw in the other theme
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => draw());
@@ -1491,8 +1496,8 @@ function updateModeHeader() {
     if (eyebrow) eyebrow.textContent = pick('ATLAS · GEOGRAPHY OF ROLES', 'ATLAS · GEOGRAFIE DER STELLEN');
     if (h2) h2.textContent = pick('The geography of roles', 'Die Geografie der Stellen');
     if (intro) intro.textContent = pick(
-      'Every place with open roles is a point, sized by its roles. Shapes are countries and states, coloured by roles per area. Slide between the true map and the map by roles, where each area is sized by its roles. Companies are small dots. Everything runs in your browser.',
-      'Jeder Ort mit offenen Stellen ist ein Punkt, nach seinen Stellen groß. Flächen sind Länder und Bundesländer, nach Stellen je Fläche gefärbt. Schieben Sie zwischen der echten Karte und der Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Firmen sind kleine Punkte. Alles läuft in Ihrem Browser.'
+      'One map from the world down to districts: zoom through continents, countries, states and districts, or jump with Where. Areas are coloured by their open roles per area; every company is a dot in the colour of its type, filled when it has open roles. Switch the distortion on to size each area by its roles. Everything runs in your browser.',
+      'Eine Karte von der Welt bis zu den Landkreisen: zoomen Sie durch Kontinente, Länder, Bundesländer und Kreise, oder springen Sie mit Wo. Flächen sind nach ihren offenen Stellen je Fläche gefärbt; jede Firma ist ein Punkt in der Farbe ihres Typs, gefüllt mit offenen Stellen. Mit der Verzerrung wird jede Fläche nach ihren Stellen groß. Alles läuft in Ihrem Browser.'
     );
   } else {
     if (eyebrow) eyebrow.textContent = pick('ATLAS · ROLES BY MEANING', 'ATLAS · STELLEN NACH BEDEUTUNG');
@@ -1502,7 +1507,22 @@ function updateModeHeader() {
       'Jede offene Stelle ist ein Punkt. Stellen mit ähnlicher Arbeit sind miteinander verbunden, und dieses Netz wird auf die Fläche entspannt, so wie Karten der Wissenschaften gezeichnet werden: Regionen sind Gruppen eng verbundener Stellen, benannt nach dem, was sie gemeinsam haben. Verschieben Sie die Lupe, sehen Sie eine Stichprobe und markieren Sie, was Ihnen gefällt; das fließt in „Passende Stellen für mich“ ein. Alles läuft in Ihrem Browser.'
     );
   }
+  if (PAGES && PAGES[st.mode]) {   // the view's own page: its address, its title, and the page links marking it
+    const url = new URL(PAGES[st.mode], location.href); url.hash = location.hash; if (url.href !== location.href) history.replaceState(null, '', url.href);
+    if (TITLES && TITLES[st.mode]) document.title = TITLES[st.mode];
+    document.querySelectorAll('a[href]').forEach((a) => { const m = Object.keys(PAGES).find((k) => PAGES[k] === a.getAttribute('href')); if (!m) return; if (m === st.mode) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  }
 }
+// the option buttons stand for the select or the checkbox behind them (those keep their events): a click sets it and fires its change
+mount.addEventListener('click', (e) => { const b = e.target.closest('.atlas-pills button'); if (!b) return; e.stopImmediatePropagation();
+  if (b.dataset.toggle) { const c = $(b.dataset.toggle); c.checked = !c.checked; c.dispatchEvent(new Event('change', { bubbles: true })); }
+  else { const sel = $(b.parentNode.dataset.for); if (sel.value !== b.dataset.v) { sel.value = b.dataset.v; sel.dispatchEvent(new Event('change', { bubbles: true })); } }
+  syncPills(); }, true);
+// the option buttons of a select (made from its options) and their pressed state, kept in step with the select (it is also set by code)
+function syncPills() { mount.querySelectorAll('.atlas-pills').forEach((g) => { const sel = g.dataset.for && $(g.dataset.for);
+    if (sel) { if (g.childElementCount !== sel.options.length) g.innerHTML = [...sel.options].map((o) => `<button type="button" data-v="${esc(o.value)}">${o.innerHTML}</button>`).join('');
+      g.querySelectorAll('button').forEach((x) => { const on = String(x.dataset.v === sel.value); if (x.getAttribute('aria-pressed') !== on) x.setAttribute('aria-pressed', on); }); }
+    g.querySelectorAll('button[data-toggle]').forEach((x) => { const on = String(!!$(x.dataset.toggle).checked); if (x.getAttribute('aria-pressed') !== on) x.setAttribute('aria-pressed', on); }); }); }
 mount.addEventListener('click', (e) => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.id === 'atlas-save-img') { saveImage().catch((err) => { $('atlas-status').textContent = err.message || String(err); }); }
@@ -1566,6 +1586,13 @@ window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = g
 fitOrWhole();
 resample();
 // for scripts (scripts/export_atlas.mjs): the image export and the view switch
+if (PAGES) {   // the views have pages: the page links switch the view (in place, so a link between the views survives), the view buttons are not needed
+  const mb = $('atlas-mode'); if (mb) mb.style.display = 'none';
+  document.addEventListener('click', (ev) => { const a = ev.target.closest && ev.target.closest('a[href]'); if (!a || ev.defaultPrevented || ev.button || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+    const m = Object.keys(PAGES).find((k) => PAGES[k] === a.getAttribute('href')); if (!m) return; ev.preventDefault(); if (m !== st.mode) goView(m); });
+}
+if (['companies', 'geo'].includes(mount.dataset.mode) && mount.dataset.mode !== st.mode) setView({ mode: mount.dataset.mode });   // this page's view
+else updateModeHeader();
 window.jobcrawlAtlas = { renderImage, setView, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
   lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; },
   timeline: () => (TL ? { steps: TL.steps.length, kind: TL.kind, idx: scrub.idx, tm: scrub.tm, end: TL.end, records: TLN } : null), scrubTo: (i) => { tlStop(); setScrub(i); }, play: () => tlPlay(), heatMean: (c) => heatMeanOf(c), heatOn: (on) => { $('atlas-heat').checked = !!on; draw(); }, layer: () => { const Ly = lay(); return { n: Ly.ents.length, embers: Ly.ents.filter((e) => e.ember).length }; }, heatCells: () => { if (!lastHeat) return null; let mx = 0, big = 0, pos = 0, neg = 0; for (const v of lastHeat.sc) { const m = Math.abs(v); if (m > mx) mx = m; if (m >= 0.05) { big++; if (v > 0) pos++; else neg++; } } return { cells: lastHeat.sc.length, max: +mx.toFixed(3), warm: pos, cool: neg }; } };
