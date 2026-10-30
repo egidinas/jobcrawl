@@ -336,7 +336,23 @@ function grid(GW, GH, add) {      // per screen cell: sums of add(k) over visibl
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x) / W, Y0 = sy(e.y) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) return; A[Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW)] += add(k); });
   return A;
 }
-function blur(A, GW, GH, passes) { for (let pass = 0; pass < passes; pass++) { const t = new Float32Array(A.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let q = 0, m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) { q += A[yy * GW + xx]; m++; } } t[y * GW + x] = q / m; } A.set(t); } }
+// a soft blur: as many passes of a 3 x 3 box (the mean of the in-bounds neighbours). Few passes run as such; more passes run as one separable
+// Gaussian of the same spread (a pass adds a variance of 2/3 per axis), cut at 3 sigma: the cost no longer grows with the passes (a fine grid when
+// zoomed in needs many), and the tails stay round (a few wide boxes would give square blobs where the colour ramp shows the far tail)
+function blur(A, GW, GH, passes) {
+  if (passes <= 6) { for (let pass = 0; pass < passes; pass++) { const t = new Float32Array(A.length); for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let q = 0, m = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) { q += A[yy * GW + xx]; m++; } } t[y * GW + x] = q / m; } A.set(t); } return; }
+  const sg = Math.sqrt(2 * passes / 3), r = Math.ceil(3 * sg), k = new Float32Array(2 * r + 1), t = new Float32Array(A.length);
+  for (let i = -r; i <= r; i++) k[i + r] = Math.exp(-i * i / (2 * sg * sg));
+  gaussLine(A, t, GW, GH, 1, GW, k, r); gaussLine(t, A, GH, GW, GW, 1, k, r);
+}
+// the kernel k (radius r) along one axis, from S into D: n lines of len cells, step the cell stride along a line, line the stride between lines;
+// near an edge the in-bounds taps are renormalised (as the box passes take the mean of the in-bounds neighbours)
+function gaussLine(S, D, len, n, step, line, k, r) {
+  for (let l = 0; l < n; l++) { const o = l * line;
+    for (let x = 0; x < len; x++) { const a = Math.max(0, x - r), b = Math.min(len - 1, x + r); let sum = 0, w = 0;
+      for (let j = a; j <= b; j++) { const kw = k[j - x + r]; sum += S[o + j * step] * kw; w += kw; }
+      D[o + x * step] = sum / w; } }
+}
 function paint(ctx, A, GW, GH, rgb, alphaOf) {
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);
   for (let k = 0; k < A.length; k++) { img.data[k * 4] = rgb[0]; img.data[k * 4 + 1] = rgb[1]; img.data[k * 4 + 2] = rgb[2]; img.data[k * 4 + 3] = Math.round(255 * alphaOf(A[k])); }
@@ -1481,7 +1497,10 @@ function zoomTo(s1, px, py, then = true) { const x0 = ux(px), y0 = uy(py); st.z.
 function zoom(f, px = W / 2, py = H / 2) { zoomTo(st.z.s * f, px, py); }
 cv.addEventListener('mousedown', (e) => { if (e.detail > 1) e.preventDefault(); });      // a double click zooms; it should not select page text
 cv.addEventListener('dblclick', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(2, px, py); });
-cv.addEventListener('wheel', (e) => { e.preventDefault(); const [px, py] = ptr(e); zoom(e.deltaY < 0 ? 1.25 : 0.8, px, py); }, { passive: false });
+// wheel steps are gathered and applied once per frame, so a fast wheel or trackpad does not queue one full draw per step
+let wheelF = 1, wheelAt = null, wheelRaf = 0;
+cv.addEventListener('wheel', (e) => { e.preventDefault(); wheelAt = ptr(e); wheelF *= e.deltaY < 0 ? 1.25 : 0.8;
+  if (!wheelRaf) wheelRaf = requestAnimationFrame(() => { wheelRaf = 0; const f = wheelF; wheelF = 1; zoom(f, ...wheelAt); }); }, { passive: false });
 const zAt = () => (lensOn() ? [sx(st.lens.x), sy(st.lens.y)] : [W / 2, H / 2]);   // the buttons zoom about the lens, or the middle without it
 $('atlas-zin').addEventListener('click', () => viewChange(() => zoom(1.5, ...zAt())));
 $('atlas-zout').addEventListener('click', () => viewChange(() => zoom(1 / 1.5, ...zAt())));
