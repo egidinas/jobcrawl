@@ -102,7 +102,7 @@ mount.innerHTML = `<div class="atlas-bar">
 <p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
 <div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong id="atlas-in">${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
 <ul class="atlas-list" id="atlas-list"></ul>
-<p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens.${SHAPE ? ' ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.' : ''}', 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe.${SHAPE ? ' ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.' : ''}')}</p></div></div>`;
+<p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens.' + (SHAPE ? ' ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.' : ''), 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe.' + (SHAPE ? ' ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.' : ''))}</p></div></div>`;
 const $ = (id) => mount.querySelector('#' + id);
 
 // ---- data
