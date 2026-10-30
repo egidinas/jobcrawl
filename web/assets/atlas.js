@@ -60,6 +60,7 @@ style.textContent = `
 .shape-save{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .shape-toggle{font-size:13px;display:flex;gap:6px;align-items:center}
 .atlas-note{font-size:12.5px;color:var(--muted)}
+.atlas-legend{display:block;margin:2px 0 4px;font-size:12.5px;line-height:1.7;color:var(--ink)}
 .atlas-scrub{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--ink)}
 .atlas-scrub[hidden]{display:none}
 .atlas-scrub button{all:unset;cursor:pointer;width:28px;height:26px;text-align:center;line-height:26px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:12px}.atlas-scrub button:focus-visible{outline:2px solid var(--accent)}
@@ -832,6 +833,13 @@ function geoShapeOf(Lg, e) { if (e.shp !== undefined) return e.shp; const rank =
     let inside = false; for (const r of s.rings) for (let i = 0, j = r.length - 1; i < r.length; j = i++) { const xi = r[i][0], yi = r[i][1], xj = r[j][0], yj = r[j][1]; if ((yi > e.gy) !== (yj > e.gy) && e.gx < (xj - xi) * (e.gy - yi) / (yj - yi) + xi) inside = !inside; }
     if (inside) best = s; }
   return (e.shp = best); }
+// a company's colour on the map: its company type (the colour of its type on its card), grey when it has none
+const coTypeCol = (e) => { const co = coRows[e.slug]; return (co && co[5]) || '#94a3b8'; };
+// the legend of the company dots: the company types on the map (most companies first), and what filled, ring and size mean
+function geoLegend(Lg) { const n = new Map(); Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const co = coRows[e.slug]; if (!co || !co[3]) return; const key = co[3]; const g = n.get(key) || { c: co[5] || '#94a3b8', de: co[4] || co[3], n: 0 }; g.n++; n.set(key, g); });
+  const sw = (c, ring) => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${ring ? `border:1.5px solid ${c}` : `background:${c}`};vertical-align:-1px;margin-right:4px"></span>`;
+  return `<span class="atlas-legend">${[...n].sort((a, b) => b[1].n - a[1].n).slice(0, 10).map(([en, g]) => `<span style="white-space:nowrap;margin-right:10px">${sw(g.c)}${esc(pick(en, g.de))}</span>`).join('')}`
+    + `<span style="white-space:nowrap;margin-right:10px">${sw('currentColor')}${L('open roles (larger: more)', 'offene Stellen (größer: mehr)')}</span><span style="white-space:nowrap">${sw('currentColor', true)}${L('none open now', 'derzeit keine offen')}</span></span>`; }
 // the geography's paint: the shapes in their colours (a thin ink outline), the companies as small dots (a linked one with a halo), the places on top
 // like the stars, then the names: the shapes' first, the places' after them (in the lens first, then the biggest)
 function paintGeo(ctx, P, o) {
@@ -854,14 +862,18 @@ function paintGeo(ctx, P, o) {
   // the rivers, a thin line in a water colour (the big ones wider), for finding one's way on the map
   if (Lg.rpath) { const rw = Math.min(1.8, 0.8 + 0.25 * Math.log2(Math.max(1, st.z.s))); ctx.globalAlpha = (T.glow ? 0.9 : 0.85) * fade; ctx.strokeStyle = T.glow ? 'rgb(150,205,255)' : 'rgb(30,95,190)'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.lineWidth = 1.5 * rw; ctx.stroke(Lg.rpath[0]); ctx.lineWidth = 1.0 * rw; ctx.stroke(Lg.rpath[1]); }
-  // the companies: tiny dots, one path per style and colour (a company with an open role in the filter: a larger, brighter dot); the linked
-  // ones (lw > 0) get a halo; the rest of a link (lw 0) is dimmed to a quarter
-  const dots = new Map(), linked = []; let nCo = 0;
+  // the companies: the colour is the kind of employer (its company type, as on its card); a filled dot has open roles in the filter (larger with
+  // more of them), a ring has none. One path per colour, kind and size; filled dots on top, a dark rim so they stand out on any area. The
+  // linked ones (lw > 0) get a halo; the rest of a link (lw 0) is dimmed to a quarter
+  const dots = new Map(), linked = [], zd = Math.min(1.4, 0.85 + 0.12 * Math.log2(Math.max(1, st.z.s))); let nCo = 0;
   Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return; nCo++;
     const w = lw ? lw[k] : -1; if (w > 0) { linked.push(k); return; }
-    const on = cn[k] > 0, lit = on && T.multiply, a = (on ? (lit ? 0.8 : 0.6) : (T.dimA ?? 0.28)) * (w === 0 ? 0.25 : 1), r = (on ? 1.6 : 1.3) * zf, rgb = regionRgb(e.c1, on ? (lit ? 0.55 : T.pointL) : T.dimL, T.C), key = rgb.join(',') + '|' + a.toFixed(3) + '|' + r.toFixed(2);
-    let b = dots.get(key); if (!b) dots.set(key, b = { rgb, a, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); });
-  for (const b of dots.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = `rgb(${b.rgb[0]},${b.rgb[1]},${b.rgb[2]})`; ctx.fill(b.p); }
+    const on = cn[k] > 0, col = coTypeCol(e), r = Math.round((on ? 2.3 + 0.75 * Math.sqrt(Math.min(cn[k], 100)) : 2.1) * zd * 2) / 2, a = (on ? 0.95 : 0.75) * (w === 0 ? 0.3 : 1), key = col + '|' + on + '|' + r + '|' + a;
+    let b = dots.get(key); if (!b) dots.set(key, b = { col, on, a, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); });
+  const dl = [...dots.values()].sort((x, y) => (x.on - y.on) || x.r - y.r);
+  for (const b of dl) { ctx.globalAlpha = b.a;
+    if (b.on) { ctx.strokeStyle = bg; ctx.lineWidth = 1.2; ctx.stroke(b.p); ctx.fillStyle = b.col; ctx.fill(b.p); }
+    else { ctx.strokeStyle = b.col; ctx.lineWidth = 1.3; ctx.stroke(b.p); } }
   for (const k of linked) { const e = Lg.ents[k], X0 = sx(e.x), Y0 = sy(e.y), hs = regionRgb(e.c1, T.pointL, T.C).join(','), r = (1.6 + 1.1 * Math.sqrt(cn[k] || 1)) * zf, R = r * (2 + 2.5 * lw[k]), gd = ctx.createRadialGradient(X0, Y0, 0, X0, Y0, R);
     gd.addColorStop(0, `rgba(${hs},${0.45 * lw[k] * Math.min(1, Math.sqrt(40 / Math.max(1, linked.length)))})`); gd.addColorStop(1, `rgba(${hs},0)`); ctx.globalAlpha = 1; ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(X0, Y0, R, 0, 7); ctx.fill();
     ctx.fillStyle = `rgb(${hs})`; ctx.beginPath(); ctx.arc(X0, Y0, r, 0, 7); ctx.fill(); }
@@ -913,11 +925,11 @@ function paintGeo(ctx, P, o) {
       return geoNameOf(g.shapes[0]); };
     const tm = ctx.getTransform(), inGroup = (g, x, y) => g.shapes.some((sh) => ctx.isPointInPath(sh.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd'));   // the point is in device pixels
     const capA = Math.round((many ? 80 : 40) * ks);
-    ctx.letterSpacing = (1.6 * tsl) + 'px';
+    ctx.letterSpacing = (0.9 * tsl) + 'px';
     for (const g of [...groups.values()].filter((x) => x.roles > 0 || x.cos > 0).sort((a, b) => b.roles - a.roles || b.cos - a.cos)) { if (counts.areas >= capA) break;
-      const fs = Math.round(Math.max(10, Math.min(17, 7 + Math.sqrt(g.roles + g.cos) * 0.3))), nm = nameOfGroup(g);
-      const lines = wrapText(nm.toUpperCase(), 16, 2).map((t) => ({ t, fs, face: '600', alpha: 0.9, color: T.areaInk || ink }));
-      if (g.cos) lines.push({ t: g.cos.toLocaleString() + ' ' + (g.cos === 1 ? pick('company', 'Firma') : pick('companies', 'Firmen')), fs: Math.max(9, Math.round(fs * 0.72)), face: '500', alpha: 0.8, color: T.subInk || ink });
+      const fs = Math.round(9 + Math.min(2, Math.log10(1 + g.roles + g.cos) * 0.7)), nm = nameOfGroup(g);   // small, like the page's text: 9 to 11 px
+      const lines = wrapText(nm.toUpperCase(), 18, 2).map((t) => ({ t, fs, face: '600', alpha: 0.82, color: T.areaInk || ink }));
+      if (g.cos) lines.push({ t: g.cos.toLocaleString() + ' ' + (g.cos === 1 ? pick('company', 'Firma') : pick('companies', 'Firmen')), fs: 8, face: '500', alpha: 0.7, color: T.subInk || ink });
       const lb = labelLayout(ctx, lines, 0, 0, 'center', tsl).box; if (g.ar < 0.9 * (lb[2] - lb[0]) * (lb[3] - lb[1])) continue;   // too small on screen for its name
       const cx = g.x / g.w, cy = g.y / g.w, cands = [], big = [...g.shapes].sort((a, b) => (b.roles || 0) - (a.roles || 0) || b.ar - a.ar);
       if (inGroup(g, cx, cy)) cands.push([cx, cy, 'center']);
@@ -946,8 +958,8 @@ function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, s
 function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
   if (!Lg.shapes.length && !Lg.ents.length) return L('There is no geography for this area in the file.', 'Für diesen Bereich gibt es in der Datei keine Geografie.');
   const link = lnk && lnk.to === 'geo' ? L(' The link lights companies only: the data does not place roles in cities.', ' Die Verknüpfung hebt nur Firmen hervor: die Daten ordnen Stellen keinen Städten zu.') : '';
-  return L(`${c.companies.toLocaleString()} companies shown. Areas are named at the level of the view (continents, countries, states, districts) with the companies in them; zoom in for finer areas. A company is a dot at its headquarters and at each branch, larger with open roles. Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
-    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Flächen sind auf der Ebene der Ansicht benannt (Kontinente, Länder, Bundesländer, Kreise), mit den Firmen darin; für feinere Flächen hineinzoomen. Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, größer mit offenen Stellen. Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
+  return geoLegend(Lg) + '<br>' + L(`${c.companies.toLocaleString()} companies shown. Areas are named at the level of the view (continents, countries, states, districts) with the companies in them; zoom in for finer areas. A company is a dot at its headquarters and at each branch, in the colour of its company type: filled with open roles (larger with more), a ring without. Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
+    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Flächen sind auf der Ebene der Ansicht benannt (Kontinente, Länder, Bundesländer, Kreise), mit den Firmen darin; für feinere Flächen hineinzoomen. Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, in der Farbe ihres Unternehmenstyps: gefüllt mit offenen Stellen (größer mit mehr), ein Ring ohne. Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
 function geoBar() { const el = $('atlas-geo'); if (el) el.hidden = st.mode !== 'geo'; }
 function geoStop() { if (geo.raf) cancelAnimationFrame(geo.raf); geo.raf = 0; geo.morph = false; }
 function geoSetT(t) { geo.t = Math.max(0, Math.min(1, t)); geoMarks(); draw(); }
