@@ -45,7 +45,7 @@ style.textContent = `
 .atlas-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}.atlas-list>li:not(.atlas-item){grid-column:1/-1}
 .atlas-item{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--paper);min-width:0}
 .atlas-item .t{font-weight:600;overflow-wrap:anywhere;font-size:14px;color:var(--ink);text-decoration:none}.atlas-item .t:hover{color:var(--accent-text);text-decoration:underline}
-.atlas-item .m{font-size:12.5px;color:var(--muted)}
+.atlas-item .m{font-size:12.5px;color:var(--muted)}.fn-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.fn-tag,.dom-tag{font-size:11px;line-height:1.5;padding:0 7px;border-radius:9px;border:1px solid color-mix(in srgb,var(--c) 55%,transparent);color:var(--ink,inherit)}.fn-tag{background:color-mix(in srgb,var(--c) 22%,transparent)}.fn-tag.fn-hybrid::before{content:'+ ';opacity:.7}.dom-tag{background:transparent;border-style:dashed}
 .atlas-new{font-size:11px;padding:0 6px;border-radius:8px;border:1px solid currentColor;margin-left:6px;opacity:.85}
 .atlas-pop{position:absolute;z-index:2;width:240px;max-width:calc(100% - 12px);box-sizing:border-box;display:flex;flex-direction:column;gap:5px;padding:9px 30px 10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:13px;box-shadow:0 6px 18px rgba(0,0,0,.28)}
 .atlas-pop[hidden]{display:none}.atlas-pop .t{font-weight:600;font-size:14px;overflow-wrap:anywhere;color:var(--ink);text-decoration:none}.atlas-pop a.t:hover{color:var(--accent-text);text-decoration:underline}
@@ -118,6 +118,17 @@ have.forEach((i, k) => { let n = 0; for (let d = 0; d < D; d++) { const x = ix.v
 // ---- layers from the network layout
 // optional company texts for the cards: config company_texts, a file in the data folder ({slug: [text, ...]})
 const coRows = cfg.company_texts ? await fetch(dataUrl(cfg.company_texts)).then((r) => r.json()).catch(() => ({})) : {};
+// each role's function (family.function), second function, domain and level (jobcrawl functions), with the names and colours of config.json:
+// the same labels and colours as the job board
+const RF = cfg.functions ? await fetch(dataUrl(cfg.functions.file || 'match/role-functions.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
+const FN = new Map(((cfg.functions || {}).functions || []).concat((cfg.functions || {}).families || []).map((f) => [f.id, f]));
+const DOM = new Map((cfg.domains || []).map((d) => [d.id, d]));
+const fnTag = (id, cls = '') => { const f = FN.get(id); return f ? `<span class="fn-tag${cls}" style="--c:${esc(f.color || '#888')}">${esc(pick(f.label.en, f.label.de))}</span>` : ''; };
+function roleTags(id) {
+  const v = RF && RF.ids && RF.ids[id]; if (!v) return '';
+  const d = DOM.get(v[3]);
+  return `<div class="fn-tags">${fnTag(v[0])}${v[1] ? fnTag(v[1], ' fn-hybrid') : ''}${d ? `<span class="dom-tag" style="--c:${esc(d.color)}">${esc(pick(d.label.en, d.label.de))}</span>` : ''}</div>`;
+}
 const CVEC = await Promise.all([fetch(dataUrl('match/company-vec.json')).then((r) => r.json()), fetch(dataUrl('match/company-vec.bin')).then((r) => r.arrayBuffer())]).then(([j, b]) => ({ slugs: j.slugs, vec: new Int8Array(b) })).catch(() => null);
 const LAY = await fetch(dataUrl('match/atlas-layout.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 if (!LAY) { $('atlas-status').innerHTML = L('The map layout is not published yet.', 'Das Kartenlayout ist noch nicht veröffentlicht.'); throw new Error('no atlas-layout.json'); }
@@ -287,7 +298,8 @@ function hueTable(regs) {
   t = new Array(n); tour.forEach((r, k) => { t[r] = (20 + 360 * turns * k / n) % 360; }); hueTabs.set(regs, t); return t;
 }
 // the geography view keeps the plain wheel (c * 137.508): its colours are a density ramp given as a pseudo region index (hueC)
-const hue = (c) => (HR && HD && HD.kind !== 'geo' && Number.isInteger(c) && c < HR.length ? hueTable(HR)[c] : (c * 137.508) % 360);
+// a group that carries its own hue (a function map: the functions file's family hue) keeps it, so the board and the map show one colour per family
+const hue = (c) => (HR && HD && HD.kind !== 'geo' && Number.isInteger(c) && c < HR.length ? (Number.isFinite(HR[c].hue) ? HR[c].hue : hueTable(HR)[c]) : (c * 137.508) % 360);
 // Inside a region the hue drifts from one neighbourhood to the next (up to +-45 degrees, by the angle of the neighbourhood around the
 // region's centre), so a large region is a spread of related colours and not one flat area. HD is the layout being drawn.
 let HD = null; const shiftTabs = new WeakMap();
@@ -297,6 +309,8 @@ function hoodShifts(Ly) {
   for (const e of Ly.ents) if (e.c2 >= 0 && e.c2 < hoods.length && !reg.has(e.c2)) reg.set(e.c2, e.c1);
   reg.forEach((c, h) => { if (!by.has(c)) by.set(c, []); by.get(c).push(h); });
   t = new Float32Array(hoods.length);
+  // functions with their own hue: the shift is their hue against their family's
+  if (hoods.some((h) => Number.isFinite(h.hue))) { reg.forEach((c, h) => { const a = hoods[h].hue, b = Ly.regions[c] && Ly.regions[c].hue; if (Number.isFinite(a) && Number.isFinite(b)) t[h] = ((a - b + 540) % 360) - 180; }); shiftTabs.set(Ly, t); return t; }
   by.forEach((hs, c) => { const m = hs.length; if (m < 2) return;
     const C0 = (Ly.regions[c] && Ly.regions[c].xy) || [0, 0], S = Math.min(45, 14 + 4 * m), ang = (h) => { const q = hoods[h].xy || C0; return Math.atan2(q[1] - C0[1], q[0] - C0[0]); };
     hs.sort((a, b) => ang(a) - ang(b)); hs.forEach((h, k) => { t[h] = -S + 2 * S * k / (m - 1); }); });
@@ -1315,7 +1329,7 @@ function cardHtml(k) {
   if (e.past) return tlCardHtml(k, e);
   if (e.place) return placeCardHtml(k, e);
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '';
-    return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}${newBadge(i)}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}${linkRoleTag(i)}</div><div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
+    return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}${newBadge(i)}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}${linkRoleTag(i)}</div>${roleTags(e.id)}<div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
   const co = coRows[e.slug] || [e.about || ''];
   const desc = (isDe() && co[1]) ? co[1] : (co[0] || co[2] || e.about || '');
   const archName = (isDe() && co[4]) ? co[4] : (co[3] || '');

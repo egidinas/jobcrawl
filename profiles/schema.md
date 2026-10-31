@@ -216,6 +216,24 @@ Atlas layout (`map/atlas.py`; needs the `map` extra).
 | `map.labels_file` | string or null | `null` | JSON of hand-written group names (relative to the profile folder) |
 | `map.resolution` | [coarse, fine] numbers | `[1.6, 5.0]` | Leiden resolutions of the reference layout; written into `atlas-layout.json`. The group counts are searched as before (about n^0.35 regions), so this is a record, not an input |
 
+### `functions_file`, `domains`
+
+What a role does, what it is for, and how senior it is: three separate axes, filtered and sorted independently (`classify/functions.py`,
+`classify/domains.py`, the profile's `levels`). `jobcrawl functions` writes each role's verdicts into the vectors folder (`role-functions.json`:
+function, second function, confidence, domain, second domain, level); with it, `jobcrawl map` groups the atlas by family (regions) and function
+(neighbourhoods), and publish puts the names and colours into `config.json`.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `functions_file` | string or null | `null` | JSON of the job functions (relative to the profile folder), below |
+| `domains` | list | `[]` | the domains: `id`, `en`, `de`, `hue` (degrees), `color` (hex), `pattern` (regex over title and description), `tags` (company catalogue tags that mark the domain), `fallback` (true on the one domain a role without evidence takes) |
+
+The functions file: `{"version", "families": [{"id", "en", "de", "hue", "color"}], "functions": [{"id": "family.function", "en", "de", "hue",
+"color", "seed"}], "retired": {"old id": "id that took its roles"}}`. Ids are stable and never reused: a merged or split function goes to
+`retired`, so old links and filters still resolve. `seed` is a title pattern that teaches the function; the fitted model (meaning centroid
+plus title words, seniority and employer signatures removed) then assigns every role, and a refit (`--fit`) is seeded from the last
+assignment, so groups keep their place. Roles no function fits well are listed in the log as candidates for a new function.
+
 ### `embed`
 
 Embedding recipe (`embed/roles.py`, `embed/embedder.py`, `embed/companies.py`).
