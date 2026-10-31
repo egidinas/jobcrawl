@@ -1201,7 +1201,7 @@ function renderArea(pool) {
   const Ly = lay(); if (Ly.past && pool.length) return renderPastArea(pool, Ly); if (!pool.length) { $('atlas-area').innerHTML = `<span class="atlas-note">${lensOn() ? L('Move the lens onto the map.', 'Die Lupe auf die Karte ziehen.') : L('Nothing in view.', 'Nichts im Blick.')}</span>`; return; }
   const c = new Map(); pool.forEach((k) => c.set(Ly.ents[k].c2, (c.get(Ly.ents[k].c2) || 0) + 1)); const h = Ly.hoods[[...c].sort((a, b) => b[1] - a[1])[0][0]];
   const hk = [...c].sort((a, b) => b[1] - a[1])[0][0], total = Ly.ents.filter((e, k) => e.c2 === hk && (perScope || vis[k])).length;
-  const reg = Ly.regions[Ly.ents[pool[0]].c1], lean = leanText(h.lean);
+  const reg = Ly.regions[(Ly.ents.find((e) => e.c2 === hk) || Ly.ents[pool[0]]).c1], lean = leanText(h.lean);   // the region of the neighbourhood named (by function: its family)
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}${st.mode === 'roles' && reg && reg !== h ? ' · ' + esc(nameOf(reg)) : ''}</span><b>${esc(nameOf(h))}</b><span class="atlas-note">${esc(h.words.join(' · '))}</span>`
     + `<span>${h.fields.length ? esc(h.fields.map(fieldLabel).join(', ')) + ' · ' : ''}${total.toLocaleString()} ${st.mode === 'roles' ? L('roles in the neighbourhood', 'Stellen in der Nachbarschaft') : L('companies in the group', 'Firmen in der Gruppe')}, ${pool.length} ${L('in the lens', 'in der Lupe')}</span>`
     + (lean.length ? `<span class="lean">${L('Leans to: ', 'Neigt zu: ')}${esc(lean.join(' · '))}</span>` : '') + (TL ? tlAreaHtml(pool) : '');
