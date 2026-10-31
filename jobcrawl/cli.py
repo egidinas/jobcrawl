@@ -14,6 +14,7 @@ COMMANDS = {
     "traces": "record each role's first and last seen time, the weekly trends and the atlas timeline (into --traces, default the vectors folder; needs numpy)",
     "company-network": "build the company nearest-neighbor graph and community clusters from company vectors",
     "functions": "assign every role its function (family.function), a second one for hybrids, its domain and its level (--fit: fit the model first; needs numpy)",
+    "companies": "classify every catalogue company: its type (what it does), domain, stage and what it hires for (--fit: fit the model first; needs numpy)",
     "geomap": "build the geographic cartogram (areas swollen to their share of the roles, per scope) into the vectors folder (needs numpy)",
 }
 
@@ -61,6 +62,11 @@ def build_parser():
             sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder (functions_file, domains, levels)")
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
             sp.add_argument("--fit", action="store_true", help="fit the model again (with a map rebuild), seeded from the last assignment")
+        if name == "companies":
+            sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
+            sp.add_argument("--profile", metavar="DIR", required=True, help="profile folder (company_types_file, companies_catalogue, domains)")
+            sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors)")
+            sp.add_argument("--fit", action="store_true", help="fit the model again, seeded from the last assignment")
         if name == "geomap":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", help="profile folder (its scopes; without it the worldwide scope only)")
@@ -220,6 +226,21 @@ def cmd_functions(args):
     return 0
 
 
+def cmd_companies(args):
+    from jobcrawl.classify import companies
+    if err := _check_site("companies", args.site):
+        return err
+    try:
+        profile = load_profile(args.profile)
+    except (ProfileError, OSError) as e:
+        return _usage_error("companies", e)
+    try:
+        companies.run(args.site, args.vectors or default_vectors(args.site), profile, refit=args.fit)
+    except (companies.CompaniesError, OSError, ValueError) as e:
+        return _usage_error("companies", e)
+    return 0
+
+
 def cmd_geomap(args):
     from jobcrawl.map import geomap
     if err := _check_site("geomap", args.site):
@@ -269,7 +290,7 @@ def main(argv=None):
     if not args.command:
         parser.print_help()
         return 2
-    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "functions": cmd_functions, "traces": cmd_traces, "company-network": cmd_company_network,
+    handlers = {"build": cmd_build, "embed": cmd_embed, "publish": cmd_publish, "neighbours": cmd_neighbours, "map": cmd_map, "functions": cmd_functions, "companies": cmd_companies, "traces": cmd_traces, "company-network": cmd_company_network,
                 "geomap": cmd_geomap}
     return handlers[args.command](args)
 

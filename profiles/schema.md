@@ -234,6 +234,20 @@ The functions file: `{"version", "families": [{"id", "en", "de", "hue", "color"}
 plus title words, seniority and employer signatures removed) then assigns every role, and a refit (`--fit`) is seeded from the last
 assignment, so groups keep their place. Roles no function fits well are listed in the log as candidates for a new function.
 
+### `company_types_file`
+
+Companies on the same three axes as roles (`classify/companies.py`, `jobcrawl companies`): the type (what the company does, the company
+counterpart of a role's function), the domain (the same `domains` as roles, from the company's roles on the board when it has three or more,
+else its catalogue entry) and the stage (from the catalogue's facts only: entity type, founding year, employees). Output: the vectors folder's
+`company-types.json` ({slug: [type, type 2, confidence, domain, domain 2, stage, hiring family, open roles]}); publish copies it and puts the
+types and stages into `config.json` (`company_types`).
+
+The file: `{"version", "types": [{"id", "en", "de", "code", "color", "seed", "gated"}], "stages": [{"id", "en", "de", "rank"}],
+"name_rules": [{"type", "pattern"}], "retired": {"old id": "id that took its companies"}, "gate_all"}`. Ids are stable and never reused.
+`seed` and `name_rules` read the curated catalogue fields only (name, field, tags, organisation type), never the profile prose or generated
+capability lists. A gated type (or every type, with `gate_all`) needs that evidence; a company with none stays unclassified (type `""`)
+rather than guessed.
+
 ### `embed`
 
 Embedding recipe (`embed/roles.py`, `embed/embedder.py`, `embed/companies.py`).

@@ -87,6 +87,7 @@ document.head.appendChild(style);
 mount.innerHTML = `<div class="atlas-bar">
 <div class="atlas-views" id="atlas-mode" role="group"><button type="button" data-m="roles" aria-pressed="true">${L('Roles', 'Stellen')}</button><button type="button" data-m="companies" aria-pressed="false">${L('Companies', 'Firmen')}</button>${cfg.geomap ? `<button type="button" data-m="geo" aria-pressed="false">${L('Geography', 'Geografie')}</button>` : ''}</div>
 <div class="atlas-ctl"><span class="atlas-ctl-l">${L('Where', 'Wo')}</span><span class="atlas-pills" data-for="atlas-scope" role="group"></span><select id="atlas-scope" class="atlas-hide" aria-hidden="true" tabindex="-1">${scopeOpts}</select></div>
+<div class="atlas-ctl" id="atlas-cocol-ctl" hidden><span class="atlas-ctl-l">${L('Colour', 'Farbe')}</span><span class="atlas-pills" data-for="atlas-cocol" role="group"></span><select id="atlas-cocol" class="atlas-hide" aria-hidden="true" tabindex="-1"><option value="type" selected>${L('company type', 'Firmentyp')}</option><option value="domain">${L('domain', 'Domäne')}</option><option value="hiring">${L('hiring for', 'sucht für')}</option></select></div>
 <div class="atlas-ctl"><span class="atlas-ctl-l">${L('Lens', 'Lupe')}</span><span class="atlas-pills" data-for="atlas-size" role="group"></span><select id="atlas-size" class="atlas-hide" aria-hidden="true" tabindex="-1"><option value="0.05">${L('small', 'klein')}</option><option value="0.09">${L('medium', 'mittel')}</option><option value="0.16">${L('large', 'groß')}</option><option value="0" selected>${L('off', 'aus')}</option></select></div>
 <div class="atlas-ctl"><span class="atlas-pills" role="group"><button type="button" data-toggle="atlas-linked" title="${esc(pick('Carry the selection to the other view when switching', 'Die Auswahl beim Wechsel in die andere Ansicht mitnehmen'))}">${L('Linked views', 'Verknüpfte Ansichten')}</button></span><input type="checkbox" id="atlas-linked" class="atlas-hide" checked aria-hidden="true" tabindex="-1"></div>
 </div>
@@ -123,6 +124,17 @@ const coRows = cfg.company_texts ? await fetch(dataUrl(cfg.company_texts)).then(
 const RF = cfg.functions ? await fetch(dataUrl(cfg.functions.file || 'match/role-functions.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
 const FN = new Map(((cfg.functions || {}).functions || []).concat((cfg.functions || {}).families || []).map((f) => [f.id, f]));
 const DOM = new Map((cfg.domains || []).map((d) => [d.id, d]));
+// each company's type (what it does: the company counterpart of a role's function), domain, stage and the family it hires for (jobcrawl
+// companies); the geography's dots take their colour from it, by the chosen axis
+const CT = cfg.company_types ? await fetch(dataUrl(cfg.company_types.file || 'match/company-types.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
+const CTYPE = new Map(((cfg.company_types || {}).types || []).map((t) => [t.id, t]));
+const CSTAGE = new Map(((cfg.company_types || {}).stages || []).map((t) => [t.id, t]));
+const UNCLASSIFIED = { key: '', label: { en: 'Not classified yet', de: 'Noch nicht eingeordnet' }, color: '#94a3b8' };
+function coInfo(slug, by) {
+  const v = CT && CT.ids && CT.ids[slug]; if (!v) return UNCLASSIFIED;
+  const d = by === 'domain' ? DOM.get(v[3]) : by === 'hiring' ? FN.get(v[6]) : CTYPE.get(v[0]);
+  return d ? { key: d.id, label: d.label, color: d.color || '#94a3b8' } : UNCLASSIFIED;
+}
 const fnTag = (id, cls = '') => { const f = FN.get(id); return f ? `<span class="fn-tag${cls}" style="--c:${esc(f.color || '#888')}">${esc(pick(f.label.en, f.label.de))}</span>` : ''; };
 function roleTags(id) {
   const v = RF && RF.ids && RF.ids[id]; if (!v) return '';
@@ -876,9 +888,12 @@ function geoShapeOf(Lg, e) { if (e.shp !== undefined) return e.shp; const rank =
     if (inside) best = s; }
   return (e.shp = best); }
 // a company's colour on the map: its company type (the colour of its type on its card), grey when it has none
-const coTypeCol = (e) => { const co = coRows[e.slug]; return (co && co[5]) || '#94a3b8'; };
+const coColBy = () => ($('atlas-cocol') ? $('atlas-cocol').value : 'type');
+const coTypeCol = (e) => { if (CT) return coInfo(e.slug, coColBy()).color; const co = coRows[e.slug]; return (co && co[5]) || '#94a3b8'; };
 // the legend of the company dots: the company types on the map (most companies first), and what filled, ring and size mean
-function geoLegend(Lg) { const n = new Map(); Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return; const co = coRows[e.slug]; if (!co || !co[3]) return; const key = co[3]; const g = n.get(key) || { c: co[5] || '#94a3b8', de: co[4] || co[3], n: 0 }; g.n++; n.set(key, g); });
+function geoLegend(Lg) { const n = new Map(); Lg.ents.forEach((e, k) => { if (e.place || !vis[k]) return;
+  let key, g; if (CT) { const ci = coInfo(e.slug, coColBy()); key = ci.label.en; g = n.get(key) || { c: ci.color, de: ci.label.de, n: 0 }; }
+  else { const co = coRows[e.slug]; if (!co || !co[3]) return; key = co[3]; g = n.get(key) || { c: co[5] || '#94a3b8', de: co[4] || co[3], n: 0 }; } g.n++; n.set(key, g); });
   const sw = (c, ring) => `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;${ring ? `border:1.5px solid ${c}` : `background:${c}`};vertical-align:-1px;margin-right:4px"></span>`;
   return `<span class="atlas-legend">${[...n].sort((a, b) => b[1].n - a[1].n).slice(0, 10).map(([en, g]) => `<span style="white-space:nowrap;margin-right:10px">${sw(g.c)}${esc(pick(en, g.de))}</span>`).join('')}`
     + `<span style="white-space:nowrap;margin-right:10px">${sw('currentColor')}${L('open roles (larger: more)', 'offene Stellen (größer: mehr)')}</span><span style="white-space:nowrap">${sw('currentColor', true)}${L('none open now', 'derzeit keine offen')}</span></span>`; }
@@ -1034,6 +1049,7 @@ function fitGeo() { if (geoUni()) { const sc = cfg.scopes[st.scope], sid = sc &&
 
 function draw() {
   syncPills();
+  if ($('atlas-cocol-ctl')) $('atlas-cocol-ctl').hidden = st.mode !== 'geo' || !CT;
   sizeCanvas();
   if (anim && anim.setting) { prepare(THEMES[themeFor()]); return; }   // a change of view is setting the view: its frames come from the bitmaps (see viewChange)
   if (anim && anim.light) { tweenDraw(); return; }
@@ -1332,8 +1348,9 @@ function cardHtml(k) {
     return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}"><button type="button" class="hd" aria-expanded="${open}">${esc(r[1])}${newBadge(i)}</button><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}${linkRoleTag(i)}</div>${roleTags(e.id)}<div class="snip"></div><div class="more"></div>${voteHtml(e.id)}</li>`; }
   const co = coRows[e.slug] || [e.about || ''];
   const desc = (isDe() && co[1]) ? co[1] : (co[0] || co[2] || e.about || '');
-  const archName = (isDe() && co[4]) ? co[4] : (co[3] || '');
-  const archCol = co[5] || '#64748b';
+  const cti = CT ? coInfo(e.slug, 'type') : null, cv = CT && CT.ids && CT.ids[e.slug];
+  const archName = cti ? pick(cti.label.en, cti.label.de) + (cv && CSTAGE.get(cv[5]) && cv[5] !== 'unknown' ? ' · ' + pick(CSTAGE.get(cv[5]).label.en, CSTAGE.get(cv[5]).label.de) : '') : ((isDe() && co[4]) ? co[4] : (co[3] || ''));
+  const archCol = cti ? cti.color : (co[5] || '#64748b');
   const loc = co[6] || '';
   const carUrl = co[7] || '';
   const webUrl = co[8] || '';
@@ -1472,8 +1489,9 @@ function popHtml(k) { const e = lay().ents[k], close = `<button type="button" cl
     return close + `<a class="t link" href="${roleLink(e.id)}">${esc(r[1])}</a><div class="m">${esc(r[2])}${reg ? ' · ' + esc(reg) : ''}${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</div>${age ? `<div class="m">${esc(age)}</div>` : ''}<button type="button" class="atlas-pop-go">${L('Show the company', 'Firma zeigen')}</button>${voteHtml(e.id)}`; }
   const co = coRows[e.slug] || [e.about || ''];
   const desc = (isDe() && co[1]) ? co[1] : (co[0] || co[2] || e.about || '');
-  const archName = (isDe() && co[4]) ? co[4] : (co[3] || '');
-  const archCol = co[5] || 'var(--accent-text)';
+  const cti = CT ? coInfo(e.slug, 'type') : null, cv = CT && CT.ids && CT.ids[e.slug];
+  const archName = cti ? pick(cti.label.en, cti.label.de) + (cv && CSTAGE.get(cv[5]) && cv[5] !== 'unknown' ? ' · ' + pick(CSTAGE.get(cv[5]).label.en, CSTAGE.get(cv[5]).label.de) : '') : ((isDe() && co[4]) ? co[4] : (co[3] || ''));
+  const archCol = cti ? cti.color : (co[5] || 'var(--accent-text)');
   const loc = co[6] || '';
   const carUrl = co[7] || '';
   const webUrl = co[8] || '';
@@ -1621,6 +1639,7 @@ $('atlas-scope').addEventListener('change', (e) => { if (st.mode === 'geo' && ge
   resample(); }); });
 const lensHead = () => { $('atlas-in').textContent = lensOn() ? pick('In the lens', 'In der Lupe') : pick('In view', 'Im Blick'); };
 $('atlas-size').addEventListener('change', (e) => { st.size = +e.target.value; lensHead(); resample(); });
+$('atlas-cocol').addEventListener('change', () => draw());   // the geography's company colours: type, domain or hiring
 if (cfg.geomap) { const sl = $('atlas-morph-t'); sl.addEventListener('input', (e) => { geoStop(); geoSetT(+e.target.value); }); sl.addEventListener('pointerdown', () => geoStop()); }
 if (TL) { $('atlas-time').addEventListener('input', (e) => { tlStop(); setScrub(+e.target.value); }); ['pointerdown', 'keydown'].forEach((ev) => $('atlas-time').addEventListener(ev, () => tlStop())); }
 window.addEventListener('storage', () => { ratings = loadRatings(); prefVals = getJ(K.prefs, {}); cvEmb = getJ(K.cv, null); renderPersonas(); renderPrefs(); renderCv(); computeTaste(); draw(); });
