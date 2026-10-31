@@ -199,6 +199,16 @@ def _level(check, b, path):
             'pattern': pattern}
 
 
+def _domain(check, d, path):
+    check.obj(d, path)
+    pattern = d.get('pattern')
+    if pattern is not None:
+        check.regex(pattern, f'{path}.pattern', re.I)
+    return {'id': check.ident(d.get('id'), f'{path}.id'), 'en': check.text(d.get('en', ''), f'{path}.en'), 'de': check.text(d.get('de', ''), f'{path}.de'),
+            'hue': check.integer(d.get('hue', 0), f'{path}.hue'), 'color': check.text(d.get('color', ''), f'{path}.color'), 'pattern': pattern,
+            'fallback': bool(d.get('fallback')), 'tags': [t.lower() for t in check.strs(d.get('tags', []), f'{path}.tags')]}
+
+
 def _accent(check, v, path):
     check.text(v, path)
     if not ACCENT_RE.match(v):
@@ -272,6 +282,9 @@ def _validate(raw, file):
     out['languages'] = c.languages(p['languages'], 'languages') if 'languages' in p else ['en']
     out['data_dir'] = c.text(p['data_dir'], 'data_dir') if p.get('data_dir') is not None else None
     out['companies_catalogue'] = c.text(p['companies_catalogue'], 'companies_catalogue') if p.get('companies_catalogue') is not None else None
+    out['functions_file'] = c.text(p['functions_file'], 'functions_file') if p.get('functions_file') is not None else None   # classify/functions.py
+    out['domains'] = [_domain(c, d, f'domains[{i}]') for i, d in enumerate(c.lst(p.get('domains', []), 'domains'))]   # classify/domains.py
+    _ids_unique(c, out['domains'], 'domains')
     out['accent'] = _accent(c, p['accent'], 'accent') if p.get('accent') is not None else None
     out['links'] = _links(c, p.get('links', {}), 'links')
 

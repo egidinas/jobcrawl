@@ -7,6 +7,7 @@ Port of the reference implementation's publish_match.py and the config part of t
     role-nb.bin, role-graph.json        neighbours and near-duplicates: copied when the vectors folder has them (built offline,
                                         `jobcrawl neighbours`), else built here (neighbours.py, needs numpy)
     atlas-layout.json                   copied when the map was built (jobcrawl map)
+    role-functions.json                 each role's function, second function, domain and level (jobcrawl functions), when built
     company-vec.bin, company-vec.json   copied when the companies were embedded (jobcrawl embed with a companies_catalogue)
     role-trends.json, role-timeline.*   copied when the traces were built (jobcrawl traces); the traces themselves stay in the vectors folder
     role-timeline-names-NNN.json        the timeline's title and company names, 2000 records per shard (copied with the timeline)
@@ -24,7 +25,7 @@ from jobcrawl.index import match_index, neighbours, prefs
 from jobcrawl.site import read_site
 
 VECTOR_FILES = ('match-vec.bin', 'match-vec.json')
-COPIED = ('atlas-layout.json', 'company-vec.bin', 'company-vec.json', 'match-vec-jobonly.bin', 'match-vec-jobonly.json', 'rich_vs_jobonly_analysis.json')
+COPIED = ('atlas-layout.json', 'role-functions.json', 'company-vec.bin', 'company-vec.json', 'match-vec-jobonly.bin', 'match-vec-jobonly.json', 'rich_vs_jobonly_analysis.json')
 NEIGHBOUR_FILES = ('role-nb.bin', 'role-graph.json')
 TRENDS = ('role-trends.json', 'role-timeline.json', 'role-timeline.bin')     # built by jobcrawl traces; copied when present
 NAMES = re.compile(r'^role-timeline-names-\d{3}\.json$')
@@ -46,6 +47,8 @@ def web_config(profile):
         'scopes': [{'id': s['id'], 'label': s['label']} for s in profile['scopes']],
         'fields': [{'id': f.get('tag', f['id']), 'label': f['label']} for f in profile['fields']],
         'levels': [{'code': b['code'], 'label': b['label'], 'rank': b['rank']} for b in profile['levels']],
+        **functions_config(profile),
+        'domains': [{'id': d['id'], 'label': {'en': d['en'], 'de': d['de']}, 'hue': d['hue'], 'color': d['color']} for d in profile.get('domains') or []],
         'personas': [{'id': p['id'], 'label': p['label'], 'regex': p['regex'], 'flags': p['flags']} for p in profile['personas']],
         'glossary': profile['glossary'],
         'statements_file': 'match/match-prefs.json',
@@ -53,6 +56,17 @@ def web_config(profile):
         'links': profile['links'],
         **profile.get('web', {}),
     }
+
+
+def functions_config(profile):
+    """The functions file's families and functions for the web app (ids, names, hue and colour), or nothing when the profile has none."""
+    from jobcrawl.classify import functions as fx
+    tax = fx.load_functions(profile)
+    if not tax:
+        return {}
+    pick = lambda f: {'id': f['id'], 'label': {'en': f['en'], 'de': f['de']}, 'hue': f.get('hue'), 'color': f.get('color')}
+    return {'functions': {'families': [pick(f) for f in tax['families']], 'functions': [pick(f) for f in tax['functions']],
+                          'retired': tax.get('retired') or {}, 'file': 'match/role-functions.json'}}
 
 
 def has_vectors(vectors):

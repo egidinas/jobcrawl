@@ -352,6 +352,80 @@ def role_map(keep, X, employer, titles, fields_of, prefs, cfg, log=print, base_c
             'links': links(fine_r, idx, k)}
 
 
+def function_map(keep, X, employer, titles, fields_of, prefs, cfg, assigned, tax, log=print):
+    """The role map grouped by function (classify/functions.py): the regions are the families, the neighbourhoods the functions, both
+    named and coloured by the functions file. A two-level layout keeps the hierarchy on the plane: the families are discs (area by roles)
+    placed by how alike they are (a UMAP pulled towards the families, then each family's median) and pushed apart until none overlap; inside
+    a disc, a UMAP of the family's roles pulled lightly towards their functions, evened out (relax) and fitted into the disc. So every
+    function is one patch inside its family, and related families border each other. A role without a verdict takes its nearest role's."""
+    import umap
+    fids = [f['id'] for f in tax['functions']]; fams = [f['id'] for f in tax['families']]
+    fpos, gpos = {f: i for i, f in enumerate(fids)}, {f: i for i, f in enumerate(fams)}
+    fn = [assigned.get(r[0], [''])[0] for r in keep]
+    if any(f not in fpos for f in fn):                    # roles without a verdict: their nearest assigned role's
+        ok = np.array([f in fpos for f in fn]); idx_ok = np.where(ok)[0]
+        for a in np.where(~ok)[0]:
+            fn[a] = fn[int(idx_ok[np.argmax(X[idx_ok] @ X[a])])]
+    c2 = np.array([fpos[f] for f in fn]); c1 = np.array([gpos[f.split('.')[0]] for f in fn])
+    rng = np.random.default_rng(1)
+    Yf = umap.UMAP(n_neighbors=min(cfg['layout_k'], len(X) - 1), min_dist=cfg['min_dist'], metric='cosine', random_state=1,
+                   target_metric='categorical', target_weight=0.5).fit_transform(X, y=c1)
+    present = sorted(set(c1.tolist()))
+    C = np.array([np.median(Yf[c1 == g], 0) for g in present]); C = (C - C.mean(0)) / max(C.std(), 1e-9)
+    R = np.array([math.sqrt((c1 == g).sum()) for g in present]); R = R / R.sum() * 9.0
+    P = C.copy()
+    for _ in range(600):                                   # discs pushed apart until none overlap, each kept near its place
+        for a in range(len(present)):
+            for b in range(a + 1, len(present)):
+                d = P[b] - P[a]; dist = float(np.linalg.norm(d)) + 1e-9; gap = R[a] + R[b] + 0.08 - dist
+                if gap > 0:
+                    m = d / dist * gap / 2; P[a] -= m; P[b] += m
+        P += 0.01 * (C - P)
+    Y = np.zeros((len(X), 2))
+    for k, g in enumerate(present):
+        m = np.where(c1 == g)[0]
+        if len(m) > 30:
+            L = umap.UMAP(n_neighbors=min(30, len(m) - 1), min_dist=0.5, spread=1.5, metric='cosine', random_state=1,
+                          target_metric='categorical', target_weight=0.2).fit_transform(X[m], y=np.unique(c2[m], return_inverse=True)[1])
+        else:
+            L = rng.normal(size=(len(m), 2))
+        lo, hi = L.min(0), L.max(0); L = (L - lo) / np.maximum(hi - lo, 1e-9)
+        L = relax(L, dmin=0.6 / math.sqrt(len(L)), even=0.6)
+        L -= np.median(L, 0); r = float(np.percentile(np.linalg.norm(L, axis=1), 97)) or 1.0
+        L = L / r; nr = np.linalg.norm(L, axis=1, keepdims=True); L = np.where(nr > 1, L / nr, L)
+        Y[m] = P[k] + L * R[k] * 0.95
+    lo, hi = Y.min(0), Y.max(0); Y = 0.03 + 0.94 * (Y - lo) / max(float((hi - lo).max()), 1e-9)
+    Y += (0.97 - Y.max(0)) / 2                               # centred on the square
+    idx, sim = knn(X, cfg['k'])
+    rep_of = representatives(employer, relabel_small(leiden(idx, sim, EMPLOYER_RESOLUTION), idx, EMPLOYER_MIN_GROUP), X, cfg['reps'])
+    log(f'  {len(keep)} roles in {len(present)} families and {len(set(c2.tolist()))} functions')
+    tr = [titles[i] for i in range(len(keep))]
+    regions, hoods = [], []
+    for kind, memb, groups, out_list in (('regions', c1, tax['families'], regions), ('hoods', c2, tax['functions'], hoods)):
+        desc = describe(memb, tr, fields_of, X, prefs, 3, cfg.get('en_vocab'))
+        ctr = centres(Y, memb)
+        used = sorted(set(memb.tolist()))
+        for j, g in enumerate(used):
+            t = groups[g]
+            out_list.append(dict(desc[j], xy=ctr[j], id=t['id'], label=[t['en'], t['de']], name_tax=[t['en'], t['de']], hue=t.get('hue'), color=t.get('color')))
+    # the group indices in the layout count the groups present only
+    remap1 = {g: i for i, g in enumerate(sorted(set(c1.tolist())))}; remap2 = {g: i for i, g in enumerate(sorted(set(c2.tolist())))}
+    c1 = np.array([remap1[v] for v in c1]); c2 = np.array([remap2[v] for v in c2])
+    return {'ids': [r[0] for r in keep], 'x': [round(float(v), 4) for v in Y[:, 0]], 'y': [round(float(v), 4) for v in Y[:, 1]],
+            'c1': c1.tolist(), 'c2': c2.tolist(), 'rep': [int(rep_of[i]) if rep_of[i] != i else -1 for i in range(len(keep))],
+            'regions': regions, 'hoods': hoods, 'links': links(c2, idx, cfg['k']), 'grouping': 'functions'}
+
+
+def taxonomy_names(out):
+    """Puts the functions file's names back on the role groups of a function map (apply_labels names groups from the labels file)."""
+    if out['roles'].get('grouping') != 'functions':
+        return
+    for R in [out['roles']] + list((out.get('scopes') or {}).values()):
+        for g in R.get('regions', []) + R.get('hoods', []):
+            if g.get('name_tax'):
+                g['label'] = g['name_tax']
+
+
 def role_map_excerpt(sel, global_roles, cfg):
     """Local excerpt: reshapes coordinates slightly via relax() to fit the viewport, but does NOT recluster into new relationships."""
     ids = [global_roles['ids'][i] for i in sel]
@@ -722,7 +796,13 @@ def build(site, vectors, profile, log=print, namer=None):
     m = profile['map']
     any_scopes = {s['id'] for s in profile['scopes'] if (s.get('match') or {}).get('any')}
     prev_layout = previous_layout(vectors)
-    roles = role_map(keep, X, employer, titles, fields_of, prefs, cfg, log, prev=previous_positions(prev_layout))
+    from jobcrawl.classify import functions as fx
+    tax = fx.load_functions(profile)
+    assigned = (fx.read_assignment(vectors) or {}).get('ids') if tax else None
+    if tax and assigned:
+        roles = function_map(keep, X, employer, titles, fields_of, prefs, cfg, assigned, tax, log)
+    else:
+        roles = role_map(keep, X, employer, titles, fields_of, prefs, cfg, log, prev=previous_positions(prev_layout))
     global_coords = np.column_stack([roles['x'], roles['y']])
     log(f'worldwide: {len(keep)} roles ({len(keep) - cfg["n_live"]} no longer on the board, kept as context), {len(roles["regions"])} regions')
     maps = {}
@@ -742,6 +822,7 @@ def build(site, vectors, profile, log=print, namer=None):
     out = {'version': 2, 'k': cfg['k'], 'layout_k': cfg['layout_k'], 'scopes': maps, 'resolution': m['resolution'], 'language_removed': ['de', 'fr', 'es'],
            'reps_per_company_and_group': cfg['reps'], 'roles': roles, 'companies': companies}
     named = apply_labels(out, lab)
+    taxonomy_names(out)                                  # a function map keeps the functions file's names, whatever the labels file says
     name_companies(companies, names)
     log(f'  {named} groups named from the labels file')
     if lab:
@@ -750,6 +831,7 @@ def build(site, vectors, profile, log=print, namer=None):
         if namer:
             name_missing(out, lab, lab_path, titles_of, namer, log)
         name_companies(companies, names)                # apply_labels ran again: the company regions' names from the company graph are set again
+        taxonomy_names(out)
     path = os.path.join(vectors, 'atlas-layout.json')
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, ensure_ascii=False, separators=(',', ':'))
@@ -771,6 +853,8 @@ def add_new(site, vectors, profile, log=print, k=8):
     X = X / np.maximum(np.linalg.norm(X, axis=1, keepdims=True), 1e-9)
     row_of = {r[0]: i for i, r in enumerate(keep)}
     has_vec = np.abs(X).sum(1) > 0
+    from jobcrawl.classify import functions as fx
+    assigned = (fx.read_assignment(vectors) or {}).get('ids') or {}
     added = 0
     for sid, R in [(None, out['roles'])] + list((out.get('scopes') or {}).items()):
         have = set(R['ids'])
@@ -780,9 +864,15 @@ def add_new(site, vectors, profile, log=print, k=8):
         if not new or len(base) < k:
             continue
         sims = X[new] @ X[base].T
-        near = np.argpartition(-sims, k - 1, axis=1)[:, :k]
+        # a function map: a new role joins the patch of its own function (its most similar roles there), not its neighbours' majority
+        hood_of = {h.get('id'): j for j, h in enumerate(R['hoods'])} if R.get('grouping') == 'functions' or out['roles'].get('grouping') == 'functions' else {}
+        own = [hood_of.get((assigned.get(keep[i][0]) or [''])[0]) for i in new] if hood_of else [None] * len(new)
+        c2_base = np.array([R['c2'][n] for n in pos])
         for q, i in enumerate(new):
-            nb = [pos[j] for j in near[q]]
+            s_ = sims[q].copy()
+            if own[q] is not None and (c2_base == own[q]).sum() >= k:
+                s_[c2_base != own[q]] = -9
+            nb = [pos[j] for j in np.argpartition(-s_, k - 1)[:k]]
             R['ids'].append(keep[i][0])
             R['x'].append(round(float(np.mean([R['x'][n] for n in nb])), 4)); R['y'].append(round(float(np.mean([R['y'][n] for n in nb])), 4))
             for key, groups in (('c1', R['regions']), ('c2', R['hoods'])):
