@@ -283,6 +283,7 @@ def _validate(raw, file):
     out['data_dir'] = c.text(p['data_dir'], 'data_dir') if p.get('data_dir') is not None else None
     out['companies_catalogue'] = c.text(p['companies_catalogue'], 'companies_catalogue') if p.get('companies_catalogue') is not None else None
     out['functions_file'] = c.text(p['functions_file'], 'functions_file') if p.get('functions_file') is not None else None   # classify/functions.py
+    out['company_types_file'] = c.text(p['company_types_file'], 'company_types_file') if p.get('company_types_file') is not None else None   # classify/companies.py
     out['domains'] = [_domain(c, d, f'domains[{i}]') for i, d in enumerate(c.lst(p.get('domains', []), 'domains'))]   # classify/domains.py
     _ids_unique(c, out['domains'], 'domains')
     out['accent'] = _accent(c, p['accent'], 'accent') if p.get('accent') is not None else None
