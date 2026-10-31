@@ -101,10 +101,11 @@ class AtlasOnSynthetic(unittest.TestCase):
             self.assertGreaterEqual(len(m['ids']), 60)
 
     def test_profile_map_settings_are_recorded(self):
-        self.assertEqual(self.out['k'], 15)
-        self.assertEqual(self.out['layout_k'], 45)
-        self.assertEqual(self.out['resolution'], [1.6, 5.0])
-        self.assertEqual(self.out['reps_per_company_and_group'], 3)
+        m = self.profile['map']                         # the profile's own values, so tuning them does not break the test
+        self.assertEqual(self.out['k'], m['k'])
+        self.assertEqual(self.out['layout_k'], m['layout_k'])
+        self.assertEqual(self.out['resolution'], m['resolution'])
+        self.assertEqual(self.out['reps_per_company_and_group'], m['reps'])
 
     def test_regions_and_links_have_their_shape(self):
         regions = self.out['roles']['regions']
