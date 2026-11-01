@@ -18,7 +18,11 @@
 // between requests; --concurrency hosts run in parallel. Failures (JavaScript-rendered pages, errors) retry after 1, 7 and
 // 30 days, then every 90 days. The log (stdout) has a start line with the plan, a progress line every 50 requests, and a
 // result line with per-vendor counts, the raw-capture summary and the remaining queue.
-import { existsSync, readFileSync, writeFileSync, renameSync, statSync } from 'node:fs';
+//
+// One instance per data directory: <data>/detail-backfill.lock holds {pid, started}; a second run finds it, sees the pid alive and
+// the lock younger than 12 hours, and exits without touching the queue, so a long dedicated run and the per-cycle hook never
+// work the same URLs. A crash leaves a stale lock, which the next run takes over (dead pid, or older than 12 hours).
+import { existsSync, readFileSync, writeFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { providers, resolve, setCacheDir, pageDescription } from './providers.mjs';
@@ -33,6 +37,24 @@ const NO_SCRAPE = /linkedin\.|indeed\.|glassdoor\.|xing\./i;
 const RETRY_DAYS = [1, 7, 30, 90];
 const THIN = 1200;   // a saved text shorter than this counts as missing (same threshold as the crawl's rolling rescore)
 const CLIP = 8900;   // a saved text at least this long was clipped by the crawl (clipDescription cuts at 9,000)
+const LOCK_MAX_AGE_MS = 12 * 3600e3;   // a lock older than this is stale even if its pid is alive (a pid reused by something else)
+
+/**
+ * Whether the lock file's content (JSON {pid, started}) belongs to a run that is still going: the pid is alive (isAlive(pid))
+ * and started is less than 12 hours before now. Unparseable or incomplete content counts as stale.
+ */
+export function lockIsActive(lockJson, now = Date.now(), isAlive = pidIsAlive) {
+  let lock;
+  try { lock = JSON.parse(lockJson); } catch { return false; }
+  const pid = Number(lock?.pid), started = Date.parse(lock?.started);
+  if (!Number.isInteger(pid) || pid <= 0 || Number.isNaN(started)) return false;
+  if (now - started >= LOCK_MAX_AGE_MS) return false;
+  return isAlive(pid);
+}
+
+function pidIsAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }   // EPERM: the process exists, it is just not ours
+}
 
 const hostOf = (url) => { try { return new URL(url).host; } catch { return url; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -123,6 +145,25 @@ async function main() {
   setCacheDir(dataDir);
   if (!installRawCapture()) { console.error('backfill: JOBCRAWL_RAW_DIR is not set; the backfill only makes sense with the raw capture on.'); process.exit(2); }
 
+  // one instance per data directory
+  const lockFile = pathResolve(dataDir, 'detail-backfill.lock');
+  if (existsSync(lockFile)) {
+    const content = readFileSync(lockFile, 'utf8');
+    if (lockIsActive(content, Date.now())) {
+      let held = {};
+      try { held = JSON.parse(content); } catch { /* lockIsActive parsed it */ }
+      say(`another run is active (pid ${held.pid} since ${held.started}), skipping`);
+      return;
+    }
+    say(`taking over a stale lock (${content.trim()})`);
+  }
+  writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
+  const releaseLock = () => { try { unlinkSync(lockFile); } catch { /* already gone */ } };
+  process.on('exit', releaseLock);
+  try { await backfill({ flag, opt, t0, say, PROFILE, dataDir }); } finally { releaseLock(); }
+}
+
+async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
   const cfg = applyProfileFilters(JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8')), PROFILE);
   const boards = new Map();
   for (const c of cfg.tracked_companies ?? []) {
