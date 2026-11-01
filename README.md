@@ -80,6 +80,24 @@ once per content, gzipped and named by their SHA-256, and every response gets a 
 type, hash, size, and the request body for POST calls). The board can then be rebuilt from first-party data at any time, including
 the descriptions' HTML structure and provider fields the crawler does not extract. Unchanged boards cost one index line per crawl.
 
+### Detail backfill (optional)
+
+The crawl fetches a description only for roles that pass the title filter. `crawler/detail-backfill.mjs` fetches the detail of
+every tracked posting, in or out of scope, through the same provider code, so the raw store keeps every response; nothing is
+written to `jd/*.md`. `JOBCRAWL_RAW_DIR` is required (without it the fetches would be wasted).
+
+```
+node crawler/detail-backfill.mjs --profile <dir> --data <dir> [--budget 400] [--host-delay 1500] [--concurrency 4]
+                                 [--statuses extra,filtered,open] [--vendors a,b] [--dry-run]
+```
+
+A run stops after `--budget` requests and is resumable: `<data>/detail-backfill.json` records every URL tried (ok, text length,
+tries, next retry). The queue order is open roles without a saved text, then extra and filtered roles, then open roles whose
+saved text is the clipped copy; newest first within each class. Vendors whose board response already carries every description
+(Greenhouse, Ashby, Lever, Personio, Recruitee, Pinpoint, Breezy, Workable) are skipped unless named in `--vendors`. Hosts are
+fetched one request at a time with `--host-delay` ms between requests, `--concurrency` hosts in parallel. A failed URL is retried
+after 1, 7 and 30 days, then every 90 days.
+
 ## Writing a profile
 
 A profile is a folder with a `profile.json` and a `companies.json` (the employers to poll). Start from `profiles/minimal`, which
