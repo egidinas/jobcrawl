@@ -180,8 +180,13 @@ capture stores the detail JSON byte for byte. When the call fails the job's own 
 * Paging is consistent between consecutive requests; `MOST_RECENT` means `lastModificationDate` descending.
 * A `503 SERVICE_UNAVAILABLE` came from `getCountryStats` while every other call succeeded: transient errors happen, the
   provider retries once after 2 s on 429/5xx.
-* No rate-limit or quota headers were seen. The probe stayed at 15 requests, one per second; the provider waits 1 s between
-  pages, reads at most 2,000 vacancies (40 pages) per crawl and stops after 28 s so the crawl's 35 s per entry is kept.
+* No rate-limit or quota headers were seen. The probe stayed at 15 requests, one per second; the provider reads at most 2,000
+  vacancies (40 pages) per crawl and stops after 28 s so the crawl's 35 s per entry is kept.
+* The pacing is host-wide, not per board: the crawl runs up to 8 boards at once and hundreds of them are EURES boards, so every
+  request of the module (search pages, detail documents, ESCO labels) goes through one shared limiter that lets one request start
+  per `EURES_MIN_GAP_MS` (default 1000 ms) in the whole process, whatever the number of boards.
+* On a 429 the provider honours `Retry-After` (seconds or HTTP date, capped at 60 s; 10 s when absent), retries once, and doubles
+  the host-wide gap for the next 60 s before returning to the default.
 * `getNumberOfJobs` reported 2,609,810 active vacancies; the "satellite" keyword in Germany matched 754, in Germany and France
   1,510, of which 398 (Germany) were published in the last week.
 

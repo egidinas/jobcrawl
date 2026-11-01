@@ -23,8 +23,9 @@ const detailWithContact = (contacts = [{ name: 'Erika Mustermann', title: 'Recru
   return d;
 };
 
-tuning.pageDelayMs = 0;
+tuning.minGapMs = 0;   // the host-wide limiter's gap (eures-rate-limit.test.mjs exercises it); here the paging logic alone
 tuning.retryDelayMs = 0;
+tuning.retry429Ms = 0;
 
 test('eures: registered in the provider registry, as an aggregator, with a fetchDescription for the detail document', () => {
   assert.equal(providers.eures, eures);
