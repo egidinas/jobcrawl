@@ -103,6 +103,7 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `probation` | bool | gate roles on `crawl.relevance` until one relevant role shows up; pruned after 5 cycles with only irrelevant roles |
 | `relevance` | `strict` / `broad` / `off` | per-entry relevance gate. Default: `strict` for MyCareersFuture, `off` for the rest |
 | `only_locations` | list | keep only roles whose location contains one of these (for boards that list the whole world) |
+| `collect_only` | bool | collect but never publish: every role of the board is kept in the history (and the raw store) as status `extra`, never `open` or NEW, even when its title passes the filters. For feeds whose scope is decided downstream (aggregators such as EURES, USAJOBS). The summary line counts them as `N collect-only` |
 | `max_jobs` | number | cap on the number of postings read, for providers that page |
 | `extra_positive` | list | extra title keywords for this employer only |
 | `location_only`, `location_allow` | list | per-employer location lists |

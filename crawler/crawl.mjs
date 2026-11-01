@@ -43,7 +43,9 @@ options:
 (profile key crawl.jd_keep_days: a role's description is removed once the role has not been seen for more than this many days
  (its history row is not 'open'); default 90; 0 = keep forever)
 (profile key crawl.history_prune_days: gone/filtered rows not seen for more than this many days leave scan-history.tsv and move to
- scan-history-archive.tsv; default 0 = never prune, every row stays in the working history)`;
+ scan-history-archive.tsv; default 0 = never prune, every row stays in the working history)
+(companies-file key collect_only on an entry: the board is collected but never published; its roles are kept as status 'extra',
+ never 'open' or NEW, even when the title passes; other keys of an entry are listed in profiles/schema.md)`;
 
 if (flag('help')) { console.log(USAGE); process.exit(0); }
 
@@ -395,6 +397,9 @@ async function scan() {
       if (pc.samples.length < 5) pc.samples.push(j.title);
       return probGated ? PROBATION_VERDICT : null;
     };
+    // Collect-only boards (entry.collect_only: true): every role is kept in the history as 'extra', never 'open' or NEW, even when its
+    // title passes. For feeds whose scope is decided downstream (aggregators like EURES or USAJOBS) so they do not flood the public board.
+    const collectOnly = companies[i].collect_only === true;
     const live = new Set();
     if (companies[i].interval_hours) crawlState[name] = new Date(nowMs + Math.min(48, companies[i].interval_hours) * 36e5 * stagger(companies[i])).toISOString();   // capped at 48 h: a role not confirmed for 3 days is marked gone
     // Optional per-site whitelist (entry.only_locations): for big employers whose boards list the whole world, keep
@@ -422,8 +427,9 @@ async function scan() {
       // A role at an in-scope employer that only fails the title filter (technician, IT, finance, admin...) is kept as status 'extra':
       // it is never alerted as new or fed to the classifiers by default, but the board can offer it behind a "more roles" switch and
       // it serves as a coverage check against other boards. Location, probation and relevance verdicts still drop it as before.
-      const extraOnly = (broadWhy === 'no-positive-title' || broadWhy === 'negative-title')
-        && !(sgVerdict(j) ?? probWhy) && !locationVerdictCompiled(compiledFilters, normLocation, name);
+      // On a collect-only board a role that passes every filter is kept as 'extra' too (the other verdicts drop it as before).
+      const extraOnly = (collectOnly && !why) || ((broadWhy === 'no-positive-title' || broadWhy === 'negative-title')
+        && !(sgVerdict(j) ?? probWhy) && !locationVerdictCompiled(compiledFilters, normLocation, name));
       if (why === PROBATION_VERDICT) gatedProbation++;
       if (why === SHADOWED) stats.shadowed++;
       const prior = history.get(j.url);
@@ -432,8 +438,8 @@ async function scan() {
         if (/^insert title of the position/i.test(prior.title) && j.title && !/^insert title of the position/i.test(j.title)) prior.title = j.title;   // csod template titles seen before the German view was read
         if (j.location && (!prior.location || prior.location === '?')) prior.location = j.location;
         if (j.company && (!prior.company || prior.company === name)) prior.company = j.company;
-        if (why) {
-          if (extraOnly) { prior.status = 'extra'; prior.last_seen = date; stats.extra = (stats.extra ?? 0) + 1; continue; }
+        if (why || extraOnly) {
+          if (extraOnly) { prior.status = 'extra'; prior.last_seen = date; stats.extra = (stats.extra ?? 0) + 1; if (collectOnly) stats.collectOnly = (stats.collectOnly ?? 0) + 1; continue; }
           prior.status = 'filtered';
           stats.filtered++;
           continue;
@@ -466,10 +472,11 @@ async function scan() {
         continue;
       }
       if (flag('refresh-only')) { stats.skippedNew = (stats.skippedNew ?? 0) + 1; continue; }   // update known roles only, never add
-      if (why) {
+      if (why || extraOnly) {
         if (extraOnly) {
           history.set(j.url, { url: j.url, company: j.company || name, title: j.title, location: j.location, first_seen: date, last_seen: date, status: 'extra', posted: postedDate(j.postedAt) });
           stats.extra = (stats.extra ?? 0) + 1;
+          if (collectOnly) stats.collectOnly = (stats.collectOnly ?? 0) + 1;
           continue;
         }
         stats.filtered++;
@@ -632,7 +639,7 @@ async function scan() {
   }
 
   fresh.sort((a, b) => Number(b.seniority) - Number(a.seniority) || a.company.localeCompare(b.company));
-  console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}`);
+  console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}`);
   if (problems.length) console.log('\nNotes:\n' + problems.map((p) => '  - ' + p).join('\n'));
 
   if (flag('dry-run')) return console.log('\n(dry run: nothing written)');

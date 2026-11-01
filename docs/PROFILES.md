@@ -62,6 +62,8 @@ job-board URL. The minimal profile polls three boards:
 
 * `interval_hours` (2 to 48) polls an employer only when it is due.
 * `enabled: false` skips an employer without removing it.
+* `collect_only: true` collects a board without publishing it: its roles are kept in the history as `extra` (never `open` or NEW),
+  for aggregator feeds whose scope is decided downstream.
 * A provider's own keys (`queries`, `feed_url`, `region`, ...) are documented in `crawler/providers.mjs` and `crawler/providers-extra.mjs`.
 * Read the employer's terms before adding it, and keep the interval long (see the README's responsible crawling notes).
 
