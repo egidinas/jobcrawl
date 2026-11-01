@@ -218,6 +218,25 @@ export function teamtailorRssJob(b) {
   };
 }
 
+/** The posting's numeric id: the number in /jobs/<id>-<slug>. */
+const teamtailorId = (url = '') => url.match(/\/jobs\/(\d+)/)?.[1] ?? '';
+
+/**
+ * A board's JSON Feed items joined with its RSS <item>s by posting id. The JSON item gives the posting (full description, date,
+ * url, title, employment, address); the RSS item adds department and the location string the RSS mapping always produced
+ * ("City, Country[, Remote]"), so neither changes for postings already stored. items null (no JSON feed): the RSS mapping alone.
+ */
+export function teamtailorMerge(items, xml = '') {
+  const rss = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(([, b]) => teamtailorRssJob(b));
+  if (!items) return rss;
+  const byId = new Map(rss.filter((j) => teamtailorId(j.url)).map((j) => [teamtailorId(j.url), j]));
+  return items.map((item) => {
+    const job = teamtailorJob(item);
+    const r = byId.get(String(item._jobposting?.identifier?.value ?? '') || teamtailorId(item.url));
+    return r ? { ...job, location: r.location || job.location, department: r.department } : job;
+  });
+}
+
 /** One entry of a Rippling board list (api.rippling.com/platform/api/ats/v1/board/<slug>/jobs); no description or date there. */
 export function ripplingJob(j, slug) {
   return {
@@ -357,7 +376,8 @@ export const providers = {
   },
 
   // Teamtailor: /jobs.json is a JSON Feed 1.1 whose items carry the full HTML description (content_html) and a schema.org
-  // JobPosting (_jobposting: identifier, datePosted, employmentType, jobLocation). /jobs.rss is partial and stays the fallback.
+  // JobPosting (_jobposting: identifier, datePosted, employmentType, jobLocation) but no department; /jobs.rss has the department
+  // and the location names. Both are fetched and merged per posting (teamtailorMerge); the RSS alone when the JSON feed fails.
   teamtailor: {
     detect: (u) => {
       if (/careers\.reorbit\.space/i.test(u)) return 'reorbit';
@@ -369,13 +389,17 @@ export const providers = {
     },
     async fetch(slug) {
       const base = slug.startsWith('http') ? slug.replace(/\/jobs\.rss$/, '').replace(/\/+$/, '') : `https://${slug}.teamtailor.com`;
-      let items;
+      let items = null, xml;
       try {
-        items = JSON.parse(await get(`${base}/jobs.json`, { json: false })).items;
-      } catch { /* not served or not JSON: the RSS below */ }
-      if (Array.isArray(items)) return items.map(teamtailorJob);
-      const xml = await get(`${base}/jobs.rss`, { json: false });
-      return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(([, b]) => teamtailorRssJob(b));
+        const feed = JSON.parse(await get(`${base}/jobs.json`, { json: false }));
+        if (Array.isArray(feed.items)) items = feed.items;
+      } catch { /* not served or not JSON: the RSS alone */ }
+      try {
+        xml = await get(`${base}/jobs.rss`, { json: false });
+      } catch (err) {
+        if (!items) throw err;   // neither feed answered
+      }
+      return teamtailorMerge(items, xml ?? '');
     },
   },
 

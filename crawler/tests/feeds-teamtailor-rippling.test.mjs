@@ -3,9 +3,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { providers, teamtailorJob, teamtailorRssJob, ripplingJob, ripplingDescription } from '../providers.mjs';
+import { providers, plain, teamtailorJob, teamtailorRssJob, teamtailorMerge, ripplingJob, ripplingDescription } from '../providers.mjs';
 
-const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
+const text = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
+const fixture = (name) => JSON.parse(text(name));
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 test('teamtailor: detect is unchanged', () => {
@@ -62,6 +63,56 @@ test('teamtailor: the RSS fallback keeps its mapping', () => {
     description: 'Build & ship',
   });
   assert.equal(teamtailorRssJob('<remoteStatus>fully</remoteStatus><name>Berlin</name>').location, 'Berlin, Remote');
+});
+
+test('teamtailor: JSON Feed and RSS merged per posting', () => {
+  const feed = fixture('teamtailor-jobs.json');
+  const xml = text('teamtailor-jobs.rss');
+  assert.equal([...xml.matchAll(/<item>/g)].length, 3, 'the RSS fixture holds the same three postings');
+
+  // both feeds: the posting from the JSON item, department and the location string from the RSS item
+  const both = teamtailorMerge(feed.items, xml);
+  assert.equal(both.length, 3);
+  const [j, us, open] = both;
+  assert.equal(j.id, feed.items[0].id);
+  assert.equal(j.url, 'https://dcubed.teamtailor.com/jobs/8434380-structural-engineer-solar-arrays-f-m-d');
+  assert.equal(j.title, 'Structural Engineer - Solar Arrays (f/m/d)');
+  assert.equal(j.department, 'Dcubed Germering, GER');
+  assert.equal(j.location, 'Germering, Germany', 'the string the RSS mapping always produced, not "Germering, DE"');
+  assert.equal(j.postedAt, '2026-09-22T13:29:01+02:00', 'the JSON item date');
+  assert.equal(j.description, plain(feed.items[0].content_html), 'the JSON item description');
+  assert.deepEqual(j.meta, { employment: 'FULL_TIME', ref: '8434380', country: 'DE' }, 'the ISO country stays in meta');
+  assert.equal(us.department, 'Dcubed Johnstown, CO US');
+  assert.equal(us.location, 'Berthoud, United States');
+  assert.equal(us.meta.country, 'US');
+  assert.equal(open.department, '');
+  assert.equal(open.location, '');
+  assert.equal(open.url, 'https://dcubed.teamtailor.com/jobs/7212657-open-application');
+
+  // JSON only (the RSS fetch failed): the JSON mapping, department absent
+  const jsonOnly = teamtailorMerge(feed.items, '');
+  assert.deepEqual(jsonOnly, feed.items.map(teamtailorJob));
+  assert.ok(!('department' in jsonOnly[0]));
+  assert.equal(jsonOnly[0].location, 'Germering, DE');
+
+  // RSS only (the JSON fetch failed): the RSS mapping exactly as before
+  const rssOnly = teamtailorMerge(null, xml);
+  assert.equal(rssOnly.length, 3);
+  assert.deepEqual(Object.keys(rssOnly[0]), ['title', 'url', 'location', 'department', 'postedAt', 'description']);
+  assert.equal(rssOnly[0].url, j.url);
+  assert.equal(rssOnly[0].location, 'Germering, Germany');
+  assert.equal(rssOnly[0].department, 'Dcubed Germering, GER');
+  assert.equal(rssOnly[0].postedAt, '2026-09-22T11:29:01.000Z');
+  assert.ok(rssOnly[0].description.startsWith('About the role'));
+  assert.deepEqual(rssOnly.map((x) => x.url), both.map((x) => x.url), 'same postings, same order');
+
+  // a JSON item the RSS does not list keeps its own location and gets no department; an RSS item without a city leaves the JSON address
+  const other = { ...feed.items[0], url: 'https://dcubed.teamtailor.com/jobs/1000001-elsewhere', _jobposting: { ...feed.items[0]._jobposting, identifier: { value: '1000001' } } };
+  const [alone] = teamtailorMerge([other], xml);
+  assert.equal(alone.location, 'Germering, DE');
+  assert.ok(!('department' in alone));
+  const bare = '<item><link>https://dcubed.teamtailor.com/jobs/8434380-x</link><tt:department>Ops</tt:department></item>';
+  assert.deepEqual([teamtailorMerge([feed.items[0]], bare)[0]].map((x) => [x.location, x.department])[0], ['Germering, DE', 'Ops']);
 });
 
 test('rippling: detect yields the board slug the API path uses', () => {
