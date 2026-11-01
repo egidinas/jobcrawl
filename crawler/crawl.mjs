@@ -41,7 +41,9 @@ options:
   --help              show this text
 (profile key crawl.min_free_mb: refuse to start when the data disk has less free space than this many MB; 0 = no check)
 (profile key crawl.jd_keep_days: a role's description is removed once the role has not been seen for more than this many days
- (its history row is not 'open'); default 90; 0 = keep forever)`;
+ (its history row is not 'open'); default 90; 0 = keep forever)
+(profile key crawl.history_prune_days: gone/filtered rows not seen for more than this many days leave scan-history.tsv and move to
+ scan-history-archive.tsv; default 0 = never prune, every row stays in the working history)`;
 
 if (flag('help')) { console.log(USAGE); process.exit(0); }
 
@@ -639,15 +641,22 @@ async function scan() {
   for (const row of history.values()) if ((row.status === 'open' || row.status === 'dup' || row.status === 'extra') && row.last_seen < cutoff) row.status = 'gone';
   // The description retention (jdCleanup) needs the rows the prune below drops, so it gets a copy taken before the prune.
   const jdRows = new Map(history);
-  // Retention: postings unseen for > 90 days leave the working history (it stays small) and move to the archive, which keeps
-  // their row (first and last seen, title, company, location) for good: the trace of what was on the market, and when
-  const pruneCutoff = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10), archived = [];
-  for (const [url, row] of history.entries()) {
-    if ((row.status === 'gone' || row.status === 'filtered') && row.last_seen < pruneCutoff) {
-      archived.push(row); history.delete(url);
+  // Retention (crawl.history_prune_days, default 0 = off: hoard first, reduce later). When a profile sets it, gone/filtered
+  // postings unseen for more than that many days leave the working history and move to the archive, which keeps their row
+  // (first and last seen, title, company, location) for good: the trace of what was on the market, and when
+  const pruneDays = PROFILE.historyPruneDays, archived = [];
+  if (pruneDays > 0) {
+    const pruneCutoff = new Date(Date.now() - pruneDays * 864e5).toISOString().slice(0, 10);
+    for (const [url, row] of history.entries()) {
+      if ((row.status === 'gone' || row.status === 'filtered') && row.last_seen < pruneCutoff) {
+        archived.push(row); history.delete(url);
+      }
     }
+    if (archived.length) archiveRows(archived);
+    console.log(`history: ${archived.length} rows older than ${pruneDays} days archived`);
+  } else {
+    console.log('history: pruning off (crawl.history_prune_days 0)');
   }
-  if (archived.length) archiveRows(archived);
   saveHistory(history);
   if (existsSync(JD_DIR) && jdRows.size) jdCleanup(jdRows, false);
   if (labelsDirty) saveLabels(OUT_DIR, boardLabels);
