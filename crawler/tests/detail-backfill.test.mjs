@@ -2,11 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { planBackfill, runQueue, nextRetry, LIST_HAS_DESCRIPTION } from '../detail-backfill.mjs';
+import { planBackfill, runQueue, nextRetry, lockIsActive, LIST_HAS_DESCRIPTION } from '../detail-backfill.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const row = (url, company, status, first_seen = '2026-10-20') => [url, { url, company, title: 't', location: 'x', first_seen, last_seen: first_seen, status, posted: '' }];
@@ -62,7 +62,17 @@ test('nextRetry backs off 1, 7, 30 then 90 days', () => {
   assert.deepEqual([1, 2, 3, 4, 9].map((t) => nextRetry(t, now) / 864e5), [1, 7, 30, 90, 90]);
 });
 
-test('command line: refuses without JOBCRAWL_RAW_DIR; a dry run plans against a real profile and history', () => {
+test('lockIsActive: alive and fresh holds; 13 h old, dead pid or unparseable content is stale', () => {
+  const now = Date.parse('2026-11-01T12:00:00Z');
+  const lock = (ageH) => JSON.stringify({ pid: 4242, started: new Date(now - ageH * 3600e3).toISOString() });
+  assert.equal(lockIsActive(lock(1), now, () => true), true, 'alive + fresh');
+  assert.equal(lockIsActive(lock(13), now, () => true), false, 'alive + 13 h old');
+  assert.equal(lockIsActive(lock(1), now, () => false), false, 'dead pid');
+  assert.equal(lockIsActive('{not json', now, () => true), false, 'unparseable');
+  assert.equal(lockIsActive('{}', now, () => true), false, 'no pid');
+});
+
+test('command line: refuses without JOBCRAWL_RAW_DIR; a dry run plans against a real profile and history; one instance per data dir', () => {
   const d = mkdtempSync(join(tmpdir(), 'jobcrawl-backfill-'));
   try {
     const prof = join(d, 'profile'), data = join(d, 'data');
@@ -87,5 +97,23 @@ test('command line: refuses without JOBCRAWL_RAW_DIR; a dry run plans against a 
     assert.match(r2.stdout, /"list-carries-description":1/);
     assert.match(r2.stdout, /by vendor: workday 2/);
     assert.match(r2.stdout, /result: dry run/);
+    const lockFile = join(data, 'detail-backfill.lock');
+    assert.ok(!existsSync(lockFile), 'the lock is removed when the run ends');
+    // a live lock (this test process's pid, fresh) makes the run skip
+    const rawEnv = { ...env, JOBCRAWL_RAW_DIR: join(d, 'raw') };
+    writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
+    const r3 = spawnSync(process.execPath, [script, '--profile', prof, '--data', data, '--dry-run'], { encoding: 'utf8', env: rawEnv });
+    assert.equal(r3.status, 0, r3.stderr);
+    assert.match(r3.stdout, new RegExp(`another run is active \\(pid ${process.pid} since `));
+    assert.doesNotMatch(r3.stdout, /result: dry run/);
+    assert.deepEqual(JSON.parse(readFileSync(lockFile, 'utf8')).pid, process.pid, 'the active lock is left in place');
+    // a stale lock (dead pid) is taken over and the normal plan runs
+    writeFileSync(lockFile, JSON.stringify({ pid: 999999, started: new Date().toISOString() }));
+    const r4 = spawnSync(process.execPath, [script, '--profile', prof, '--data', data, '--dry-run'], { encoding: 'utf8', env: rawEnv });
+    assert.equal(r4.status, 0, r4.stderr);
+    assert.match(r4.stdout, /taking over a stale lock/);
+    assert.match(r4.stdout, /candidates 2 \(open without text 1, extra\/filtered 1/);
+    assert.match(r4.stdout, /result: dry run/);
+    assert.ok(!existsSync(lockFile), 'the taken-over lock is removed at the end');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

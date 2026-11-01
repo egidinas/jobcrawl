@@ -96,7 +96,9 @@ tries, next retry). The queue order is open roles without a saved text, then ext
 saved text is the clipped copy; newest first within each class. Vendors whose board response already carries every description
 (Greenhouse, Ashby, Lever, Personio, Recruitee, Pinpoint, Breezy, Workable) are skipped unless named in `--vendors`. Hosts are
 fetched one request at a time with `--host-delay` ms between requests, `--concurrency` hosts in parallel. A failed URL is retried
-after 1, 7 and 30 days, then every 90 days.
+after 1, 7 and 30 days, then every 90 days. Only one run works a data directory at a time: `<data>/detail-backfill.lock` holds the
+pid and start time of the active run, a second run skips while that pid is alive and the lock is younger than 12 hours, and a lock
+left by a crash is taken over.
 
 ### USAJOBS (optional)
 
