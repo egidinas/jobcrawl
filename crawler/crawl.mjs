@@ -16,6 +16,7 @@ import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } 
 import { setUserAgent } from './useragent.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
+import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -56,6 +57,9 @@ const CATALOGUE = PROFILE.catalogueFile;   // optional (profile key crawl.catalo
 const PROB_FILE_NAME = 'probation-state.json';
 const OUT_DIR = resolveDataDir(opt('data'), PROFILE);
 setCacheDir(OUT_DIR);
+// every feed response byte for byte under JOBCRAWL_RAW_DIR (rawcapture.mjs), before the first request
+const RAW_ON = !flag('jd-cleanup-only') && installRawCapture();
+if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`);
 if (!flag('dry-run') && !flag('jd-cleanup-only')) {   // the cleanup frees space, so it runs even on a full disk
   const full = checkDisk(OUT_DIR, PROFILE.minFreeMb);
   if (full) { console.error(`crawl: ${full}`); process.exit(3); }
@@ -676,4 +680,5 @@ if (flag('jd-cleanup-only')) {
   try { jdCleanup(loadHistory(), flag('dry-run')); } catch (e) { console.error(`crawl: ${e.message}`); process.exit(1); }
 } else {
   await scan();
+  if (RAW_ON) console.log(`crawl: ${rawCaptureSummary()}`);
 }

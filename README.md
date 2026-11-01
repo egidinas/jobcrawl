@@ -73,6 +73,13 @@ permanent trace of every role that was on the board (title, company, location, U
 128-number fingerprint), in a folder best kept out of version control (`--traces`, default the vectors folder), and derives the
 weekly trends and the atlas timeline; `publish --traces DIR` copies those two (titles and companies only, no URLs) into the site.
 
+### Raw capture (optional)
+
+Set `JOBCRAWL_RAW_DIR` to keep every feed response the crawler receives, byte for byte (`crawler/rawcapture.mjs`): bodies are stored
+once per content, gzipped and named by their SHA-256, and every response gets a line in a daily index (URL, method, status, content
+type, hash, size, and the request body for POST calls). The board can then be rebuilt from first-party data at any time, including
+the descriptions' HTML structure and provider fields the crawler does not extract. Unchanged boards cost one index line per crawl.
+
 ## Writing a profile
 
 A profile is a folder with a `profile.json` and a `companies.json` (the employers to poll). Start from `profiles/minimal`, which
