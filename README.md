@@ -98,6 +98,15 @@ saved text is the clipped copy; newest first within each class. Vendors whose bo
 fetched one request at a time with `--host-delay` ms between requests, `--concurrency` hosts in parallel. A failed URL is retried
 after 1, 7 and 30 days, then every 90 days.
 
+### USAJOBS (optional)
+
+US federal roles come from USAJOBS itself (`crawler/providers-usajobs.mjs`), a first-party source: the Search API of data.usajobs.gov
+returns every announcement of a query with its full text, so an employer entry is a query (`careers_url` of the form
+`https://data.usajobs.gov/api/Search?Organization=NN&DatePosted=60`, agency codes as a semicolon list, or a www.usajobs.gov search
+URL). The API needs a free key from https://developer.usajobs.gov: set `USAJOBS_KEY` and `USAJOBS_EMAIL` (the e-mail the key was
+issued to) in the environment; without them the board fails loudly instead of reporting no roles. The announcements are public data
+that may be redistributed; each role is attributed to USAJOBS (`meta.source`) and links to its announcement.
+
 ## Writing a profile
 
 A profile is a folder with a `profile.json` and a `companies.json` (the employers to poll). Start from `profiles/minimal`, which
