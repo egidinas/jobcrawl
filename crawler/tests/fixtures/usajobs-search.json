@@ -1,0 +1,400 @@
+{
+  "LanguageCode": "EN",
+  "SearchParameters": {},
+  "SearchResult": {
+    "SearchResultCount": 2,
+    "SearchResultCountAll": 10,
+    "SearchResultItems": [
+      {
+        "MatchedObjectId": "889289300",
+        "MatchedObjectDescriptor": {
+          "PositionID": "JSC-27-ES-13093442",
+          "PositionTitle": "Manager Orion Program",
+          "PositionURI": "https://www.usajobs.gov:443/job/889289300",
+          "ApplyURI": [
+            "https://www.usajobs.gov:443/job/889289300"
+          ],
+          "PositionLocationDisplay": "Multiple Locations",
+          "PositionLocation": [
+            {
+              "LocationName": "Kennedy Space Center, Florida",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Florida",
+              "CityName": "Kennedy Space Center, Florida",
+              "Longitude": -80.6836,
+              "Latitude": 28.516
+            },
+            {
+              "LocationName": "Houston, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "Houston, Texas",
+              "Longitude": -95.36978,
+              "Latitude": 29.76045
+            }
+          ],
+          "OrganizationName": "Lyndon B. Johnson Space Center",
+          "DepartmentName": "National Aeronautics and Space Administration",
+          "JobCategory": [
+            {
+              "Name": "General Engineering",
+              "Code": "0801"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "ES"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "As a basic requirement for entry into the Senior Executive Service (SES) under a career appointment, you must clearly articulate and describe within your 2-page resume that you possess the Executive Core Qualifications (ECQs) and Mandatory Technical Qualifications MTQ(s) related to this position. If your 2-page resume does not reflect demonstrated evidence of the ECQs and MTQ(s), you may be disqualified. Any additional pages over the 2-page limit will not be reviewed. Your resume should include evidence of progressively responsible supervisory, managerial, or professional experience which involved management of a program or organization of significant scope and complexity, normally obtained over several years by serving in positions at the GS-15 level or equivalent. If you are (1) currently serving under a career SES appointment, (2) eligible for reinstatement into the SES (this means you were previously employed as a Career SES employee and you successfully completed a one-year probationary period), OR (3) have successfully completed a SES Candidate Development Program (CDP) and certified by OPM, you do not need to address the ECQs in your resume. However, your resume must clearly state that you are a current career SES, eligible for SES reinstatement, or SES CDP certified and year of certification. Please DO NOT submit separate documents addressing the ECQs or MTQ(s). Only your 2-page resume will be accepted and considered. Any additional documents submitted will not be accepted. EXECUTIVE CORE QUALIFICATIONS (ECQs) For more information on the ECQs, please visit OPM's ECQ webpage. ECQ 1 - Commitment to the Rule of Law and the Principles of the American Founding: This core qualification requires a demonstrated knowledge of the American system of government, commitment to uphold the Constitution and the rule of law, and commitment to serve the American people. Competencies: Knowledge of the American System of Government, Commitment to the Rule of Law, and Civic-Mindedness ECQ 2 - Driving Efficiency: This core qualification involves the demonstrated ability to strategically and efficiently manage resources, budget effectively, cut wasteful spending, and pursue efficiency through process and technological upgrades. Competencies: Fiscal Responsibility, Managing Resources, Leveraging Technology ECQ 3 - Merit and Competence: This core qualification involves the demonstrated knowledge, ability and technical competence to effectively and reliably produce work that is of exceptional quality. Competencies: Technical Skill, Problem Solving, Agility and Resilience ECQ 4 - Leading People: This core qualification involves the demonstrated ability to lead and inspire a group toward meeting the organization's vision, mission, and goals, and to drive a high-performance, high-accountability culture. This includes, when necessary, the ability to lead people through change and to hold individuals accountable. Competencies: Accountability, Developing Others, Executive Judgment ECQ 5 - Achieving Results - This core qualification involves the demonstrated ability to achieve both individual and organizational results, and to align results to stated goals from superiors. Competencies: Operational Mindset, Innovation, Strategic Thinking MANDATORY TECHNICAL QUALIFICATION (MTQ): Your resume must include accomplishments that address the MTQ(s). MTQ: Demonstrated executive-level experience leading large, complex technical human spaceflight programs and organizations, including experience in strategic planning, budget and schedule management, risk management, systems integration, contractor oversight, and collaboration with senior stakeholders to achieve mission-critical objectives. Competencies: Program/Project Management, Systems Integration Engineering, Financial Management Your application package must be in your own words. Experience statements copied from a position description, vacancy announcement, or other reference material constitutes plagiarism and may result in disqualification and losing consideration for the job. Please visit and review NASA's guidance on the use of super intelligence (SI) or SI-assisted tools during the application process.",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "223380",
+              "MaximumRange": "228000",
+              "RateIntervalCode": "PA",
+              "Description": "Per Year"
+            }
+          ],
+          "PositionStartDate": "2026-10-19T12:56:14.5100",
+          "PositionEndDate": "2026-11-03T23:59:59.9970",
+          "PublicationStartDate": "2026-10-19T12:56:14.5100",
+          "ApplicationCloseDate": "2026-11-03T23:59:59.9970",
+          "PositionFormattedDescription": [
+            {
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Hit highlighting for keyword searches."
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "Serves as Manager of the Orion Program, responsible for managing all the elements of the Orion Program for the purpose of facilitating the development of a human capable vehicle to support the U.S.A. human exploration capability design framework beyond low Earth orbit reference missions. This position reports to the Artemis Program Manager and has critical interfaces with Agency and Center leadership.",
+              "WhoMayApply": {
+                "Name": "",
+                "Code": ""
+              },
+              "LowGrade": "00",
+              "HighGrade": "00",
+              "PromotionPotential": "None",
+              "OrganizationCodes": "NN/NN72",
+              "Relocation": "True",
+              "HiringPath": [
+                "ses",
+                "public"
+              ],
+              "HiringPathDisplay": [
+                "Senior executives",
+                "Open to the public"
+              ],
+              "MCOTags": [],
+              "TotalOpenings": "1",
+              "AgencyMarketingStatement": "Our workforce is united by a shared purpose. Join our team of engineers, scientists, program managers, and more who share a passion for exploration and a drive for excellence.",
+              "TravelCode": "5",
+              "ApplyOnlineUrl": "https://apply.usastaffing.gov/Application/Apply",
+              "DetailStatusUrl": "https://apply.usastaffing.gov/Application/ApplicationStatus",
+              "MajorDuties": [
+                "The Manager Orion Program: Provides program management and control; program integration and risk management; effective cost control; and requirements and configuration development and control. It is also responsible for execution of the Orion Program's budget, schedule, and technical management. Establishes and implements Orion policy, directs and controls schedules, plans, and execution of the Orion Program design, development, test, production, and operations. Provides the Program management function for Orion prime contractors and Agency Partners. Manages integration across spacecraft subsystems and engineering cross-cutting functions and supports the up and out systems integration efforts of the Human Spaceflight Mission Directorate (HSMD). Oversees development and implementation of sustaining engineering processes, ensuring critical skill retention and management and operation of the real-time engineering support to the on-orbit vehicle. Manages design and development of required ground operations, flight operations, and ground operations procedures, processes, and facilities in support of vehicle developmental and operational testing. Ensures flight/ground safety while meeting system performance requirements and achieving mission objectives. Implements designs for the Orion spacecraft and ground systems to achieve efficient and effective operations. Oversees associated mission operations and launch and entry suit requirements. Implements systems and tools required for program control including resource and contract management, cost and risk assessment, schedule oversight and management, configuration management, and program documentation. Represents the Orion Program to external entities related to Orion development and acquisition and coordinates requirements with senior NASA officials, other Government agencies, and the private and international sectors. Facilitates a positive working relationship between NASA field centers and Program contractors to ensure that timely decisions are made and communicated across all functional disciplines. This close teaming approach requires positive and extensive NASA/contractor interaction throughout the Program and at all levels."
+              ],
+              "Education": "This position has a positive education requirement. To be eligible, you must clearly state in your resume the following: degree, major and/or minor, and college/university. A college or university degree generally must be from an accredited (or pre-accredited) college or university recognized by the U.S. Department of Education. For a list of schools which meet these criteria, please refer to Department of Education Accreditation page. A bachelor's degree from an accredited college or university with major study in engineering, physical science, mathematics, life sciences, computer science, or other field of science is required An official transcript will be required if you are selected. SPECIAL INSTRUCTIONS FOR FOREIGN EDUCATION: If you are using education completed in foreign colleges or universities to meet the qualification requirements, you must show that the education credentials have been evaluated by a private organization that specializes in interpretation of foreign education programs. These education credentials must be deemed equivalent to that gained in an accredited U.S. education program; or full credit has been given for the courses at a U.S. accredited college or university. For further information, click here.",
+              "Requirements": "",
+              "Evaluations": "All qualifications requirements must be met by the closing date of the announcement. We will review your resume to ensure you meet the qualification requirements. If you meet the basic qualification requirements, your application will be referred to and evaluated by an executive panel. Highly Qualified applicants may undergo one or more interviews and/or be asked to provide a list of references or additional documents to confirm eligibility. Upon selection, if the selectee does not have Qualifications Review Board (QRB) certification by the Office of Personnel Management (OPM), he/she must undergo an ECQ based structured interview with OPM before being appointed to this position.",
+              "HowToApply": "To apply for this position, you must complete the online application and submit the documentation specified in the Required Documents section and submitted by 11:59 PM (ET) on the closing date of the announcement to receive consideration. To begin, click Apply to access the online application. You will need to be logged into your USAJOBS account to apply. If you do not have a USAJOBS account, you will need to create one before beginning the application. Follow the prompts to select your resume to be included with your application package. Your uploaded resume may take several hours to clear the virus scan process. After acknowledging you have reviewed your application package, complete the \"Include Personal Information\" section as you deem appropriate and click to continue with the application process. You will be taken to the online application which you must complete in order to apply for the position. Complete the online application, verify the required documentation is included with your application package, and submit the application. It is applicant's responsibility to verify that information entered and uploaded, (i.e., resume) is complete, accurate, and submitted by the closing date. Human Resources will not modify or change any part of your application. To verify the status of your application, log into your USAJOBS account, all of your applications will appear on the Welcome screen. The Application Status will appear along with the date your application was last updated. For information on what each Application Status means, visit:https://help.usajobs.gov/how-to/application/status. Faxed, emailed, and/or mailed application materials will not be accepted for this announcement. NASA provides reasonable accommodations to applicants with disabilities. If you are an applicant with a disability and need a reasonable accommodation for any part of the application and hiring process, please notify the agency contact center listed on the job vacancy announcement. The decision on granting reasonable accommodations will be on a case-by-case basis.",
+              "WhatToExpectNext": "Once your online application is submitted you will receive a confirmation notification email. Your application will be evaluated by the Human Resources Office to determine your eligibility for the position. After the evaluation is complete, you will receive another notification regarding the status of your application. If you have questions, please feel free to contact NASA Executive Staffing at Agency-Executive-Staffing@mail.nasa.gov.",
+              "RequiredDocuments": "A complete application includes items described below. Please note that if you do not provide all required information, as specified in this announcement, you may be removed from consideration for this position (or may not receive the special consideration for which you may be eligible). Human Resources will not modify or change any part of your application. RESUME: All applicants are required to submit a two (2) page resume showing all relevant experience. Applicants seeking initial career appointment to the SES must include evidence of the ECQs and MTQ(s) within their resume. Please see this guidance: What to include in your resume. Note: if any of the following types of information are included on your resume, you may be disqualified: Classified or government sensitive information. Social Security Number (SSN) Photos of yourself Personal information, such as age, gender, religious affiliation, etc. Encrypted and digitally signed documents. If your resume contains any of the above information, you must redact that information prior to the submission of your application. VACANCY QUESTION/ASSESSMENT QUESTIONNAIRE RESPONSES: Responses are automatically submitted through USAJOBS when you apply to this vacancy. You may be asked to provide additional documentation to support your eligibility and the information provided in your application package. For example, we may request academic transcripts, SF-50s, SES Candidate Development Program certificate, etc. Therefore, we encourage you to have these documents prepared and ready when requested by the agency. If you fail to provide the required documents within the stated time period, we may withdraw a job offer and/or remove you from further consideration.",
+              "Benefits": "",
+              "BenefitsUrl": "https://www.nasa.gov/careers/life-at-nasa/#Benefits",
+              "BenefitsDisplayDefaultText": true,
+              "OtherInformation": "Veterans' preference is not applicable to the SES.",
+              "KeyRequirements": [],
+              "WithinArea": "False",
+              "CommuteDistance": "0",
+              "ServiceType": "03",
+              "AnnouncementClosingType": "01",
+              "AgencyContactEmail": "Agency-Executive-Staffing@mail.nasa.gov",
+              "SecurityClearance": "Sensitive Compartmented Information",
+              "DrugTestRequired": "True",
+              "PositionSensitivitiy": "Special-Sensitive (SS)/High Risk",
+              "AdjudicationType": [
+                "National security"
+              ],
+              "TeleworkEligible": true,
+              "RemoteIndicator": false,
+              "FinancialDisclosure": true,
+              "BargainingUnitStatus": false
+            },
+            "IsRadialSearch": false
+          },
+          "AnnouncementClosingType": "01"
+        },
+        "RelevanceRank": 0
+      },
+      {
+        "MatchedObjectId": "889810000",
+        "MatchedObjectDescriptor": {
+          "PositionID": "LaRC-27-SL-13091370",
+          "PositionTitle": "Technical Fellow Cryogenics",
+          "PositionURI": "https://www.usajobs.gov:443/job/889810000",
+          "ApplyURI": [
+            "https://www.usajobs.gov:443/job/889810000"
+          ],
+          "PositionLocationDisplay": "NASA - United States Locations",
+          "PositionLocation": [
+            {
+              "LocationName": "Sandusky County, Ohio",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Ohio",
+              "CityName": "Sandusky County, Ohio",
+              "Longitude": -83.14397,
+              "Latitude": 41.35735
+            },
+            {
+              "LocationName": "Hampton, Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Virginia",
+              "CityName": "Hampton, Virginia",
+              "Longitude": -76.34512,
+              "Latitude": 37.027794
+            },
+            {
+              "LocationName": "Wallops Island, Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Virginia",
+              "CityName": "Wallops Island, Virginia",
+              "Longitude": -75.47912,
+              "Latitude": 37.844044
+            },
+            {
+              "LocationName": "Fairmont, West Virginia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "West Virginia",
+              "CityName": "Fairmont, West Virginia",
+              "Longitude": -80.147156,
+              "Latitude": 39.48161
+            },
+            {
+              "LocationName": "Huntsville, Alabama",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Alabama",
+              "CityName": "Huntsville, Alabama",
+              "Longitude": -86.585,
+              "Latitude": 34.7291
+            },
+            {
+              "LocationName": "Edwards AFB, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "Edwards AFB, California",
+              "Longitude": -117.8332,
+              "Latitude": 34.8898
+            },
+            {
+              "LocationName": "Moffett Field, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "Moffett Field, California",
+              "Longitude": -122.048,
+              "Latitude": 37.415
+            },
+            {
+              "LocationName": "Pasadena, California",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "California",
+              "CityName": "Pasadena, California",
+              "Longitude": -118.144264,
+              "Latitude": 34.147236
+            },
+            {
+              "LocationName": "Washington, District of Columbia",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "District of Columbia",
+              "CityName": "Washington, District of Columbia",
+              "Longitude": -77.032,
+              "Latitude": 38.8904
+            },
+            {
+              "LocationName": "Kennedy Space Center, Florida",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Florida",
+              "CityName": "Kennedy Space Center, Florida",
+              "Longitude": -80.6836,
+              "Latitude": 28.516
+            },
+            {
+              "LocationName": "New Orleans, Louisiana",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Louisiana",
+              "CityName": "New Orleans, Louisiana",
+              "Longitude": -90.07771,
+              "Latitude": 29.95369
+            },
+            {
+              "LocationName": "Greenbelt, Maryland",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Maryland",
+              "CityName": "Greenbelt, Maryland",
+              "Longitude": -76.8789,
+              "Latitude": 39.000263
+            },
+            {
+              "LocationName": "Stennis Space Center, Mississippi",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Mississippi",
+              "CityName": "Stennis Space Center, Mississippi",
+              "Longitude": -89.624176,
+              "Latitude": 30.380325
+            },
+            {
+              "LocationName": "Las Cruces, New Mexico",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "New Mexico",
+              "CityName": "Las Cruces, New Mexico",
+              "Longitude": -106.77773,
+              "Latitude": 32.30673
+            },
+            {
+              "LocationName": "New York, New York",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "New York",
+              "CityName": "New York, New York",
+              "Longitude": -74.0071,
+              "Latitude": 40.7146
+            },
+            {
+              "LocationName": "Cleveland, Ohio",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Ohio",
+              "CityName": "Cleveland, Ohio",
+              "Longitude": -81.690575,
+              "Latitude": 41.504494
+            },
+            {
+              "LocationName": "Houston, Texas",
+              "CountryCode": "United States",
+              "CountrySubDivisionCode": "Texas",
+              "CityName": "Houston, Texas",
+              "Longitude": -95.36978,
+              "Latitude": 29.76045
+            }
+          ],
+          "OrganizationName": "Langley Research Center",
+          "DepartmentName": "National Aeronautics and Space Administration",
+          "JobCategory": [
+            {
+              "Name": "General Engineering",
+              "Code": "0801"
+            }
+          ],
+          "JobGrade": [
+            {
+              "Code": "SL"
+            }
+          ],
+          "PositionSchedule": [
+            {
+              "Name": "",
+              "Code": "1"
+            }
+          ],
+          "PositionOfferingType": [
+            {
+              "Name": "",
+              "Code": "15317"
+            }
+          ],
+          "QualificationSummary": "SPECIALIZED EXPERIENCE: Candidates must be a recognized subject matter expert with at least 1 year of directly related experience equivalent to the GS-15 level in leading independent technical reviews and serving as an authoritative expert in Cryogenics for high-risk aerospace systems. Must have experience developing, evaluating, and applying advanced cryogenic engineering methods including cryogen production, storage, cryocoolers, fluid behavior in microgravity, and cryogenic hardware and process analysis to strengthen mission performance and reduce risk. Must also demonstrate national leadership through collaboration and technical knowledge sharing across NASA centers, industry, academia, and national laboratories. Your application package must be in your own words. Experience statements copied from a position description, vacancy announcement, or other reference material constitutes plagiarism and may result in disqualification and losing consideration for the job. Please visit and review NASA's guidance on the use of super intelligence (SI) or SI-assisted tools during the application process. To meet the minimum qualification requirements for this position, your resume must also address both Senior Level (SL) Evaluation Criteria listed below. Failure to address these criteria will result in your application being rated ineligible. SL EVALUATION CRITERIA: 1. Technical Competence and Leadership Led technical/discipline teams to advance or enable state-of-the-art solutions in science, engineering, or mission enabling functions. Developed or implemented innovative methodologies or technologies to solve complex scientific, engineering or mission enabling problems. Led or supported collaborative partnerships with industry, academic, or government organizations to advance scientific, engineering, or mission enabling technical capabilities at national or international levels. 2. Professional Contributions and Influence Leveraged expertise and integration skills to resolve technical/discipline challenges for complex systems. Demonstrated impact in technical discipline to solve issues or improve operational effectiveness. Chaired or presented at professional conference sessions or technical forums to share expertise and influence field development. Developed or mentored students or professional practitioners in scientific, engineering or mission enabling communities. Shared technical knowledge or innovations that were adopted by outside organizations with documented results. Please refer to the \"How you will be evaluated\" section for a list of competencies that you will be evaluated on.",
+          "PositionRemuneration": [
+            {
+              "MinimumRange": "151661",
+              "MaximumRange": "217332",
+              "RateIntervalCode": "PA",
+              "Description": "Per Year"
+            }
+          ],
+          "PositionStartDate": "2026-10-23T00:00:00.0000",
+          "PositionEndDate": "2026-11-06T23:59:59.9970",
+          "PublicationStartDate": "2026-10-23T00:00:00.0000",
+          "ApplicationCloseDate": "2026-11-06T23:59:59.9970",
+          "PositionFormattedDescription": [
+            {
+              "Label": "Dynamic Teaser",
+              "LabelDescription": "Hit highlighting for keyword searches."
+            }
+          ],
+          "UserArea": {
+            "Details": {
+              "JobSummary": "The NASA Technical Fellows Program recognizes Agency-wide technical excellence and leadership, with Fellows serving within the NASA Engineering and Safety Center (NESC); advising the Office of the Chief Engineer, NASA programs and Mission Directorates. Also serves as a voting member on the NESC Review Board. Fellows perform value-added testing, analysis, and assessments of NASA's high-risk projects to ensure safety and mission success.",
+              "WhoMayApply": {
+                "Name": "",
+                "Code": ""
+              },
+              "LowGrade": "00",
+              "HighGrade": "00",
+              "PromotionPotential": "None",
+              "OrganizationCodes": "NN/NN23",
+              "Relocation": "False",
+              "HiringPath": [
+                "fed-internal-search"
+              ],
+              "HiringPathDisplay": [
+                "Internal to an agency"
+              ],
+              "MCOTags": [],
+              "TotalOpenings": "1",
+              "AgencyMarketingStatement": "Our workforce is united by a shared purpose. Join our team of engineers, scientists, program managers, and more who share a passion for exploration and a drive for excellence.",
+              "TravelCode": "1",
+              "ApplyOnlineUrl": "https://apply.usastaffing.gov/Application/Apply",
+              "DetailStatusUrl": "https://apply.usastaffing.gov/Application/ApplicationStatus",
+              "MajorDuties": [
+                "The Technical Fellow Cryogenics: Serves as the Agency's authoritative technical resource in Cryogenics, applying advanced engineering theory and operational expertise, frequently leading teams and providing the technical foundation for evaluating and reducing mission risk. Provides Agency-wide technical leadership and collaboration in Cryogenics, leading independent assessments and partnering with recognized researchers and engineers across NASA centers, academia, national laboratories, industry, and the Department of Defense to conduct and sponsor work that informs Cryogenics mission risk. Communicates and fosters Cryogenics knowledge, publishing engineering findings through NASA channels, journals, seminars, NESC Academy courses, or domestic/international universities; serve as an invited presenter at conferences and promote participation in engineering academies. Provides senior technical leadership for independent technical reviews, serving as the national/international expert in Cryogenics. Establishes, leads, and stewards a Technical Discipline Team (TDT) of the Agency's foremost Cryogenics experts, and augmenting by external specialists-to support independent assessments and ensure discipline stewardship across NASA. Provides expert leadership and technical direction in the development, operation, and analysis of Cryogenic systems, including cryogen properties, production, storage, and their application to propulsion, life support, electrical power, and other flight systems. Oversees Cryogenic hardware and processes-such as cryocoolers, cryogenic fluid fittings, cryogenic testing, chemical analysis, and zero gravity cryogenic fluid behavior-and regularly leads teams, supplying the theoretical foundation needed to execute complex cryogenic tasks. Leads Agency-wide Cryogenic discipline stewardship activities, including technical workshops, knowledge-sharing forums, identification and cataloging of critical skills and facilities, assessment of emerging technical challenges, and periodic reporting of discipline health, capability, and risk to Agency leadership."
+              ],
+              "Education": "This position has a positive education requirement. To be eligible, you must clearly state in your resume the following: degree, major and/or minor, and college/university. A college or university degree generally must be from an accredited (or pre-accredited) college or university recognized by the U.S. Department of Education. For a list of schools which meet these criteria, please refer to Department of Education Accreditation page. An official transcript will be required if you are selected. A bachelor's degree from an accredited college or university with major study in engineering, physical science, mathematics, life sciences, computer science, or other field of science. SPECIAL INSTRUCTIONS FOR FOREIGN EDUCATION: If you are using education completed in foreign colleges or universities to meet the qualification requirements, you must show that the education credentials have been evaluated by a private organization that specializes in interpretation of foreign education programs. These education credentials must be deemed equivalent to that gained in an accredited U.S. education program; or full credit has been given for the courses at a U.S. accredited college or university. For further information, click here.",
+              "Requirements": "",
+              "Evaluations": "All qualifications requirements must be met by the closing date of the announcement. Applicants that meet minimum eligibility requirements outlined in the Qualifications and Education (if applicable) sections of the vacancy announcement will be referred to an executive panel for further evaluation. The panel reviews and evaluates the candidate's resume against each SL criterion. Candidates may receive an interview for further evaluation and/or be asked to provide a list of references. The panel will make a recommendation to the appropriate approving authority. These competencies will be assessed using technical assessments. They may also be evaluated during a structured interview: Cryogenics Engineering Technical Management Technical Work and Team Management Leadership Oral Communication Technical Competence Creativity and Innovation Developing Others Partnering Problem Solving Teamwork",
+              "HowToApply": "To apply for this position, you must complete the online application and submit the documentation specified in the Required Documents section and submitted by 11:59 PM (ET) on the closing date of the announcement to receive consideration. To begin, click Apply to access the online application. You will need to be logged into your USAJOBS account to apply. If you do not have a USAJOBS account, you will need to create one before beginning the application. Follow the prompts to select your resume to be included with your application package. Your uploaded resume may take several hours to clear the virus scan process. After acknowledging you have reviewed your application package, complete the \"Include Personal Information\" section as you deem appropriate and click to continue with the application process. You will be taken to the online application which you must complete in order to apply for the position. Complete the online application, verify the required documentation is included with your application package, and submit the application. It is applicant's responsibility to verify that information entered and uploaded, (i.e., resume) is complete, accurate, and submitted by the closing date. Human Resources will not modify or change any part of your application. To verify the status of your application, log into your USAJOBS account, all of your applications will appear on the Welcome screen. The Application Status will appear along with the date your application was last updated. For information on what each Application Status means, visit:https://help.usajobs.gov/how-to/application/status. Faxed, emailed, and/or mailed application materials will not be accepted for this announcement. NASA provides reasonable accommodations to applicants with disabilities. If you are an applicant with a disability and need a reasonable accommodation for any part of the application and hiring process, please notify the agency contact center listed on the job vacancy announcement. The decision on granting reasonable accommodations will be on a case-by-case basis.",
+              "WhatToExpectNext": "Once your online application is submitted you will receive a confirmation notification email. Your application will be evaluated by the Human Resources Office to determine your eligibility for the position. After the evaluation is complete, you will receive another notification regarding the status of your application. If you have questions, please feel free to contact NASA Executive Staffing at Agency-Executive-Staffing@mail.nasa.gov.",
+              "RequiredDocuments": "You must provide a complete application package. If you do not provide all required information, you will not be considered for this position. Only provide the following: RESUME: All applicants are required to submit a resume limited to two (2) pages (recommend PDF file) showing all relevant experience (start/end dates stated in month/year, description of duties), applicable education at a minimum, and your contact information. Your 2-page resume should also address the SL Evaluation Criteria. For current or previous Federal employees, it should also include the Pay Plan, Series and Grade for each work experience entry.Please see this guidance: What to include in your resume. Note: if any of the following types of information are included on your resume, you may be disqualified: Classified or government sensitive information. Social Security Number (SSN) Photos of yourself Personal information, such as age, gender, religious affiliation, etc. Encrypted and digitally signed documents. If your resume contains any of the above information, you must redact that information prior to the submission of your application. VACANCY QUESTION/ASSESSMENT QUESTIONNAIRE RESPONSES: Responses are automatically submitted through USAJOBS when you apply to this vacancy.You may be asked to provide additional documentation to support your eligibility and the information provided in your application package. For example, we may request transcripts, SF-50s, etc. Therefore, we encourage you to have these documents prepared and ready when requested. If you fail to provide the required documents within the stated time period, we may withdraw a job offer and/or remove you from further consideration.",
+              "Benefits": "",
+              "BenefitsUrl": "https://www.nasa.gov/careers/life-at-nasa/#Benefits",
+              "BenefitsDisplayDefaultText": true,
+              "OtherInformation": "NASA may discuss and consider candidate duty station location after selection, which means that the duties can be performed at any NASA location. The selected candidate will need to relocate and report to an on-site NASA location or duty station, which may be different from where he/she currently resides.",
+              "KeyRequirements": [],
+              "WithinArea": "False",
+              "CommuteDistance": "0",
+              "ServiceType": "01",
+              "AnnouncementClosingType": "01",
+              "AgencyContactEmail": "Agency-Executive-Staffing@mail.nasa.gov",
+              "SecurityClearance": "Secret",
+              "DrugTestRequired": "True",
+              "PositionSensitivitiy": "Noncritical-Sensitive (NCS)/Moderate Risk",
+              "AdjudicationType": [
+                "National security"
+              ],
+              "TeleworkEligible": false,
+              "RemoteIndicator": false,
+              "FinancialDisclosure": true,
+              "BargainingUnitStatus": false
+            },
+            "IsRadialSearch": false
+          },
+          "AnnouncementClosingType": "01"
+        },
+        "RelevanceRank": 0
+      }
+    ],
+    "UserArea": {
+      "NumberOfPages": "4",
+      "IsRadialSearch": false
+    }
+  }
+}
