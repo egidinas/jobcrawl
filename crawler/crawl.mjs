@@ -17,6 +17,7 @@ import { setUserAgent } from './useragent.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
+import { setEuresRateFile } from './providers-eures.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -61,6 +62,8 @@ const CATALOGUE = PROFILE.catalogueFile;   // optional (profile key crawl.catalo
 const PROB_FILE_NAME = 'probation-state.json';
 const OUT_DIR = resolveDataDir(opt('data'), PROFILE);
 setCacheDir(OUT_DIR);
+// EURES: one request start per gap across this crawl and any other process on the same data dir (eures-employer-detail.mjs)
+setEuresRateFile(pathResolve(OUT_DIR, 'eures-rate.json'));
 // every feed response byte for byte under JOBCRAWL_RAW_DIR (rawcapture.mjs), before the first request
 const RAW_ON = !flag('jd-cleanup-only') && installRawCapture();
 if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`);

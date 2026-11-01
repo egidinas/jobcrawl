@@ -173,6 +173,23 @@ phone, address, any other field as `key: value`; the entry's shape is undocument
 `employmentPeriod`, the employer's web site and NACE class, and the locations as `<postal code> <city>, <Country> (<NUTS>)`. The raw
 capture stores the detail JSON byte for byte. When the call fails the job's own description comes back alone, nothing is logged.
 
+## Employer NACE sweep (`crawler/eures-employer-detail.mjs`)
+
+The search response leaves `employer.sectorCodes` empty (0 of ~64k vacancies in the raw store, 2026-11-01); only the detail document
+carries the employer's NACE Rev. 2 class and `organisationSizeCode`. The sweep reads the search responses of the raw store, picks one
+vacancy per employer (normalised name + web site host; 13,070 employers on 2026-11-01), fetches its detail document through the
+provider (`euresDetail`, the shared limiter, the raw capture) and writes `<data>/eures-employer-nace.tsv` (employer, website,
+vacancy_id, sector_codes, organisation_size_code, fetched_at; no contact data). State `<data>/eures-employer-detail.json`, lock
+`<data>/eures-employer-detail.lock`, log `H:\AtlasLogs\eures-employer-detail.log`; `--budget N`, `--gap ms`, `--dry-run`.
+
+Cross-process pacing: `setEuresRateFile(<data>/eures-rate.json)` (crawl.mjs and the sweep) makes every request start claim a slot in
+that file, one gap after the previous claim of any process (`claimSharedSlot`, a millisecond mutex `<file>.lock` created exclusively,
+stale after 10 s), so the crawl and the sweep together stay at one request per second.
+
+Canary (20 requests, 2026-11-01): 14 of 20 had a NACE code (`o78.2.0` temporary-work agencies, `c28.1.1`, `f41.0.0`, `r86.1.0`,
+`s92.0.0`, ...); codes are `<section letter><division>.<group>.<class>`, some feeds give the division only (`g46` from the Czech feed).
+The Polish feed (connection point 12) gave a size code but no NACE.
+
 ## Limits and behaviour observed (2026-11-01)
 
 * Page size at most 50; 100 is refused with HTTP 400 (message above). 50 vacancies are 290–340 KB of JSON and took 0.9–1.9 s;

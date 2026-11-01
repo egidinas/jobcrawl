@@ -12,6 +12,9 @@
 // board is not enough. Every request this module makes (search pages, the detail call, the ESCO label call) passes through one
 // host-wide limiter (euresLimiter): at most one request starts per EURES_MIN_GAP_MS (default 1000 ms) in the whole process, however
 // many boards call at once. A 429 is retried once after its Retry-After (else 10 s, capped at 60 s) and doubles the gap for 60 s.
+// Across processes (the crawl and crawler/eures-employer-detail.mjs may call EURES at the same time): when a rate file is set
+// (setEuresRateFile(<data>/eures-rate.json), crawl.mjs and the sweep set it in the same data directory), every slot is also claimed
+// in that file, so the gap holds for all processes together (claimSharedSlot).
 // Employer mode (slug 'employer:<name>|<codes>', one board per tracked EEA employer, eures-employer-boards.mjs writes them) collects
 // the EURES copies of an employer's own postings for the cross-listing and their richer metadata: the name goes to the backend as
 // specificSearchCode EMPLOYER, which is a FUZZY full-text match ("OHB" also finds every "oHG"; probe 2026-11-01 in eures-api.md), so
@@ -24,6 +27,7 @@
 // This module is imported by providers.mjs, so it must not import helpers back from there (an ESM cycle); it has its own
 // text and meta helpers with the same rules as providers.mjs's plain() and metaOf().
 
+import { openSync, closeSync, writeSync, readFileSync, writeFileSync, renameSync, unlinkSync, statSync } from 'node:fs';
 import { UA } from './useragent.mjs';
 
 export const EURES_API = 'https://europa.eu/eures/api';
@@ -71,6 +75,10 @@ export const euresLimiter = {
   acquire() {
     const turn = this.chain.then(async () => {
       for (let wait = this.nextAt - Date.now(); wait > 0; wait = this.nextAt - Date.now()) await sleep(wait);   // the loop covers an early timer
+      if (rateFile) {
+        const at = await claimSharedSlot(rateFile, this.gap());
+        for (let wait = at - Date.now(); wait > 0; wait = at - Date.now()) await sleep(wait);
+      }
       this.nextAt = Date.now() + this.gap();
     });
     this.chain = turn.catch(() => {});
@@ -79,6 +87,45 @@ export const euresLimiter = {
   backOff() { this.backoffUntil = Date.now() + tuning.backoffWindowMs; },
   reset() { this.nextAt = 0; this.backoffUntil = 0; },
 };
+
+let rateFile = null;
+/** Share the host-wide gap with other processes through this file (null: this process only). The file's directory must exist. */
+export function setEuresRateFile(file) { rateFile = file || null; }
+const MUTEX_STALE_MS = 10000;
+
+/**
+ * Claims the next free request slot in a rate file shared by several processes, gap ms after the previous claim of any of them, and
+ * returns its start time (epoch ms; the caller sleeps until then). The file holds {nextAt, pid}: the earliest start the next claimer
+ * may take. It is read and rewritten under a mutex, <file>.lock, created with the exclusive flag (atomic on Windows and POSIX) and
+ * removed straight after, so it is held for a millisecond, never while waiting for the slot. A mutex older than 10 s belongs to a
+ * crashed process and is removed. Slots are reserved ahead: two processes asking at once get slots one gap apart, not the same one.
+ * On an unreadable file the claim counts from now. Errors other than a held mutex (a missing directory, a full disk) fall back to
+ * now: the in-process limiter still holds.
+ */
+export async function claimSharedSlot(file, gap, now = () => Date.now()) {
+  const mutex = `${file}.lock`;
+  for (let spins = 0; ; spins++) {
+    let fd;
+    try { fd = openSync(mutex, 'wx'); } catch (e) {
+      if (e.code !== 'EEXIST') return now();
+      try { if (now() - statSync(mutex).mtimeMs > MUTEX_STALE_MS) unlinkSync(mutex); } catch { /* gone meanwhile */ }
+      await sleep(5 + (spins % 10));
+      continue;
+    }
+    try {
+      writeSync(fd, String(process.pid));
+      let nextAt = 0;
+      try { nextAt = Number(JSON.parse(readFileSync(file, 'utf8')).nextAt) || 0; } catch { /* first claim or unreadable */ }
+      const at = Math.max(now(), nextAt);
+      writeFileSync(`${file}.${process.pid}.tmp`, JSON.stringify({ nextAt: at + gap, pid: process.pid }));
+      renameSync(`${file}.${process.pid}.tmp`, file);
+      return at;
+    } catch { return now(); } finally {
+      try { closeSync(fd); } catch { /* closed */ }
+      try { unlinkSync(mutex); } catch { /* removed as stale by another process */ }
+    }
+  }
+}
 
 /**
  * How long a 429 asks us to wait, in ms: its Retry-After as delay-seconds or an HTTP date (RFC 9110), capped at tuning.retryAfterCapMs;
@@ -205,7 +252,8 @@ export function euresEmployerMatches(searched, actual) {
 }
 const CONNECTORS = new Set(['and', 'und', 'et', 'en']);
 const UMLAUTS = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' };
-function nameTokens(s) {
+/** The words of an employer name as euresEmployerMatches compares them (lowercase, umlauts spelled out, diacritics and connectors dropped). */
+export function nameTokens(s) {
   return String(s ?? '').toLowerCase().replace(/[äöüß]/g, (c) => UMLAUTS[c]).normalize('NFKD').replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w && !CONNECTORS.has(w));
 }
@@ -256,6 +304,14 @@ async function api(path, body) {
     try { detail = JSON.parse(await res.text()).errorMessage ?? ''; } catch { /* no JSON error body */ }
     throw new Error(`HTTP ${res.status} eures ${path}${detail ? `: ${detail}` : ''}`);
   }
+}
+
+/**
+ * The detail document of one vacancy (GET /jv-searchengine/public/jv/id/<id>?requestLang=en), parsed, through the host-wide limiter with
+ * its retries; throws "HTTP <status> eures ..." on failure (a vacancy no longer published answers 404). The raw capture stores the body.
+ */
+export function euresDetail(id) {
+  return api(`/jv-searchengine/public/jv/id/${encodeURIComponent(id)}?requestLang=en`);
 }
 
 /** ESCO occupation URIs to English labels (POST /shared-data-rest-api/public/esco/label/en). Best effort: {} when the call fails. */
@@ -389,7 +445,7 @@ export const eures = {
     const id = euresIdOf(job);
     if (!id) return own;
     let d;
-    try { d = await api(`/jv-searchengine/public/jv/id/${encodeURIComponent(id)}?requestLang=en`); } catch { return own; }
+    try { d = await euresDetail(id); } catch { return own; }
     const text = euresText(euresProfile(d)?.description ?? '') || own;
     return [text, euresDetailSection(d)].filter(Boolean).join('\n\n');
   },
