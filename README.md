@@ -127,7 +127,10 @@ can change or close without notice; what was observed is written down in [docs/s
 The vacancies are copyright ELA, re-use authorised with ELA acknowledged as the source (https://eures.europa.eu/legal-notice_en):
 every EURES role carries `meta.source = "EURES (ELA)"` and the company suffix `(via EURES)`, so the cross-listing rules treat it
 as a copy of the employer's own posting. A tracked EURES board is a portal search (`provider: "eures"`, `slug:
-"<keyword>|<country codes>"`), read 50 vacancies per page, one page per second, newest first, at most 2,000 per crawl.
+"<keyword>|<country codes>"`), read 50 vacancies per page, one page per second, newest first, at most 2,000 per crawl. In employer mode
+(`slug: "employer:<name>|<codes>"`; `crawler/eures-employer-boards.mjs` writes one such weekly board per directly tracked employer in a
+country the portal covers) a board collects the EURES copies of that employer's own postings for their richer metadata, keeping only the
+vacancies whose employer name matches, because the backend's employer search is fuzzy.
 
 ## Reference implementations
 

@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { providers, resolve } from '../providers.mjs';
 import { AGGREGATOR_PROVIDERS, isAggregatorRow } from '../crosslist.mjs';
 import { eures, euresJob, euresText, euresPlace, detectEures, parseSlug, euresBoardUrl, searchBody, tuning, EURES_PAGE_SIZE, EURES_COUNTRIES,
-  euresIdOf, euresProfile, euresContactLine, euresDetailSection } from '../providers-eures.mjs';
+  euresIdOf, euresProfile, euresContactLine, euresDetailSection, euresEmployerMatches, SLUG_PREFIX } from '../providers-eures.mjs';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
 const SEARCH = 'https://europa.eu/eures/api/jv-searchengine/public/jv-search/search';
@@ -56,10 +56,10 @@ test('eures: detect reads the portal search URL (its own parameters and the shor
 });
 
 test('eures: slug <-> URL round trip and parseSlug', () => {
-  assert.deepEqual(parseSlug('satellite|de,fr'), { keyword: 'satellite', codes: ['de', 'fr'] });
-  assert.deepEqual(parseSlug('satellite|'), { keyword: 'satellite', codes: [] });
-  assert.deepEqual(parseSlug('satellite'), { keyword: 'satellite', codes: [] });
-  assert.deepEqual(parseSlug('|lu, DE1 ,lu,xx-ns,germany,1de'), { keyword: '', codes: ['lu', 'de1', 'xx-NS'] }, 'names and malformed codes dropped');
+  assert.deepEqual(parseSlug('satellite|de,fr'), { keyword: 'satellite', codes: ['de', 'fr'], mode: 'EVERYWHERE' });
+  assert.deepEqual(parseSlug('satellite|'), { keyword: 'satellite', codes: [], mode: 'EVERYWHERE' });
+  assert.deepEqual(parseSlug('satellite'), { keyword: 'satellite', codes: [], mode: 'EVERYWHERE' });
+  assert.deepEqual(parseSlug('|lu, DE1 ,lu,xx-ns,germany,1de'), { keyword: '', codes: ['lu', 'de1', 'xx-NS'], mode: 'EVERYWHERE' }, 'names and malformed codes dropped');
   for (const slug of ['satellite|de,fr', 'optical engineer|', '|lu', 'laser & optics|de,at-NS']) {
     const url = euresBoardUrl(slug);
     assert.ok(url.startsWith('https://europa.eu/eures/portal/jv-se/search?'), url);
@@ -367,6 +367,144 @@ test('eures: fetch stops at the cap, at a page the backend repeats, and refuses 
 
   await assert.rejects(eures.fetch('|'), /refusing an unfiltered search/);
   await assert.rejects(eures.fetch(''), /refusing an unfiltered search/);
+});
+
+test('eures: employer and legal-id modes: slug <-> URL both ways, the search body, the employer-name match', () => {
+  assert.deepEqual(parseSlug('employer:OHB System|de'), { keyword: 'OHB System', codes: ['de'], mode: 'EMPLOYER' });
+  assert.deepEqual(parseSlug('Employer: OHB |de,at'), { keyword: 'OHB', codes: ['de', 'at'], mode: 'EMPLOYER' }, 'prefix case and spaces do not matter');
+  assert.deepEqual(parseSlug('legalid:HRB 12345|'), { keyword: 'HRB 12345', codes: [], mode: 'LEGAL_ID' });
+  assert.deepEqual(parseSlug('legal_id:X|de'), { keyword: 'X', codes: ['de'], mode: 'LEGAL_ID' });
+  assert.deepEqual(parseSlug('employer:|de'), { keyword: '', codes: ['de'], mode: 'EMPLOYER' });
+  assert.deepEqual(SLUG_PREFIX, { EVERYWHERE: '', EMPLOYER: 'employer:', LEGAL_ID: 'legalid:' });
+
+  const d = detectEures;
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?page=1&resultsPerPage=10&orderBy=BEST_MATCH&keywordsEmployer=OHB%20System&locationCodes=de&lang=en'), 'employer:OHB System|de');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?employer=OHB&location=de,at'), 'employer:OHB|de,at', 'the short form');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?employer=Airbus'), 'employer:Airbus|', 'no location: every country');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?keywordsLegalId=DE123456789&locationCodes=de'), 'legalid:DE123456789|de');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?legalId=DE1'), 'legalid:DE1|');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?keywordsEverywhere=satellite&keywordsEmployer=OHB&locationCodes=de'), 'employer:OHB|de', 'one keyword per board: the employer wins');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?employer=&lang=en'), null, 'an empty employer is no board');
+  assert.equal(d('https://europa.eu/eures/portal/jv-se/search?keywordsEverywhere=satellite&locationCodes=de'), 'satellite|de', 'keyword mode as before');
+  for (const slug of ['employer:OHB System|de', 'employer:Rohde & Schwarz|de,at,ch', 'employer:Airbus|', 'legalid:DE123|', 'legalid:HRB 1|lu', 'satellite|de,fr']) {
+    const url = euresBoardUrl(slug);
+    assert.ok(url.startsWith('https://europa.eu/eures/portal/jv-se/search?'), url);
+    assert.equal(detectEures(url), slug, url);
+  }
+  const eu = new URL(euresBoardUrl('employer:OHB System|de'));
+  assert.equal(eu.searchParams.get('keywordsEmployer'), 'OHB System');
+  assert.equal(eu.searchParams.get('keywordsEverywhere'), null);
+  assert.equal(eu.searchParams.get('orderBy'), 'BEST_MATCH');
+  assert.equal(new URL(euresBoardUrl('legalid:DE123|')).searchParams.get('keywordsLegalId'), 'DE123');
+  assert.equal(new URL(euresBoardUrl('satellite|de')).searchParams.get('orderBy'), 'MOST_RECENT', 'keyword mode unchanged');
+  assert.deepEqual(resolve({ careers_url: euresBoardUrl('employer:OHB|de') }), { provider: 'eures', slug: 'employer:OHB|de' });
+
+  const b = searchBody({ keyword: 'OHB', codes: ['de'], mode: 'EMPLOYER' });
+  assert.deepEqual(b.keywords, [{ keyword: 'OHB', specificSearchCode: 'EMPLOYER' }]);
+  assert.equal(b.sortSearch, 'BEST_MATCH', 'the exact employer first, the fuzzy matches after (probe 2026-11-01)');
+  assert.equal(b.resultsPerPage, 50);
+  assert.deepEqual(b.locationCodes, ['de']);
+  assert.deepEqual(searchBody({ keyword: 'DE123', mode: 'LEGAL_ID' }).keywords, [{ keyword: 'DE123', specificSearchCode: 'LEGAL_ID' }]);
+  assert.equal(searchBody({ keyword: 'DE123', mode: 'LEGAL_ID' }).sortSearch, 'BEST_MATCH');
+  assert.equal(searchBody({ keyword: 'x', mode: 'bogus' }).keywords[0].specificSearchCode, 'EVERYWHERE', 'an unknown code falls back');
+  assert.equal(searchBody({ keyword: 'x', mode: 'toString' }).keywords[0].specificSearchCode, 'EVERYWHERE');
+  assert.equal(searchBody({ keyword: 'x' }).sortSearch, 'MOST_RECENT', 'keyword mode: newest first, as before');
+
+  const m = euresEmployerMatches;
+  assert.equal(m('OHB', 'OHB-System AG'), true);
+  assert.equal(m('OHB', 'OHB'), true);
+  assert.equal(m('OHB', 'OHB Digital Connect GmbH'), true);
+  assert.equal(m('OHB System', 'OHB-System AG'), true, 'hyphen = space');
+  assert.equal(m('OHB System', 'OHB System AG'), true);
+  assert.equal(m('OHB System', 'OHB Digital Connect GmbH'), false, 'the words must be adjacent and in order');
+  assert.equal(m('OHB', 'K2Trans OHG'), false, 'the fuzzy match the backend made');
+  assert.equal(m('OHB', 'ALDI SÜD Dienstleistungs- SE & Co. oHG'), false);
+  assert.equal(m('Airbus Defence and Space', 'Airbus Defence & Space GmbH'), true, 'connectors ignored');
+  assert.equal(m('Rohde & Schwarz', 'ROHDE & SCHWARZ GmbH & Co. KG'), true, 'case does not count');
+  assert.equal(m('Mynaric', 'Mynaric Lasercom GmbH'), true);
+  assert.equal(m('Mynaric', 'Mynaricx GmbH'), false, 'whole words only');
+  assert.equal(m('Lübeck Optik', 'Luebeck Optik GmbH'), true, 'umlaut = transliteration');
+  assert.equal(m('Société Générale', 'SOCIETE GENERALE'), true, 'accents do not count');
+  assert.equal(m('', 'OHB'), false);
+  assert.equal(m('OHB', ''), false);
+  assert.equal(m('OHB', undefined), false);
+  assert.equal(m('OHB System AG', 'OHB'), false, 'longer than the returned name');
+});
+
+/** A stubbed backend serving `pages` (arrays of employer names, 50 names = one full page) in BEST_MATCH order; the label endpoint answers {}. */
+function stubEmployerBackend(pages) {
+  const base = fixture('eures-search.json').jvs[0];
+  const calls = [];
+  mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ url: String(url), body });
+    if (String(url) === LABELS) return json({});
+    if (String(url) !== SEARCH) return json({ errorType: 'NOT_FOUND' }, 404);
+    const names = pages[body.page - 1] ?? [];
+    const jvs = names.map((name, i) => ({ ...base, id: `p${body.page}-${i + 1}`, title: `${name} role ${i + 1}`, employer: { ...base.employer, name } }));
+    return json({ numberRecords: 5563, jvs, facets: {} });
+  });
+  return calls;
+}
+
+test('eures: fetch in employer mode sends EMPLOYER + BEST_MATCH, keeps only the searched employer and stops at the first page without it', async (t) => {
+  t.after(() => mock.restoreAll());
+  const fill = (n, name) => Array.from({ length: n }, () => name);
+  // page 1: the exact employer; page 2: a sister company, then the fuzzy rest ("oHG"); page 3: fuzzy only; page 4 would be more of it
+  const pages = [[...fill(3, 'OHB'), ...fill(47, 'OHB-System AG')], [...fill(5, 'OHB Digital Connect GmbH'), ...fill(45, 'ALDI SÜD Dienstleistungs- SE & Co. oHG')], fill(50, 'K2Trans OHG'), fill(50, 'Modehaus Jennerwein OHG')];
+  let calls = stubEmployerBackend(pages);
+  let jobs = await eures.fetch('employer:OHB|de');
+  assert.equal(jobs.length, 55, '3 + 47 + 5 OHB vacancies; the 95 oHG ones are dropped');
+  assert.deepEqual([...new Set(jobs.map((j) => j.company))], ['OHB (via EURES)', 'OHB-System AG (via EURES)', 'OHB Digital Connect GmbH (via EURES)']);
+  let searches = calls.filter((c) => c.url === SEARCH);
+  assert.deepEqual(searches.map((c) => c.body.page), [1, 2, 3], 'page 3 held no OHB: paging stops, page 4 is never asked for');
+  for (const c of searches) {
+    assert.deepEqual(c.body.keywords, [{ keyword: 'OHB', specificSearchCode: 'EMPLOYER' }]);
+    assert.equal(c.body.sortSearch, 'BEST_MATCH');
+    assert.deepEqual(c.body.locationCodes, ['de']);
+    assert.equal(c.body.resultsPerPage, 50);
+  }
+  assert.equal(calls.filter((c) => c.url === LABELS).length, 2, 'labels are resolved for the kept vacancies only: none for page 3');
+  assert.equal(jobs[0].meta.source, 'EURES (ELA)');
+  assert.ok(jobs.every((j) => isAggregatorRow(j, new Set())), 'the copies are aggregator rows for the cross-listing');
+  mock.restoreAll();
+
+  // the two-word name keeps the one entity; page 2 brings nothing and ends the board
+  calls = stubEmployerBackend(pages);
+  jobs = await eures.fetch('employer:OHB System|de');
+  assert.equal(jobs.length, 47);
+  assert.ok(jobs.every((j) => j.company === 'OHB-System AG (via EURES)'));
+  assert.deepEqual(calls.filter((c) => c.url === SEARCH).map((c) => c.body.page), [1, 2]);
+  mock.restoreAll();
+
+  // entry.max_jobs caps the kept vacancies; a short first page ends the board as in keyword mode
+  calls = stubEmployerBackend(pages);
+  assert.equal((await eures.fetch('employer:OHB|de', { max_jobs: 10 })).length, 10);
+  assert.equal(calls.filter((c) => c.url === SEARCH).length, 1);
+  mock.restoreAll();
+  calls = stubEmployerBackend([[...fill(2, 'Mynaric Lasercom GmbH'), 'Unrelated oHG']]);
+  jobs = await eures.fetch('employer:Mynaric|');
+  assert.equal(jobs.length, 2);
+  assert.deepEqual(calls.filter((c) => c.url === SEARCH)[0].body.locationCodes, [], 'no codes: every country');
+  mock.restoreAll();
+
+  // legal-id mode: the code goes to the backend, nothing is filtered on this side (the vacancies do not carry the id), standard paging
+  calls = stubBackend(120);
+  jobs = await eures.fetch('legalid:DE123456789|de');
+  assert.equal(jobs.length, 120);
+  searches = calls.filter((c) => c.url === SEARCH);
+  assert.deepEqual(searches.map((c) => c.body.page), [1, 2, 3]);
+  for (const c of searches) {
+    assert.deepEqual(c.body.keywords, [{ keyword: 'DE123456789', specificSearchCode: 'LEGAL_ID' }]);
+    assert.equal(c.body.sortSearch, 'BEST_MATCH');
+  }
+  mock.restoreAll();
+
+  // a mode without a name is refused before any request
+  calls = stubBackend(10);
+  await assert.rejects(eures.fetch('employer:|de'), /employer: mode needs a name/);
+  await assert.rejects(eures.fetch('legalid:|'), /legalid: mode needs a name/);
+  assert.equal(calls.length, 0);
 });
 
 test('eures: fetch surfaces a 400 with the backend message and an unexpected document', async (t) => {

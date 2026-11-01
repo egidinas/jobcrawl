@@ -27,6 +27,7 @@ marked *verified* was re-checked live on 2026-11-01, the rest is taken from that
 | Page | URL |
 |---|---|
 | Search | `https://europa.eu/eures/portal/jv-se/search?page=1&resultsPerPage=10&orderBy=MOST_RECENT&keywordsEverywhere=<kw>&locationCodes=<code>&lang=en` |
+| Search, employer mode (this crawler's parameter, see below) | `https://europa.eu/eures/portal/jv-se/search?page=1&resultsPerPage=10&orderBy=BEST_MATCH&keywordsEmployer=<name>&locationCodes=<code>&lang=en` |
 | Vacancy | `https://europa.eu/eures/portal/jv-se/jv-details/<id>?lang=en` (verified: the lazy route `jv-details/:id` in `jv-se.routes-3K65JMYA.js`) |
 | Advanced search | `https://europa.eu/eures/portal/jv-se/advanced` |
 
@@ -94,8 +95,8 @@ means "no filter"):
 |---|---|---|
 | `resultsPerPage` | integer | **1–50**. 50 verified; 100 answers HTTP 400 `{"errorType":"java.lang.IllegalArgumentException","errorMessage":"Too many results per page were requested"}` |
 | `page` | integer | 1-based. Pages 1 and 2 of the same query (seconds apart) had no overlap |
-| `sortSearch` | enum | `MOST_RECENT` (verified: ordered by `lastModificationDate` descending, consistently across pages; `creationDate` is not monotonic), `BEST_MATCH` |
-| `keywords[]` | `{keyword, specificSearchCode}` | `specificSearchCode`: `EVERYWHERE`, `TITLE`, `DESCRIPTION`, `EMPLOYER`, `LEGAL_ID`, `JOB_VACANCY_ID`. Empty list = no keyword |
+| `sortSearch` | enum | `MOST_RECENT` (verified: ordered by `lastModificationDate` descending, consistently across pages; `creationDate` is not monotonic), `BEST_MATCH` (verified for an `EMPLOYER` keyword: the exact employer's vacancies come first, the fuzzy matches after; `score` stays null) |
+| `keywords[]` | `{keyword, specificSearchCode}` | `specificSearchCode`: `EVERYWHERE`, `TITLE`, `DESCRIPTION`, `EMPLOYER` (verified: a **fuzzy** match on the employer name, see "Employer and legal-id modes"), `LEGAL_ID`, `JOB_VACANCY_ID`. Empty list = no keyword |
 | `publicationPeriod` | enum or null | `LAST_DAY`, `LAST_THREE_DAYS`, `LAST_WEEK` (verified: 398 of 754 "satellite"/de vacancies), `LAST_MONTH`, `LAST_VISIT` (needs a login) |
 | `locationCodes[]` | string | lowercase NUTS 2024 codes: country `de`, region `de1`, district `de147`; `<country>-NS` = that country, region not specified. Several countries verified (`["de","fr"]` → 1,510 vs 754 for `de`) |
 | `positionOfferingCodes[]` | enum | `apprenticeship`, `contract`, `contracttohire`, `directhire`, `internship`, `oncall`, `recruitmentreserve`, `seasonal`, `selfemployed`, `temporary`, `temporarytohire`, `volunteer`, `NS` |
@@ -207,7 +208,57 @@ Profile entry: `{ "provider": "eures", "slug": "satellite|de,fr" }` (or a portal
 requiredLanguages, requiredExperienceCodes, educationAndQualificationLevelCodes, euresFlagCodes, occupationUris, skillUris,
 minNumberPost, requestLanguage }` merged into the search body. `eures` is in `crosslist.mjs` `AGGREGATOR_PROVIDERS`.
 
-## Probe log (2026-11-01, 15 requests)
+## Employer and legal-id modes (2026-11-01)
+
+Purpose (owner, 2026-11-01): for the employers a profile polls directly, also collect their EURES copies, because the EURES record is
+richer in places (NUTS region, NACE sector, ESCO occupation URI, contract and schedule codes, number of posts, required languages,
+contacts). The crawl recognises the copy as a cross-listing of the direct posting and the declared layer merges the fields per channel
+later. Mechanism: one EURES board per tracked employer in a covered country, polled weekly.
+
+| Mode | Slug | Portal URL (`detect` / `euresBoardUrl`) | `keywords[]` sent |
+|---|---|---|---|
+| keyword (unchanged) | `<keyword>\|<codes>` | `?keywordsEverywhere=<kw>` or `?keyword=<kw>`, `&locationCodes=`/`&location=` | `{keyword, specificSearchCode: "EVERYWHERE"}`, `sortSearch: MOST_RECENT` |
+| employer | `employer:<name>\|<codes>` | `?keywordsEmployer=<name>` or the short form `?employer=<name>` | `{keyword: <name>, specificSearchCode: "EMPLOYER"}`, `sortSearch: BEST_MATCH` |
+| legal id | `legalid:<id>\|<codes>` | `?keywordsLegalId=<id>` or `?legalId=<id>` | `{keyword: <id>, specificSearchCode: "LEGAL_ID"}`, `sortSearch: BEST_MATCH` |
+
+`keywordsEmployer` and `keywordsLegalId` are this crawler's parameter names, modelled on the portal's `keywordsEverywhere`: the
+advanced form has the fields, their URL parameters were not verified. One keyword per board; an employer parameter wins over a legal id,
+which wins over an everywhere keyword. Paging, 50 per page, the 2,000 cap, the time budget, `max_jobs`, `entry.eures` and the mapping with
+the `(via EURES)` suffix are the same in every mode.
+
+**Probe result: `EMPLOYER` is a fuzzy match, not an employer filter.** `EMPLOYER` / `OHB` / `locationCodes: ["de"]`, `MOST_RECENT`
+(request 16): **5,563** records; page 1 held 50 vacancies of 7 employers, 39 of them *ALDI SÜD Dienstleistungs- SE & Co. oHG*, then
+*K2Trans OHG*, *Modehaus Jennerwein OHG*, *UPS DE S.à.r.l. & Co. OHG*, *Computacenter AG & Co. oHG*, *Werhahn & Nauen SE & Co. OHG*
+and 2 of *OHB-System AG*; first title "Studentenjob Verkauf (m/w/d) (Helfer/in - Verkauf)". "OHB" matches "oHG" (edit distance 1,
+the classic Elasticsearch `AUTO` fuzziness). Quoting the name (`"\"OHB\""`, request 17) changed nothing: the identical response. With
+`sortSearch: BEST_MATCH` (request 18) the same 5,563 records come exact-employer first: page 1 was **50 of 50 OHB** (*OHB* ×3,
+*OHB-System AG* ×47), first title "Technical Project Manager Earth Observation Missions (m/f/d) (Ingenieur/in - Luft- und
+Raumfahrttechnik)". `employer.legalID` was `null` on every vacancy of the three pages, so the `LEGAL_ID` mode is implemented (the same
+code path, only the code differs) but has no known use until a feed publishes the ids.
+
+The provider therefore, in employer mode: sorts `BEST_MATCH`; keeps only the vacancies whose employer name contains the searched name
+as whole words, in order and adjacent (`euresEmployerMatches`: "OHB System" matches "OHB-System AG" and "OHB System AG", not "OHB
+Digital Connect GmbH"; "OHB" matches all three and not "K2Trans OHG"; case, diacritics, punctuation and the connectors and/und/& do
+not count); resolves ESCO labels for the kept vacancies only; and stops at the first page that holds none (past the exact matches the
+rest of the fuzzy result is other employers). A board for an employer with ~50 open vacancies costs two requests a week. In legal-id mode
+nothing is filtered on this side (the vacancies do not carry the id).
+
+**The boards generator** `node crawler/eures-employer-boards.mjs --profile <dir> [--codes de,fr,...] [--out <file>]` reads the
+profile's companies file and catalogue, takes the enabled non-aggregator boards, one per employer (a board's `(workday) [tenant]`
+decoration removed, the catalogue's `name`/`aliases` and `canonCompany` deciding which boards are one employer), and keeps an
+employer when its `country_code` (or two-letter `country`) is one of the 31 portal countries (`gr` counts as the backend's `el`),
+or its `location`/`address`/`country`/`state`/`city`/`headquarters` text names one of them, or nothing says where it is (included: an
+empty EURES result costs one request a week). A known other country or a US state (the catalogue's `country` field often holds one)
+drops it. The EURES keyword is the employer's short name: the catalogue's name when listed there, else the board's, trailing legal
+forms stripped (GmbH, SE, AG, KG, & Co., Ltd, Inc, S.A., SAS, B.V., AB, Oy, A/S, Sp. z o.o., ...). Location codes: `--codes` for every
+board, else the employer's own country, else none (every country). Employers with an EURES employer board already (any `eures` entry
+whose slug is `employer:<name>|...`) are skipped. The entries are
+`{ name: "EURES employer: <employer>", careers_url: <portal URL in employer mode>, provider: "eures", enabled: true, interval_hours: 168,
+note: "EURES copies of <employer>'s postings for cross-listing and metadata; weekly" }`; the script prints a summary and does not modify
+companies.json. Note that `crawl.mjs` caps the effective interval at 48 h (`Math.min(48, interval_hours)`, so that a role not confirmed
+for three days is marked gone): the boards are in practice read every two days until that cap is changed.
+
+## Probe log (2026-11-01, 15 requests, then 3 more for the employer mode)
 
 1. search `satellite`/`de`, 3 per page → 200, 754 records
 2. same, 50 per page → 200, 50 vacancies
@@ -224,3 +275,6 @@ minNumberPost, requestLanguage }` merged into the search body. `eures` is in `cr
 13. `main-OJLS7FRG.js` fetched at the wrong path (the SPA fallback page came back)
 14. `main-OJLS7FRG.js` (239 KB): the app shell, lazy route chunks
 15. `jv-se.routes-3K65JMYA.js` (3.6 KB): the job-search routes
+16. search `EMPLOYER` `OHB`/`de`, 50 per page, `MOST_RECENT` → 200, **5,563** records, 2 of 50 are OHB (fuzzy: "oHG" matches)
+17. same with the quoted name `"OHB"` → 200, the identical response (quotes change nothing)
+18. same, unquoted, `sortSearch: BEST_MATCH` → 200, 5,563 records, 50 of 50 are OHB (*OHB* ×3, *OHB-System AG* ×47)
