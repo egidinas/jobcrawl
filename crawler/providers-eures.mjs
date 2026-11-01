@@ -6,8 +6,12 @@
 // profile. What was observed, the request/response schema and the code lists are in docs/sources/eures-api.md (2026-11-01).
 // Legal: vacancies are (c) ELA, re-use authorised with ELA acknowledged as the source (https://eures.europa.eu/legal-notice_en);
 // every job carries meta.source = 'EURES (ELA)'. A profile entry: { provider: 'eures', slug: '<keyword>|<country codes>' } or a
-// portal search URL as careers_url. Pages are read 1 s apart, newest first (MOST_RECENT = lastModificationDate desc), until the
-// results run out, 2,000 vacancies (entry.max_jobs) or the time budget (crawl.mjs gives an entry 35 s), whichever comes first.
+// portal search URL as careers_url. Pages are read newest first (MOST_RECENT = lastModificationDate desc), until the results run
+// out, 2,000 vacancies (entry.max_jobs) or the time budget (crawl.mjs gives an entry 35 s), whichever comes first.
+// Politeness: the crawl runs several boards at once (crawl.mjs CONCURRENCY) and hundreds of them are EURES boards, so pacing per
+// board is not enough. Every request this module makes (search pages, the detail call, the ESCO label call) passes through one
+// host-wide limiter (euresLimiter): at most one request starts per EURES_MIN_GAP_MS (default 1000 ms) in the whole process, however
+// many boards call at once. A 429 is retried once after its Retry-After (else 10 s, capped at 60 s) and doubles the gap for 60 s.
 // Employer mode (slug 'employer:<name>|<codes>', one board per tracked EEA employer, eures-employer-boards.mjs writes them) collects
 // the EURES copies of an employer's own postings for the cross-listing and their richer metadata: the name goes to the backend as
 // specificSearchCode EMPLOYER, which is a FUZZY full-text match ("OHB" also finds every "oHG"; probe 2026-11-01 in eures-api.md), so
@@ -27,8 +31,16 @@ export const EURES_PORTAL = 'https://europa.eu/eures/portal/jv-se';
 /** The backend's page-size limit: resultsPerPage 100 answers 400 "Too many results per page were requested"; 50 works. */
 export const EURES_PAGE_SIZE = 50;
 export const EURES_MAX_JOBS = 2000;
-/** Paging knobs; tests set the delays to 0. budgetMs stays under the 35 s crawl.mjs allows one entry. */
-export const tuning = { pageDelayMs: 1000, retryDelayMs: 2000, budgetMs: 28000, timeoutMs: 25000 };
+/**
+ * Knobs; tests set the delays to 0. minGapMs is the host-wide gap between two request starts (EURES_MIN_GAP_MS, read once at load);
+ * retryDelayMs the pause before the one retry on a 5xx or network error; retry429Ms the pause before the one retry on a 429 without a
+ * usable Retry-After, retryAfterCapMs the most a Retry-After is honoured for, backoffWindowMs how long the gap stays doubled after a
+ * 429. budgetMs stays under the 35 s crawl.mjs allows one entry.
+ */
+export const tuning = {
+  minGapMs: (() => { const n = Number(process.env.EURES_MIN_GAP_MS); return process.env.EURES_MIN_GAP_MS !== undefined && Number.isFinite(n) && n >= 0 ? n : 1000; })(),
+  retryDelayMs: 2000, retry429Ms: 10000, retryAfterCapMs: 60000, backoffWindowMs: 60000, budgetMs: 28000, timeoutMs: 25000,
+};
 
 /** The 31 countries the portal covers (GET /shared-data-rest-api/public/reference/countries, 2026-11-01). EL is Greece. */
 export const EURES_COUNTRIES = {
@@ -44,6 +56,42 @@ const FILTER_KEYS = ['publicationPeriod', 'positionOfferingCodes', 'positionSche
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [v]);
+
+/**
+ * The host-wide request gate: one shared queue for every request of this module, whatever board makes it. acquire() resolves when the
+ * caller may start its request: slots are handed out in call order, each at least gap() after the previous one (a promise chain plus a
+ * timestamp, no polling). gap() is tuning.minGapMs, doubled while a 429 backoff is in force (backOff() arms it for tuning.backoffWindowMs).
+ * Exported for the tests and the crawl's diagnostics; nextAt / backoffUntil are epoch ms.
+ */
+export const euresLimiter = {
+  nextAt: 0,
+  backoffUntil: 0,
+  chain: Promise.resolve(),
+  gap() { return Date.now() < this.backoffUntil ? tuning.minGapMs * 2 : tuning.minGapMs; },
+  acquire() {
+    const turn = this.chain.then(async () => {
+      for (let wait = this.nextAt - Date.now(); wait > 0; wait = this.nextAt - Date.now()) await sleep(wait);   // the loop covers an early timer
+      this.nextAt = Date.now() + this.gap();
+    });
+    this.chain = turn.catch(() => {});
+    return turn;
+  },
+  backOff() { this.backoffUntil = Date.now() + tuning.backoffWindowMs; },
+  reset() { this.nextAt = 0; this.backoffUntil = 0; },
+};
+
+/**
+ * How long a 429 asks us to wait, in ms: its Retry-After as delay-seconds or an HTTP date (RFC 9110), capped at tuning.retryAfterCapMs;
+ * tuning.retry429Ms when the header is missing or unreadable; never negative.
+ */
+export function retryAfterMs(header, now = Date.now()) {
+  const h = String(header ?? '').trim();
+  let ms = NaN;
+  if (/^\d+$/.test(h)) ms = Number(h) * 1000;
+  else if (h) { const t = Date.parse(h); if (Number.isFinite(t)) ms = t - now; }
+  if (!Number.isFinite(ms)) ms = tuning.retry429Ms;
+  return Math.max(0, Math.min(ms, tuning.retryAfterCapMs));
+}
 
 const decode = (s = '') =>
   String(s)
@@ -183,11 +231,15 @@ export function searchBody({ keyword = '', codes = [], page = 1, size = EURES_PA
   return body;
 }
 
-/** One JSON call to the backend; a 429/5xx or network error is retried once after 2 s, other errors fail at once. */
+/**
+ * One JSON call to the backend, through the host-wide limiter (every attempt takes a slot). A 5xx or network error is retried once after
+ * 2 s; a 429 arms the limiter's backoff and is retried once after its Retry-After (retryAfterMs); other errors fail at once.
+ */
 async function api(path, body) {
   const url = `${EURES_API}${path}`;
   const init = { method: body === undefined ? 'GET' : 'POST', headers: { 'user-agent': UA, accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) };
   for (let attempt = 0; ; attempt++) {
+    await euresLimiter.acquire();
     let res;
     try {
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(tuning.timeoutMs) });
@@ -197,7 +249,9 @@ async function api(path, body) {
       continue;
     }
     if (res.ok) return res.json();
-    if (!attempt && (res.status === 429 || res.status >= 500)) { await sleep(tuning.retryDelayMs); continue; }
+    if (res.status === 429) euresLimiter.backOff();
+    if (!attempt && res.status === 429) { await sleep(retryAfterMs(res.headers.get('retry-after'))); continue; }
+    if (!attempt && res.status >= 500) { await sleep(tuning.retryDelayMs); continue; }
     let detail = '';
     try { detail = JSON.parse(await res.text()).errorMessage ?? ''; } catch { /* no JSON error body */ }
     throw new Error(`HTTP ${res.status} eures ${path}${detail ? `: ${detail}` : ''}`);
@@ -354,7 +408,7 @@ export const eures = {
     const keep = mode === 'EMPLOYER' ? (v) => euresEmployerMatches(keyword, v.employer?.name) : () => true;
     const out = [], seen = new Set(), t0 = Date.now();
     for (let page = 1; out.length < cap; page++) {
-      if (page > 1) { if (Date.now() - t0 > tuning.budgetMs) break; await sleep(tuning.pageDelayMs); }
+      if (page > 1 && Date.now() - t0 > tuning.budgetMs) break;   // the pacing between pages is the host-wide limiter's (api)
       const d = await api('/jv-searchengine/public/jv-search/search', searchBody({ keyword, codes, page, extra, mode }));
       if (!Array.isArray(d?.jvs)) throw new Error(`eures: unexpected search response (keys: ${d && typeof d === 'object' ? Object.keys(d).join(', ') : typeof d})`);
       const picked = [];
