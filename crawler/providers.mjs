@@ -184,6 +184,60 @@ export function metaOf(o) {
   return Object.keys(out).length ? out : undefined;
 }
 
+// ---- feed item -> job mappings kept pure so the tests can run them on captured documents ----
+
+/** One item of a Teamtailor JSON Feed (/jobs.json). The posting's numeric id (the one in the URL) is _jobposting.identifier.value. */
+export function teamtailorJob(item) {
+  const jp = item._jobposting ?? {};
+  const places = Array.isArray(jp.jobLocation) ? jp.jobLocation : [jp.jobLocation].filter(Boolean);
+  const location = places.map((p) => [p?.address?.addressLocality, p?.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean);
+  if (jp.jobLocationType === 'TELECOMMUTE') location.push('Remote');
+  return {
+    id: item.id,
+    title: item.title ?? jp.title ?? '',
+    url: item.url,
+    location: location.join(' | '),
+    postedAt: isoDate(item.date_published || jp.datePosted),
+    description: plain(item.content_html ?? jp.description ?? ''),
+    meta: metaOf({ employment: jp.employmentType, ref: jp.identifier?.value, remote: jp.jobLocationType === 'TELECOMMUTE', country: places.map((p) => p?.address?.addressCountry) }),
+  };
+}
+
+/** One <item> of a Teamtailor RSS feed (/jobs.rss): title, link, city/country/remoteStatus, department, a partial description. */
+export function teamtailorRssJob(b) {
+  const city = tag(b, 'city') || tag(b, 'name');
+  const country = tag(b, 'country');
+  const remote = tag(b, 'remoteStatus');
+  return {
+    title: tag(b, 'title'),
+    url: tag(b, 'link'),
+    location: [city, country, remote === 'fully' ? 'Remote' : ''].filter(Boolean).join(', '),
+    department: tag(b, 'department'),
+    postedAt: isoDate(tag(b, 'pubDate')),
+    description: plain(tag(b, 'description')),
+  };
+}
+
+/** One entry of a Rippling board list (api.rippling.com/platform/api/ats/v1/board/<slug>/jobs); no description or date there. */
+export function ripplingJob(j, slug) {
+  return {
+    id: j.uuid,
+    title: j.name?.trim() ?? '',
+    url: j.url ?? `https://ats.rippling.com/${slug}/jobs/${j.uuid}`,
+    location: j.workLocation?.label ?? '',
+    department: j.department?.label ?? '',
+    postedAt: '',
+    meta: metaOf({ departments: [j.department?.label] }),
+  };
+}
+
+/** The per-job document of the Rippling board API: description is HTML, either a string or sections ({company, role}) in order. */
+export function ripplingDescription(d) {
+  const desc = d?.description;
+  const parts = typeof desc === 'string' ? [desc] : Object.values(desc ?? {});
+  return parts.filter((h) => typeof h === 'string').map((h) => plain(h)).filter(Boolean).join('\n\n');
+}
+
 export const providers = {
   greenhouse: {
     detect: (u) => u.match(/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([\w-]+)/)?.[1],
@@ -302,6 +356,8 @@ export const providers = {
     },
   },
 
+  // Teamtailor: /jobs.json is a JSON Feed 1.1 whose items carry the full HTML description (content_html) and a schema.org
+  // JobPosting (_jobposting: identifier, datePosted, employmentType, jobLocation). /jobs.rss is partial and stays the fallback.
   teamtailor: {
     detect: (u) => {
       if (/careers\.reorbit\.space/i.test(u)) return 'reorbit';
@@ -312,24 +368,14 @@ export const providers = {
       return u.match(/([\w-]+)\.teamtailor\.com/)?.[1];
     },
     async fetch(slug) {
-      const url = slug.startsWith('http')
-        ? (slug.endsWith('/jobs.rss') ? slug : `${slug.replace(/\/+$/, '')}/jobs.rss`)
-        : `https://${slug}.teamtailor.com/jobs.rss`;
-      const xml = await get(url, { json: false });
-      return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(([, b]) => {
-        const city = tag(b, 'city') || tag(b, 'name');
-        const country = tag(b, 'country');
-        const remote = tag(b, 'remoteStatus');
-        const locParts = [city, country, remote === 'fully' ? 'Remote' : ''].filter(Boolean);
-        return {
-          title: tag(b, 'title'),
-          url: tag(b, 'link'),
-          location: locParts.join(', '),
-          department: tag(b, 'department'),
-          postedAt: isoDate(tag(b, 'pubDate')),
-          description: plain(tag(b, 'description')),
-        };
-      });
+      const base = slug.startsWith('http') ? slug.replace(/\/jobs\.rss$/, '').replace(/\/+$/, '') : `https://${slug}.teamtailor.com`;
+      let items;
+      try {
+        items = JSON.parse(await get(`${base}/jobs.json`, { json: false })).items;
+      } catch { /* not served or not JSON: the RSS below */ }
+      if (Array.isArray(items)) return items.map(teamtailorJob);
+      const xml = await get(`${base}/jobs.rss`, { json: false });
+      return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)].map(([, b]) => teamtailorRssJob(b));
     },
   },
 
@@ -922,38 +968,23 @@ export const providers = {
     },
   },
 
+  // Rippling: the board API lists {uuid, name, department, url, workLocation} without a description or date (no key needed);
+  // the per-job call adds description {company, role} (HTML), workLocations, employmentType and createdOn.
   rippling: {
     detect: (u) => u.match(/ats\.rippling\.com\/([\w-]+)/)?.[1],
     async fetch(slug) {
-      const html = await get(`https://ats.rippling.com/${slug}/jobs`, { json: false });
-      const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-      if (!m) return [];
-      const json = JSON.parse(m[1]);
-      const queries = json.props?.pageProps?.dehydratedState?.queries ?? [];
-      const jobQuery = queries.find((q) => Array.isArray(q.queryKey) && q.queryKey[2] === 'job-posts');
-      const items = jobQuery?.state?.data?.items ?? [];
-      return items.map((j) => ({
-        title: j.name?.trim() ?? '',
-        url: j.url ?? `https://ats.rippling.com/${slug}/jobs/${j.id}`,
-        location: (j.locations ?? []).map((l) => l.name || `${l.city}, ${l.country}`).filter(Boolean).join(' | '),
-        department: j.department?.name ?? '',
-        postedAt: j.createdOn ? new Date(j.createdOn).toISOString().slice(0, 10) : '',
-      }));
+      const d = await get(`https://api.rippling.com/platform/api/ats/v1/board/${slug}/jobs`);
+      return (Array.isArray(d) ? d : d.items ?? []).map((j) => ripplingJob(j, slug));
     },
-    async fetchDescription(job) {
-      try {
-        const html = await get(job.url, { json: false });
-        const m = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-        if (!m) return '';
-        const json = JSON.parse(m[1]);
-        const jp = json.props?.pageProps?.apiData?.jobPost;
-        if (!jp?.description) return '';
-        const descObj = jp.description;
-        if (typeof descObj === 'string') return plain(descObj);
-        return plain(Object.values(descObj).filter(Boolean).join('\n\n'));
-      } catch {
-        return '';
+    async fetchDescription(job, slug) {
+      const id = job.id ?? job.url.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0];
+      if (id) {
+        try {
+          const text = ripplingDescription(await get(`https://api.rippling.com/platform/api/ats/v1/board/${slug}/jobs/${id}`));
+          if (text) return text;
+        } catch { /* the job page below */ }
       }
+      return pageDescription(job);
     },
   },
 
