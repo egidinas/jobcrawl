@@ -576,7 +576,8 @@ async function scan() {
   if (flag('jd') && !flag('dry-run')) {
     const BATCH = Number(process.env.ROLLING_JD_BATCH ?? 40);
     const THIN = Number(process.env.ROLLING_JD_THIN ?? 1200);
-    const SKIP = /linkedin\.|indeed\.|glassdoor\.|xing\./i;
+    // EURES portal pages are an empty app shell; EURES details go through the provider's limiter (eures-employer-detail.mjs)
+    const SKIP = /linkedin\.|indeed\.|glassdoor\.|xing\.|europa\.eu\/eures/i;
     const rollFile = pathResolve(OUT_DIR, 'jd-rolling.json');
     let roll = {};
     try { roll = JSON.parse(readFileSync(rollFile, 'utf8')); } catch { /* none yet */ }
