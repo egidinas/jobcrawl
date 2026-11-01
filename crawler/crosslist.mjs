@@ -100,7 +100,9 @@ export function listingKey(row) {
 }
 
 /** Names of the aggregator boards in companies.json, and the "(via X)" suffix the providers add to employer names. */
-export const AGGREGATOR_PROVIDERS = new Set(['spacecareers', 'spacecapital', 'spaceindividuals', 'jobsinphotonics', 'mycareersfuture', 'linkedin']);
+// eures: the EURES portal aggregates the national public employment services, so its copy of a role an employer lists on its own ATS
+// is a cross-listing (providers-eures.mjs suffixes employers "(via EURES)").
+export const AGGREGATOR_PROVIDERS = new Set(['spacecareers', 'spacecapital', 'spaceindividuals', 'jobsinphotonics', 'mycareersfuture', 'linkedin', 'eures']);
 export const isAggregatorRow = (row, boardNames) => /\(via /i.test(row.company ?? '') || boardNames.has(row.company);
 
 // Posting-id rule. The keys of a row are its URL's key plus the keys of employer-ATS apply links found in its description (aggregator rows only).

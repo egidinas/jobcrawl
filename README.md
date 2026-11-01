@@ -106,6 +106,18 @@ polls three software employers in Germany, and see:
 * [docs/PROFILES.md](docs/PROFILES.md): how to write a profile for another field, with the minimal profile as the worked example;
 * [profiles/schema.md](profiles/schema.md): every key, its type and its default.
 
+## Sources
+
+The crawler reads the public feeds of employers' own applicant-tracking systems (the providers in `crawler/providers.mjs` and
+`crawler/providers-extra.mjs`) and the aggregator boards a profile names. One of those aggregators is EURES, the European
+Employment Services portal of the European Labour Authority (ELA), which carries the vacancies of the national public employment
+services: `crawler/providers-eures.mjs` calls the portal's own search backend. That backend is undocumented and unofficial, so it
+can change or close without notice; what was observed is written down in [docs/sources/eures-api.md](docs/sources/eures-api.md).
+The vacancies are copyright ELA, re-use authorised with ELA acknowledged as the source (https://eures.europa.eu/legal-notice_en):
+every EURES role carries `meta.source = "EURES (ELA)"` and the company suffix `(via EURES)`, so the cross-listing rules treat it
+as a copy of the employer's own posting. A tracked EURES board is a portal search (`provider: "eures"`, `slug:
+"<keyword>|<country codes>"`), read 50 vacancies per page, one page per second, newest first, at most 2,000 per crawl.
+
 ## Reference implementations
 
 * https://madenetwork.de/jobs.html: the aerospace board, with Match me and the Atlas, built from the reference profile.

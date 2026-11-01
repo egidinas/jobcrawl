@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { extraProviders } from './providers-extra.mjs';
+import { eures } from './providers-eures.mjs';
 import { UA } from './useragent.mjs';
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -2823,6 +2824,8 @@ export const providers = {
 
 // Providers ported from career-ops (see providers-extra.mjs). Appended after the built-ins and never overriding one, so resolve() order is unchanged.
 for (const [id, p] of Object.entries(extraProviders)) if (!(id in providers)) providers[id] = p;
+// EURES portal search backend (providers-eures.mjs): unofficial endpoint, ELA attribution; detects only portal search URLs.
+providers.eures = eures;
 
 /** Work out { provider, slug } for a config entry from explicit fields or its careers URL. */
 export function resolve(entry) {
