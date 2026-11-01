@@ -6,7 +6,8 @@
 // A tracked "board" is a query. Its slug is the normalised query string of the Search endpoint, e.g. "DatePosted=60&Organization=NN;CM54"
 // (Organization = agency codes, semicolon list; Keyword; PositionTitle; LocationName; DatePosted = 0-60 days). detect() also reads a
 // www.usajobs.gov search URL (/Search/Results?k=satellite -> Keyword=satellite). Fields=Full puts the whole announcement text into the
-// search response, so there is no fetchDescription.
+// search response, so there is no fetchDescription. The agency's contact e-mail and phone and the "How to apply" text travel with the job
+// as meta (owner's rule, 2026-11-01: contact data a posting publishes is collected with it; the public outputs drop it elsewhere).
 //
 // Credentials are read from the environment at call time, USAJOBS_KEY and USAJOBS_EMAIL, and never written anywhere (the request URL
 // carries no secret, so it may appear in error messages; the headers never do). Without them fetch() throws, so a misconfigured board
@@ -131,7 +132,8 @@ export async function usajobsFetch(slug) {
  * One SearchResultItems[] entry (Fields=Full) -> the crawler's job shape. company is the hiring organisation (OrganizationName; the
  * department, e.g. NASA, is meta.department); location is every PositionLocation joined with ' | ', plus 'Remote' when the
  * announcement is remote; description is the announcement's own sections under plain headings (Summary, Duties, Requirements,
- * Qualifications, Education), HTML removed if a section carries any.
+ * Qualifications, Education), HTML removed if a section carries any. meta.contact_email/contact_phone are the agency contact of the
+ * announcement (UserArea.Details.AgencyContactEmail/AgencyContactPhone), meta.how_to_apply the first 600 characters of HowToApply as text.
  */
 export function usajobsJob(item) {
   const d = item?.MatchedObjectDescriptor ?? {};
@@ -177,6 +179,9 @@ export function usajobsJob(item) {
       category_code: categories.map((c) => str(c?.Code)),
       org_code: u.OrganizationCodes,
       apply_url: canonUrl(list(d.ApplyURI)[0]),
+      contact_email: u.AgencyContactEmail,
+      contact_phone: u.AgencyContactPhone,
+      how_to_apply: plain(str(u.HowToApply)).slice(0, 600),
       source: 'USAJOBS',
     }),
   };

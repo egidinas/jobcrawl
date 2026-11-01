@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 // This module first on purpose: it imports plain/metaOf from providers.mjs, which registers it, so the cycle must load in this order too.
 import { usajobs, usajobsJob } from '../providers-usajobs.mjs';
-import { providers } from '../providers.mjs';
+import { providers, plain } from '../providers.mjs';
 
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/usajobs-search.json', import.meta.url), 'utf8'));
 const MODULE_URL = new URL('../providers-usajobs.mjs', import.meta.url).href;
@@ -61,6 +61,11 @@ test('usajobs: the captured announcements map to jobs', () => {
   assert.doesNotMatch(orion.description, /\n\nRequirements\n/, 'an empty section gets no heading');
   assert.doesNotMatch(orion.description, /<\/?[a-z]+[^>]*>/, 'no HTML');
   assert.ok(orion.description.length > 2000, `the whole announcement (${orion.description.length} chars)`);
+  // the agency contact and the application instructions travel with the job (meta), the latter cut at 600 characters
+  const howToApply = plain(items[0].MatchedObjectDescriptor.UserArea.Details.HowToApply).slice(0, 600);
+  assert.equal(howToApply.length, 600);
+  assert.ok(howToApply.startsWith('To apply for this position, you must complete the online application and submit the documentation'), howToApply.slice(0, 80));
+  assert.ok(items[0].MatchedObjectDescriptor.UserArea.Details.HowToApply.length > 600, 'the capture\'s text is longer than the cut');
   assert.deepEqual(orion.meta, {
     department: 'National Aeronautics and Space Administration',
     grade: 'ES 00',
@@ -76,8 +81,10 @@ test('usajobs: the captured announcements map to jobs', () => {
     category_code: '0801',
     org_code: 'NN/NN72',
     apply_url: 'https://www.usajobs.gov/job/889289300',
+    contact_email: 'Agency-Executive-Staffing@mail.nasa.gov',
+    how_to_apply: howToApply,
     source: 'USAJOBS',
-  }, 'remote (false) and offering (empty name) are dropped');
+  }, 'remote (false), offering (empty name) and contact_phone (no AgencyContactPhone in the capture) are dropped');
 
   assert.equal(fellow.id, '889810000');
   assert.equal(fellow.title, 'Technical Fellow Cryogenics');
@@ -88,6 +95,9 @@ test('usajobs: the captured announcements map to jobs', () => {
   assert.equal(fellow.meta.travel, 'Occasional Travel');
   assert.equal(fellow.meta.telework, undefined, 'TeleworkEligible false is dropped');
   assert.equal(fellow.meta.org_code, 'NN/NN23');
+  assert.equal(fellow.meta.contact_email, 'Agency-Executive-Staffing@mail.nasa.gov');
+  assert.equal(fellow.meta.contact_phone, undefined);
+  assert.equal(fellow.meta.how_to_apply.length, 600);
   assert.equal(fellow.meta.source, 'USAJOBS');
   assert.match(fellow.description, /\n\nDuties\nThe Technical Fellow Cryogenics: Serves as the Agency's authoritative technical resource/);
 });
@@ -99,7 +109,8 @@ test('usajobs: a remote announcement, HTML in a section, several duties, a bare 
       PositionID: 'X-1', PositionTitle: ' Dev ', PositionURI: 'https://www.usajobs.gov:443/job/1', PublicationStartDate: '2026-02-03T04:05:06',
       PositionLocation: [{ LocationName: 'Anywhere in the U.S. (remote job)' }, { LocationName: 'Anywhere in the U.S. (remote job)' }],
       JobGrade: [{ Code: 'GS' }],
-      UserArea: { Details: { RemoteIndicator: 'True', TeleworkEligible: true, LowGrade: '13', HighGrade: '14', JobSummary: '<p>Hello <b>world</b></p>', MajorDuties: ['Build', 'Ship'] } },
+      UserArea: { Details: { RemoteIndicator: 'True', TeleworkEligible: true, LowGrade: '13', HighGrade: '14', JobSummary: '<p>Hello <b>world</b></p>', MajorDuties: ['Build', 'Ship'],
+        AgencyContactEmail: ' hr@example.invalid ', AgencyContactPhone: '(000) 000-0000', HowToApply: '<p>Apply online.</p><p>Questions: call us.</p>' } },
     },
   });
   assert.equal(remote.title, 'Dev');
@@ -107,7 +118,8 @@ test('usajobs: a remote announcement, HTML in a section, several duties, a bare 
   assert.equal(remote.location, 'Anywhere in the U.S. (remote job) | Remote', 'duplicates folded, Remote appended');
   assert.equal(remote.postedAt, '2026-02-03');
   assert.equal(remote.description, 'Summary\nHello world\n\nDuties\n- Build\n- Ship');
-  assert.deepEqual(remote.meta, { grade: 'GS 13-14', telework: true, remote: true, source: 'USAJOBS' });
+  assert.deepEqual(remote.meta, { grade: 'GS 13-14', telework: true, remote: true, contact_email: 'hr@example.invalid', contact_phone: '(000) 000-0000', how_to_apply: 'Apply online.\nQuestions: call us.', source: 'USAJOBS' },
+    'the contact fields trimmed, HowToApply as text');
   assert.equal(usajobsJob({ MatchedObjectDescriptor: { PositionID: 'ABC-1' } }).id, 'ABC-1', 'PositionID when MatchedObjectId is missing');
   assert.deepEqual(usajobsJob({}), { id: '', title: '', url: '', company: '', location: '', postedAt: '', description: '', meta: { source: 'USAJOBS' } });
 });

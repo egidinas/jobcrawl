@@ -1,26 +1,36 @@
 // EURES provider (crawler/providers-eures.mjs) on trimmed captured documents (crawler/tests/fixtures/eures-*.json, 2026-11-01):
-// detect both ways, the vacancy -> job mapping, the search body, and the paging logic on a stubbed fetch. No network.
+// detect both ways, the vacancy -> job mapping, the search body, the paging logic on a stubbed fetch, and the detail document's
+// "Application and contact" section (fetchDescription). The recruiter contacts tested are SYNTHETIC: the captured fixture dropped
+// the real personContacts, the tests put an obviously fake entry ("Erika Mustermann", example.invalid) into a copy. No network.
 // Run: node --test crawler/tests/provider-eures.test.mjs
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { providers, resolve } from '../providers.mjs';
 import { AGGREGATOR_PROVIDERS, isAggregatorRow } from '../crosslist.mjs';
-import { eures, euresJob, euresText, euresPlace, detectEures, parseSlug, euresBoardUrl, searchBody, tuning, EURES_PAGE_SIZE, EURES_COUNTRIES } from '../providers-eures.mjs';
+import { eures, euresJob, euresText, euresPlace, detectEures, parseSlug, euresBoardUrl, searchBody, tuning, EURES_PAGE_SIZE, EURES_COUNTRIES,
+  euresIdOf, euresProfile, euresContactLine, euresDetailSection } from '../providers-eures.mjs';
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'));
 const SEARCH = 'https://europa.eu/eures/api/jv-searchengine/public/jv-search/search';
 const LABELS = 'https://europa.eu/eures/api/shared-data-rest-api/public/esco/label/en';
+const DETAIL = 'https://europa.eu/eures/api/jv-searchengine/public/jv/id';
 const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'content-type': 'application/json' } });
+/** The detail fixture with a synthetic recruiter contact (the capture dropped the real one; this is obviously fake data). */
+const detailWithContact = (contacts = [{ name: 'Erika Mustermann', title: 'Recruiting', email: 'recruiting@example.invalid', phone: '+49 89 0000000', address: null }]) => {
+  const d = structuredClone(fixture('eures-detail.json'));
+  d.jvProfiles.de.personContacts = contacts;
+  return d;
+};
 
 tuning.pageDelayMs = 0;
 tuning.retryDelayMs = 0;
 
-test('eures: registered in the provider registry, as an aggregator, without a fetchDescription', () => {
+test('eures: registered in the provider registry, as an aggregator, with a fetchDescription for the detail document', () => {
   assert.equal(providers.eures, eures);
   assert.equal(typeof eures.detect, 'function');
   assert.equal(typeof eures.fetch, 'function');
-  assert.equal(eures.fetchDescription, undefined, 'the search response carries the whole description');
+  assert.equal(typeof eures.fetchDescription, 'function', 'the detail document adds the application and contact section');
   assert.equal(Object.keys(EURES_COUNTRIES).length, 31);
   assert.ok(AGGREGATOR_PROVIDERS.has('eures'), 'an EURES copy of an employer\'s own posting is a cross-listing');
   assert.equal(isAggregatorRow({ company: 'SimpleXX GmbH (via EURES)' }, new Set()), true);
@@ -164,6 +174,102 @@ test('eures: the detail document has the same description as the search response
   assert.equal(d.connectionPointId, 1);
   assert.deepEqual(p.personContacts, [], 'the fixture drops the recruiter contact');
   assert.equal(euresText(p.description), euresJob(s).description);
+  assert.equal(euresProfile(d), p, 'the preferred language\'s profile');
+  assert.equal(euresProfile({ jvProfiles: { fr: { title: 'a' }, en: { title: 'b' } }, preferredLanguage: 'de' }).title, 'a', 'else the first');
+  assert.equal(euresProfile({}), null);
+  assert.equal(euresIdOf(euresJob(s)), s.id, 'the vacancy id from the job URL');
+  assert.equal(euresIdOf({ url: 'https://europa.eu/eures/portal/jv-se/jv-details/a%2Fb%2Bc?lang=en', id: 'other' }), 'a/b+c', 'the URL wins, percent-decoded');
+  assert.equal(euresIdOf({ id: ' ODQ1ODk4MyA5 ' }), 'ODQ1ODk4MyA5', 'else job.id');
+  assert.equal(euresIdOf({}), '');
+});
+
+test('eures: the detail document yields the "Application and contact" section; a synthetic recruiter contact is read whatever its shape', () => {
+  const d = fixture('eures-detail.json');
+  const s = euresDetailSection(d);
+  assert.ok(s.startsWith('Application and contact\nGewünschte Bewerbungsarten: per E-Mail, über Internet\n'), s.slice(0, 80));
+  assert.match(s, /\nInternetadresse: https:\/\/www\.go-simplexx\.de\/special-pages\/jobboerse-apply\/\?tx_dmmjobcontrol_pi1%5Bjob_uid%5D=8760\n/);
+  assert.match(s, /Angaben zur Bewerbung: Bitte über den oberen Link zur "Internetadresse\/Internetseite" oder per E-Mail inkl\. Bewerbungsunterlagen/);
+  assert.match(s, /aufrufen: 10001-1003942947-S \(https:\/\/www\.arbeitsagentur\.de\/jobsuche\/jobdetail\/10001-1003942947-S\)\n/, 'the link of the <a> is kept');
+  assert.doesNotMatch(s, /Contact:/, 'the captured fixture has no recruiter contact');
+  assert.doesNotMatch(s, /Application deadline/, 'none in the capture');
+  assert.match(s, /\nEmployment period: from 2026-10-30, Das Stellenangebot ist unbefristet\n/, 'startDate (epoch ms) as a day, plus the free text');
+  assert.match(s, /\nEmployer web site: http:\/\/www\.go-simplexx\.de\n/);
+  assert.match(s, /\nNACE: o78\.2\.0\n/);
+  assert.ok(s.endsWith('\nLocation: 88090 Immenstaad am Bodensee, Germany (DE147)'), s.slice(-80));
+  assert.doesNotMatch(s, /<\/?[a-z]+[^>]*>|&amp;/, 'no HTML or entity left');
+
+  // SYNTHETIC contacts (not captured data): a flat entry and a nested one, two shapes a feed might use; every string leaf is kept
+  const two = euresDetailSection(detailWithContact([
+    { name: 'Erika Mustermann', title: 'Recruiting', email: 'recruiting@example.invalid', phone: '+49 89 0000000', address: null },
+    { givenName: 'Max', familyName: 'Mustermann', positionTitle: 'HR Business Partner', communication: { emailAddress: 'max.mustermann@example.invalid', telephoneNumber: '+49 89 0000001', fax: '' },
+      address: { street: 'Musterstr. 1', postalCode: '80000', city: 'München' }, remarks: 'Mo-Fr 9-17', primary: true },
+  ]));
+  assert.match(two, /\nContact: Erika Mustermann, Recruiting, recruiting@example\.invalid, \+49 89 0000000\nContact: Max Mustermann, HR Business Partner, max\.mustermann@example\.invalid, \+49 89 0000001, Musterstr\. 1 80000 München, remarks: Mo-Fr 9-17\nEmployment period:/);
+  assert.equal(euresContactLine({ email: 'a@example.invalid' }), 'a@example.invalid');
+  assert.equal(euresContactLine({ contact: 'a@example.invalid', organisationName: 'Example GmbH', mobile: ' +49 170 0000000 ' }), 'a@example.invalid, +49 170 0000000, organisationName: Example GmbH', 'an e-mail is recognised by its value; an unknown key keeps its name');
+  assert.equal(euresContactLine('Erika Mustermann, recruiting@example.invalid'), 'Erika Mustermann, recruiting@example.invalid', 'a bare string stays as it is');
+  assert.equal(euresContactLine({ name: '<b>Erika &amp; Max</b>' }), 'Erika & Max', 'markup in a value is removed as everywhere');
+  assert.equal(euresContactLine({}), '');
+  assert.equal(euresContactLine(null), '');
+  assert.equal(euresContactLine([]), '');
+
+  // the other fields: deadline (epoch ms or text), period texts, several locations, nothing at all
+  const p = { description: 'x', lastApplicationDate: 1797638400000, employmentPeriod: { startDateText: 'asap', endDate: 1800000000000, periodDescription: '' },
+    employer: { website: '', sectorCodes: ['c30.3.0', 'm72.1.9'] }, locations: [{ countryCode: 'fr', region: 'frg05' }, { countryCode: 'de', cityName: 'Bremen', postalCode: '' }, { countryCode: 'de', cityName: 'Bremen' }] };
+  assert.equal(euresDetailSection({ jvProfiles: { en: p } }), 'Application and contact\nApplication deadline: 2026-12-19\nEmployment period: from asap, until 2027-01-15\nNACE: c30.3.0, m72.1.9\nLocation: France (FRG05) | Bremen, Germany');
+  assert.equal(euresDetailSection({ jvProfiles: { en: { ...p, lastApplicationDate: '2026-12-31' } } }).split('\n')[1], 'Application deadline: 2026-12-31', 'a textual date is kept');
+  assert.equal(euresDetailSection({ jvProfiles: { en: { description: 'x', applicationInstructions: [], personContacts: [], employmentPeriod: null, employer: {}, locations: [] } } }), '', 'a profile without any of it: no section');
+  assert.equal(euresDetailSection({}), '');
+  assert.equal(euresDetailSection(null), '');
+});
+
+test('eures: fetchDescription GETs the detail document and appends the section; the plain description alone when the call fails', async (t) => {
+  t.after(() => mock.restoreAll());
+  const detail = detailWithContact([{ name: 'Erika Mustermann', email: 'recruiting@example.invalid', phone: '+49 89 0000000' }]);
+  const job = euresJob(fixture('eures-search.json').jvs[0]);
+  const calls = [];
+  let status = 200;
+  mock.method(globalThis, 'fetch', async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method ?? 'GET', body: init.body, ua: init.headers?.['user-agent'] ?? '', accept: init.headers?.accept });
+    return status === 200 ? json(detail) : json({ errorType: status === 404 ? 'NOT_FOUND' : 'SERVICE_UNAVAILABLE', errorMessage: 'Unexpected error' }, status);
+  });
+  const text = await eures.fetchDescription(job);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${DETAIL}/MTAwMDEtMTAwMzk0Mjk0Ny1TIDE?requestLang=en`, 'the documented detail endpoint, the id from the job URL');
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].body, undefined);
+  assert.equal(calls[0].accept, 'application/json');
+  assert.match(calls[0].ua, /jobcrawl/, 'the same polite user agent as the search');
+  assert.ok(text.startsWith(job.description), 'the description first, unchanged');
+  assert.equal(text.slice(job.description.length, job.description.length + 25), '\n\nApplication and contact');
+  assert.match(text, /\nGewünschte Bewerbungsarten: per E-Mail, über Internet\n/);
+  assert.match(text, /\nContact: Erika Mustermann, recruiting@example\.invalid, \+49 89 0000000\n/);
+  assert.ok(text.endsWith('\nLocation: 88090 Immenstaad am Bodensee, Germany (DE147)'), text.slice(-80));
+  assert.doesNotMatch(text, /<\/?[a-z]+[^>]*>|&amp;/, 'no HTML or entity left');
+
+  // the id from job.id when the job has no portal URL; a job with neither gets its description back without a request
+  calls.length = 0;
+  await eures.fetchDescription({ id: 'ODQ1ODk4MyA5', description: 'x' });
+  assert.equal(calls[0].url, `${DETAIL}/ODQ1ODk4MyA5?requestLang=en`);
+  calls.length = 0;
+  assert.equal(await eures.fetchDescription({ description: 'x' }), 'x');
+  assert.equal(calls.length, 0);
+
+  // the backfill passes { url, title, company } without a description: the detail document's own (byte-identical) description is used
+  const backfilled = await eures.fetchDescription({ url: job.url, title: job.title, company: job.company });
+  assert.equal(backfilled, text);
+
+  // a failing detail call: the plain description alone, nothing thrown (a 404 at once; a 5xx after the one retry)
+  status = 404; calls.length = 0;
+  assert.equal(await eures.fetchDescription(job), job.description);
+  assert.equal(calls.length, 1);
+  status = 503; calls.length = 0;
+  assert.equal(await eures.fetchDescription(job), job.description);
+  assert.equal(calls.length, 2, 'a 5xx is retried once, as the search is');
+  assert.equal(await eures.fetchDescription({ url: job.url, title: job.title, company: job.company }), '', 'no description to fall back on: empty, which the callers count as the failure');
+  mock.restoreAll();
+  mock.method(globalThis, 'fetch', async () => json({ hello: 'world' }));
+  assert.equal(await eures.fetchDescription(job), job.description, 'a document without profiles adds nothing');
 });
 
 test('eures: searchBody is the portal request with 50 per page at most, newest first', () => {
