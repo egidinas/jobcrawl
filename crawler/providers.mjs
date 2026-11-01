@@ -81,41 +81,65 @@ export function plain(html = '') {
 }
 
 
+/** The element whose start tag `open` matches, up to the end tag that balances it (same-name tags nested inside are counted). */
+function balancedElement(html, open) {
+  const m = open.exec(html);
+  if (!m) return '';
+  const name = m[0].match(/^<(\w+)/)[1];
+  const re = new RegExp(`<(/?)${name}\\b[^>]*>`, 'gi');
+  re.lastIndex = m.index + m[0].length;
+  let depth = 1, t;
+  while ((t = re.exec(html))) { depth += t[1] ? -1 : 1; if (!depth) return html.slice(m.index, t.index + t[0].length); }
+  return html.slice(m.index);
+}
+
 /**
- * Fallback for career sites whose provider has no fetchDescription: the schema.org JobPosting JSON-LD if the page has one,
- * else the page's <main>/<article> text, else its body text (without scripts, navigation and footer). Returns '' when the page
- * yields less than 600 characters, which means a JavaScript-rendered page this crawler cannot read.
+ * Fallback for career sites whose provider has no fetchDescription: the schema.org JobPosting JSON-LD if the page has one, else
+ * the JobPosting microdata description (SAP SuccessFactors RMK sites such as jobs.hensoldt.net publish itemprop="description" and
+ * no JSON-LD, seen 2026-11-01), else the page's <main>/<article> text, else its body text (without scripts, navigation and footer).
+ * Returns '' when the page yields less than 600 characters, which means a JavaScript-rendered page this crawler cannot read.
  */
 export async function pageDescription(job) {
   try {
-    const html = await get(job.url, { json: false, timeoutMs: 15000 });
-    for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
-      try {
-        const d = JSON.parse(m[1]);
-        for (const x of Array.isArray(d) ? d : (d['@graph'] ?? [d])) {
-          const t = x?.['@type'];
-          if ((Array.isArray(t) ? t.includes('JobPosting') : t === 'JobPosting') && x.description) {
-            const text = plain(String(x.description));
-            if (text.length >= 600) return text;
-          }
-        }
-      } catch { /* not valid JSON: ignore this block */ }
-    }
-    const strip = (h) => plain(h.replace(/<(script|style|nav|header|footer|noscript|svg)[\s\S]*?<\/\1>/gi, ' ')).replace(/\u00ad/g, '');
-    // Page text, not a structured JobPosting: start at the line that is the job title (drops menus and leaked script), and
-    // insist on 1,500 characters, because a shorter page is usually posting metadata (company, department, job id) without the role.
-    const fromTitle = (t) => {
-      const want = (job.title ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-      const lines = t.split('\n');
-      const i = want ? lines.findIndex((l, n) => n > 0 && l.toLowerCase().replace(/\s+/g, ' ').trim() === want) : -1;
-      return i > 0 ? lines.slice(i).join('\n') : t;
-    };
-    let text = fromTitle(strip(html.match(/<(main|article)[\s\S]*?<\/\1>/i)?.[0] ?? ''));
-    if (text.length < 1500) text = fromTitle(strip(html.match(/<body[\s\S]*<\/body>/i)?.[0] ?? ''));
-    return text.length >= 1500 ? text : '';
+    return pageDescriptionOf(await get(job.url, { json: false, timeoutMs: 15000 }), job);
   } catch {
     return '';
   }
+}
+
+/** pageDescription on a page already fetched; pure, so the tests can run it on captured pages. */
+export function pageDescriptionOf(html, job = {}) {
+  html = String(html);
+  // RMK pages write their line breaks as &#13; entities, which decode to CRs after plain() has collapsed the whitespace.
+  const tidy = (t) => t.replace(/\r/g, '').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  for (const m of html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    try {
+      const d = JSON.parse(m[1]);
+      for (const x of Array.isArray(d) ? d : (d['@graph'] ?? [d])) {
+        const t = x?.['@type'];
+        if ((Array.isArray(t) ? t.includes('JobPosting') : t === 'JobPosting') && x.description) {
+          const text = plain(String(x.description));
+          if (text.length >= 600) return text;
+        }
+      }
+    } catch { /* not valid JSON: ignore this block */ }
+  }
+  if (/itemtype=["']https?:\/\/schema\.org\/JobPosting["']/i.test(html)) {
+    const text = tidy(plain(balancedElement(html, /<(?:div|span|section|p)\b[^>]*\bitemprop=["']description["'][^>]*>/i)));
+    if (text.length >= 600) return text;
+  }
+  const strip = (h) => plain(h.replace(/<(script|style|nav|header|footer|noscript|svg)[\s\S]*?<\/\1>/gi, ' ')).replace(/\u00ad/g, '');
+  // Page text, not a structured JobPosting: start at the line that is the job title (drops menus and leaked script), and
+  // insist on 1,500 characters, because a shorter page is usually posting metadata (company, department, job id) without the role.
+  const fromTitle = (t) => {
+    const want = (job.title ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const lines = t.split('\n');
+    const i = want ? lines.findIndex((l, n) => n > 0 && l.toLowerCase().replace(/\s+/g, ' ').trim() === want) : -1;
+    return i > 0 ? lines.slice(i).join('\n') : t;
+  };
+  let text = fromTitle(strip(html.match(/<(main|article)[\s\S]*?<\/\1>/i)?.[0] ?? ''));
+  if (text.length < 1500) text = fromTitle(strip(html.match(/<body[\s\S]*<\/body>/i)?.[0] ?? ''));
+  return text.length >= 1500 ? text : '';
 }
 
 
@@ -256,6 +280,32 @@ export function ripplingDescription(d) {
   const desc = d?.description;
   const parts = typeof desc === 'string' ? [desc] : Object.values(desc ?? {});
   return parts.filter((h) => typeof h === 'string').map((h) => plain(h)).filter(Boolean).join('\n\n');
+}
+
+/** The Date field of an RMK tile, "Nov 1, 2026" on English sites, to YYYY-MM-DD; any other format stays empty rather than guessed. */
+const tileDate = (raw = '') => {
+  if (!/^[A-Za-z]{3,9} \d{1,2}, \d{4}$/.test(raw)) return '';
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * The job tiles of one SAP SuccessFactors RMK /tile-search-results/?startrow=N page (25 per page): one entry per
+ * <li class="job-tile">, null for a tile without link or title, so the caller can page by the tile count. The location is the
+ * tile's city, location or multilocation field, the date the posting date the tile shows. No tile at all: an empty array, which
+ * the caller treats as the end of the listing, never as a listing of nothing.
+ */
+export function successfactorsTileJobs(html, origin) {
+  return [...String(html).matchAll(/<li class="job-tile job-id-\d+\b[\s\S]*?<\/li>/g)].map(([block]) => {
+    const urlM = block.match(/data-url="([^"]+)"/);
+    const titleM = block.match(/class="jobTitle-link[^"]*"[^>]*>([\s\S]*?)<\/a>/) || block.match(/title="([^"]+)"/);
+    const title = titleM ? plain(titleM[1]) : '';
+    if (!urlM || !title) return null;
+    const field = (name) => block.match(new RegExp(`id="[^"]*-section-${name}-value">([\\s\\S]*?)<\\/div>`))?.[1];
+    const loc = field('city') ?? field('location') ?? field('multilocation') ?? '';
+    const url = /^https?:\/\//i.test(urlM[1]) ? urlM[1] : `${origin}${urlM[1].startsWith('/') ? '' : '/'}${urlM[1]}`;
+    return { title, url, location: plain(loc).replace(/^Locations?\s*/i, '').trim(), postedAt: tileDate(plain(field('date') ?? '')) };
+  });
 }
 
 export const providers = {
@@ -617,6 +667,10 @@ export const providers = {
 
   // softgarden: server-rendered widget listing every posting with its date (M/D/Y or D.M.Y). Approach as in
   // career-ops providers/softgarden.mjs. slug = the tenant host, e.g. acme.softgarden.io.
+  // Not on the Frontend API v3 (api.softgarden.io/api/rest/v3/frontend/jobslist/{channelId}, one job with its HTML jobAdText at
+  // .../jobslist/{channelId}/job/{jobDbId}, HTTP Basic "clientId:" with no secret): the client id is created by the tenant under
+  // Settings > Integrations > softgarden API and is nowhere on the public career page (infodas.softgarden.io, 2026-11-01: a Wicket
+  // page, no API host, no client or channel id; its UUIDs are job categories), so the API needs the tenant's cooperation.
   softgarden: {
     detect: (u) => u.match(/([\w-]+\.softgarden\.io)/i)?.[1],
     async fetch(slug) {
@@ -1382,35 +1436,16 @@ export const providers = {
         } catch {}
       }
 
-      // Strategy B: RMK tile-search-results HTML fragment (e.g. Hensoldt, AVL)
+      // Strategy B: RMK tile-search-results HTML fragment (e.g. Hensoldt, AVL), 25 tiles a page. A page without a tile ends the
+      // strategy: jobs.bmwgroup.com answers with a bare "<!DOCTYPE html>" (16 bytes, 2026-11-01), which is no listing.
       try {
         let startrow = 0;
         for (let p = 0; p < 25; p++) {
-          const html = await get(`${origin}/tile-search-results/?startrow=${startrow}`, { json: false, timeoutMs: 15000 });
-          const tileRe = /<li class="job-tile job-id-(\d+)\b[\s\S]*?<\/li>/g;
-          let t;
-          let batchCount = 0;
-          while ((t = tileRe.exec(html)) !== null) {
-            batchCount++;
-            const block = t[0];
-            const urlM = block.match(/data-url="([^"]+)"/);
-            if (!urlM) continue;
-            const titleM = block.match(/class="jobTitle-link[^"]*"[^>]*>([\s\S]*?)<\/a>/) || block.match(/title="([^"]+)"/);
-            const title = titleM ? plain(titleM[1]) : '';
-            if (!title) continue;
-            const cityM = block.match(/id="[^"]*-section-city-value">([\s\S]*?)<\/div>/) ||
-                          block.match(/id="[^"]*-section-location-value">([\s\S]*?)<\/div>/) ||
-                          block.match(/class="section-field multilocation[^"]*"[^>]*>([\s\S]*?)<\/div>/);
-            const city = cityM ? plain(cityM[1]).replace(/^Locations?\s*/i, '').trim() : '';
-            const url = /^https?:\/\//i.test(urlM[1]) ? urlM[1] : `${origin}${urlM[1].startsWith('/') ? '' : '/'}${urlM[1]}`;
-            if (!seen.has(url)) {
-              seen.add(url);
-              jobs.push({ title, url, location: city, postedAt: '' });
-            }
-          }
-          if (!batchCount) break;
-          startrow += batchCount;
-          if (p > 0) await new Promise((r) => setTimeout(r, 200));
+          const page = successfactorsTileJobs(await get(`${origin}/tile-search-results/?startrow=${startrow}`, { json: false, timeoutMs: 15000 }), origin);
+          if (!page.length) break;
+          for (const j of page) if (j && !seen.has(j.url)) { seen.add(j.url); jobs.push(j); }
+          startrow += page.length;
+          await new Promise((r) => setTimeout(r, 200));
         }
         if (jobs.length) return jobs;
       } catch {}
@@ -1461,7 +1496,17 @@ export const providers = {
         if (jobs.length) return jobs;
       } catch {}
 
-      return jobs;
+      // Strategy D: the site's sitemap.xml lists every job page (jobs.bmwgroup.com: 762 <url>s with lastmod, 2026-11-01). The
+      // sitemap provider reads those pages' JobPosting markup (JSON-LD or microdata), cached by lastmod, so after the first cycle this
+      // costs one page fetch per new or changed posting.
+      try {
+        const fromSitemap = await providers.sitemap.fetch(`${origin}/sitemap.xml`, { url_pattern: '/job/', max_jobs: entry.max_jobs ?? 3000 });
+        if (fromSitemap.length) return fromSitemap;
+      } catch {}
+
+      // Nothing listed anywhere: a failed board (crawl.mjs records the error and counts it against the board's health), never an
+      // employer with no openings, which would mark every stored posting gone.
+      throw new Error(`no job listing at ${origin}: RSS feed, tile search, CSB search and sitemap all empty`);
     },
   },
 
