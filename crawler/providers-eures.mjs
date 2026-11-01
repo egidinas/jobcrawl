@@ -1,7 +1,8 @@
 // EURES (the European Employment Services portal, run by the European Labour Authority) as a job source. The portal
 // https://europa.eu/eures/portal/ is an Angular app; this provider calls the backend that app calls, anonymously:
 //   POST https://europa.eu/eures/api/jv-searchengine/public/jv-search/search   (50 per page at most; more answers HTTP 400)
-// The endpoint is undocumented and may change without notice: treat every failure here as "EURES changed", not as a bug in a
+//   GET  https://europa.eu/eures/api/jv-searchengine/public/jv/id/<id>?requestLang=en   (fetchDescription: one vacancy in full)
+// The endpoints are undocumented and may change without notice: treat every failure here as "EURES changed", not as a bug in a
 // profile. What was observed, the request/response schema and the code lists are in docs/sources/eures-api.md (2026-11-01).
 // Legal: vacancies are (c) ELA, re-use authorised with ELA acknowledged as the source (https://eures.europa.eu/legal-notice_en);
 // every job carries meta.source = 'EURES (ELA)'. A profile entry: { provider: 'eures', slug: '<keyword>|<country codes>' } or a
@@ -37,6 +38,7 @@ const FILTER_KEYS = ['publicationPeriod', 'positionOfferingCodes', 'positionSche
   'educationAndQualificationLevelCodes', 'euresFlagCodes', 'occupationUris', 'skillUris', 'minNumberPost', 'requestLanguage'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const list = (v) => (Array.isArray(v) ? v : v == null || v === '' ? [] : [v]);
 
 const decode = (s = '') =>
   String(s)
@@ -168,8 +170,9 @@ export function euresPlace(country, region) {
 
 /**
  * One vacancy of the search response -> job. labels: ESCO URI -> label (optional; URIs stay when unknown). The description in the
- * search response is the whole text (byte-identical to the detail document's), so there is no fetchDescription. The company is
- * "<employer> (via EURES)" as the other aggregator providers suffix it, "undisclosed (via EURES)" when the vacancy names none.
+ * search response is the whole text (byte-identical to the detail document's); fetchDescription adds only the detail document's
+ * application and contact section. The company is "<employer> (via EURES)" as the other aggregator providers suffix it,
+ * "undisclosed (via EURES)" when the vacancy names none.
  */
 export function euresJob(v, labels = {}) {
   const places = Object.entries(v.locationMap ?? {}).flatMap(([cc, regions]) => (Array.isArray(regions) && regions.length ? regions : [null]).map((r) => [cc, r]));
@@ -199,8 +202,87 @@ export function euresJob(v, labels = {}) {
   };
 }
 
+// ---- detail document ----
+
+/** The vacancy id of a job: the last path segment of its portal URL (.../jv-se/jv-details/<id>?lang=en), percent-decoded, else job.id. */
+export function euresIdOf(job = {}) {
+  const m = /\/jv-details\/([^/?#]+)/i.exec(String(job?.url ?? ''));
+  if (m) { try { return decodeURIComponent(m[1]); } catch { return m[1]; } }
+  return String(job?.id ?? '').trim();
+}
+
+/** The profile of a detail document the portal shows: the preferred language's, else the first; null when the document has none. */
+export const euresProfile = (d) => { const p = d?.jvProfiles; return p && typeof p === 'object' ? p[d.preferredLanguage] ?? Object.values(p)[0] ?? null : null; };
+
+/**
+ * One personContacts entry as "name, role, e-mail, phone, address, <other key>: <value>". The entry's shape is undocumented (the capture
+ * behind the fixture had the field removed), so every string leaf is read and classified by its key name: nothing a feed publishes is dropped.
+ */
+export function euresContactLine(c) {
+  const slots = { name: [], role: [], email: [], phone: [], address: [], other: [] };
+  const walk = (v, key, depth) => {
+    if (v == null || v === '' || typeof v === 'boolean') return;
+    if (Array.isArray(v)) { for (const e of v) walk(e, key, depth); return; }
+    if (typeof v === 'object') { if (depth < 3) for (const [k, e] of Object.entries(v)) walk(e, k, depth + 1); return; }
+    const s = line(String(v));
+    if (!s) return;
+    const k = key.toLowerCase();
+    const slot = /mail/.test(k) || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s) ? 'email' : /phone|tel|mobile|fax/.test(k) ? 'phone'
+      : /name|salutation/.test(k) && !/^(?:organi[sz]ation|company|employer)/.test(k) ? 'name' : /role|title|position|function|department/.test(k) ? 'role'
+      : /address|street|city|postal|zip|country/.test(k) ? 'address' : 'other';
+    slots[slot].push(slot === 'other' && key ? `${key}: ${s}` : s);
+  };
+  walk(c, '', 0);
+  const uniq = (a) => [...new Set(a)];
+  return [uniq(slots.name).join(' '), ...uniq(slots.role), ...uniq(slots.email), ...uniq(slots.phone), uniq(slots.address).join(' '), ...uniq(slots.other)].filter(Boolean).join(', ');
+}
+
+/**
+ * The "Application and contact" section of a detail document (GET /jv-searchengine/public/jv/id/<id>), plain text: the application
+ * instructions (an <a> keeps its link as "text (url)"), one "Contact:" line per personContacts entry, the application deadline, the
+ * employment period, the employer's web site and NACE class, and the locations with postal code and city. '' when the profile has none of it.
+ */
+export function euresDetailSection(d) {
+  const p = euresProfile(d);
+  if (!p) return '';
+  const out = [];
+  const keepLinks = (h) => String(h ?? '').replace(/<a\s[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, text) => (text.includes(href) ? text : `${text} (${href})`));
+  for (const a of list(p.applicationInstructions)) { const t = euresText(keepLinks(a)); if (t) out.push(t); }
+  for (const c of list(p.personContacts)) { const t = euresContactLine(c); if (t) out.push(`Contact: ${t}`); }
+  const day = (v, text) => line(text ?? '') || (Number.isFinite(Number(v)) ? isoMs(v).slice(0, 10) : line(String(v ?? '')));
+  const deadline = day(p.lastApplicationDate);
+  if (deadline) out.push(`Application deadline: ${deadline}`);
+  const ep = p.employmentPeriod ?? {};
+  const start = day(ep.startDate, ep.startDateText), end = day(ep.endDate, ep.endDateText);
+  const period = [start && `from ${start}`, end && `until ${end}`, line(ep.periodDescription ?? '')].filter(Boolean).join(', ');
+  if (period) out.push(`Employment period: ${period}`);
+  const site = line(p.employer?.website ?? '');
+  if (site) out.push(`Employer web site: ${site}`);
+  const nace = list(p.employer?.sectorCodes).map((c) => line(String(c ?? ''))).filter(Boolean);
+  if (nace.length) out.push(`NACE: ${nace.join(', ')}`);
+  const places = list(p.locations).map((l) => [[line(l?.postalCode ?? ''), line(l?.cityName ?? '')].filter(Boolean).join(' '), euresPlace(l?.countryCode, l?.region)].filter(Boolean).join(', ')).filter(Boolean);
+  if (places.length) out.push(`Location: ${[...new Set(places)].join(' | ')}`);
+  return out.length ? `Application and contact\n${out.join('\n')}` : '';
+}
+
 export const eures = {
   detect: detectEures,
+  /**
+   * The detail document (GET /jv-searchengine/public/jv/id/<id>?requestLang=en, one request per vacancy) for what the search response does
+   * not carry: the recruiting contacts and application instructions. Returns the description (byte-identical to the search response's)
+   * followed by euresDetailSection(). The raw capture (rawcapture.mjs wraps global fetch) stores the detail JSON byte for byte, which is
+   * the point; this text is for the saved description. When the detail call fails, the job's own description alone and no log line: the
+   * callers (the crawl's lazy-JD pool, the detail backfill) count a short result as the failure.
+   */
+  async fetchDescription(job) {
+    const own = String(job?.description ?? '');
+    const id = euresIdOf(job);
+    if (!id) return own;
+    let d;
+    try { d = await api(`/jv-searchengine/public/jv/id/${encodeURIComponent(id)}?requestLang=en`); } catch { return own; }
+    const text = euresText(euresProfile(d)?.description ?? '') || own;
+    return [text, euresDetailSection(d)].filter(Boolean).join('\n\n');
+  },
   /**
    * slug "<keyword>|<codes>"; entry.max_jobs caps the result (default and maximum 2,000); entry.eures sets extra search filters
    * (publicationPeriod, positionOfferingCodes, sectorCodes, requiredLanguages, ...; see docs/sources/eures-api.md).

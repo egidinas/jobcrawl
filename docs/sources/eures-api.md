@@ -13,8 +13,9 @@ code lists can change or disappear without notice. Treat every failure of the pr
 states ELA's copyright and authorises re-use provided ELA is acknowledged as the source. The crawler therefore stores
 `meta.source = "EURES (ELA)"` on every vacancy and suffixes the employer "(via EURES)". The portal's own terms of use are
 linked from its disclaimer dialog (https://europa.eu/eures/portal/jv-se/home?lang=en&pageCode=find_a_job#openDisclaimerQualityDialog).
-The detail document carries personal data of recruiters (`personContacts`: names, e-mail addresses, phone numbers); the crawler
-does not read the detail document and the fixture drops that field.
+The detail document carries personal data of recruiters (`personContacts`: names, e-mail addresses, phone numbers). The provider's
+`fetchDescription` reads it (owner's rule, 2026-11-01: contact data a posting publishes is collected with the posting and kept out
+of the public outputs by a separate rule); the fixture drops that field and the tests use a synthetic contact ("Erika Mustermann").
 
 **Community documentation.** https://github.com/rorar/EURES-API-Documentation (MIT) publishes a reverse-engineered OpenAPI 3.1
 specification of 20 endpoints across three services (`jv-searchengine`, `shared-data-rest-api`,
@@ -163,8 +164,13 @@ address, e-mail: personal data), and per the community spec also `lastApplicatio
 (`salaries[] {minimumSalary, maximumSalary, currencyCode, payingIntervalCode, remunerationTypeCode}`),
 `requiredEducationLevelCode`, `requiredQualificationLevelCode`, `requiredYearsOfExperience`, `travelPreference`.
 
-Since the search response already carries the full description, the provider has no `fetchDescription` and never calls this
-endpoint; it is documented for completeness (city names, salary, deadline, start date would come from here).
+The search response already carries the full description, so the search never needs this endpoint. The provider's
+`fetchDescription(job)` GETs it (one request per vacancy; the crawl calls it only for a vacancy without a description, so in practice
+the detail backfill does) and returns the description followed by a plain-text "Application and contact" section: the
+`applicationInstructions` (an `<a>` keeps its link as "text (url)"), one `Contact:` line per `personContacts` entry (name, role, e-mail,
+phone, address, any other field as `key: value`; the entry's shape is undocumented, so every string leaf is read), `lastApplicationDate`,
+`employmentPeriod`, the employer's web site and NACE class, and the locations as `<postal code> <city>, <Country> (<NUTS>)`. The raw
+capture stores the detail JSON byte for byte. When the call fails the job's own description comes back alone, nothing is logged.
 
 ## Limits and behaviour observed (2026-11-01)
 
@@ -188,7 +194,7 @@ endpoint; it is documented for completeness (city names, salary, deadline, start
 | `company` | `<employer.name> (via EURES)`, or `undisclosed (via EURES)` |
 | `location` | per `locationMap` entry `"<Country> (<NUTS>)"`, e.g. `Germany (DE147)`; the country alone when the region is null or `-NS`; several joined with ` \| ` |
 | `postedAt` | `creationDate` as ISO 8601 |
-| `description` | `description` as plain text |
+| `description` | `description` as plain text; `fetchDescription` appends the detail document's "Application and contact" section |
 | `meta.nuts` | the NUTS codes (the country code when none) |
 | `meta.contract` | `positionOfferingCode` (dropped when `NS`) |
 | `meta.schedule` | `positionScheduleCodes` without `NS` |

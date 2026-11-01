@@ -108,6 +108,22 @@ export async function pageDescription(job) {
   }
 }
 
+/**
+ * "Contact: <name>, <contactType>, <e-mail>, <telephone>" from a JobPosting's applicationContact (a schema.org ContactPoint, or a list of
+ * them) and the hiringOrganization's e-mail and telephone, when the posting publishes any; '' otherwise. Collected with the posting
+ * (owner's rule, 2026-11-01); the public outputs drop it elsewhere.
+ */
+function jsonLdContact(jp) {
+  const s = (v) => (v == null || typeof v === 'object' ? '' : plain(String(v)).replace(/^(?:mailto|tel):/i, '').replace(/\s+/g, ' ').trim());
+  const point = (c) => (c && typeof c === 'object' ? [s(c.name), s(c.contactType), s(c.email), s(c.telephone)].filter(Boolean).join(', ') : s(c));
+  const parts = [].concat(jp.applicationContact ?? []).map(point).filter(Boolean);
+  for (const o of [].concat(jp.hiringOrganization ?? [])) {
+    const reach = [s(o?.email), s(o?.telephone)].filter(Boolean);
+    if (reach.length) parts.push([s(o.name), ...reach].filter(Boolean).join(', '));
+  }
+  return parts.length ? `Contact: ${parts.join('; ')}` : '';
+}
+
 /** pageDescription on a page already fetched; pure, so the tests can run it on captured pages. */
 export function pageDescriptionOf(html, job = {}) {
   html = String(html);
@@ -120,7 +136,7 @@ export function pageDescriptionOf(html, job = {}) {
         const t = x?.['@type'];
         if ((Array.isArray(t) ? t.includes('JobPosting') : t === 'JobPosting') && x.description) {
           const text = plain(String(x.description));
-          if (text.length >= 600) return text;
+          if (text.length >= 600) return [text, jsonLdContact(x)].filter(Boolean).join('\n\n');
         }
       }
     } catch { /* not valid JSON: ignore this block */ }

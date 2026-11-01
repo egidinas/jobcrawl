@@ -82,6 +82,21 @@ test('pageDescriptionOf: JobPosting microdata when a job page has no JSON-LD', (
   assert.ok(pageDescriptionOf(withLd, {}).startsWith('Build satellites.'));
   assert.equal(pageDescriptionOf('<html><body><div itemscope itemtype="http://schema.org/JobPosting"><div itemprop="description">short</div></div></body></html>', {}), '');
   assert.equal(pageDescriptionOf('<html><body><p>nothing</p></body></html>', {}), '');
+
+  // the recruiting contact a posting publishes (applicationContact ContactPoint, hiringOrganization e-mail/telephone) closes the text as
+  // one "Contact:" line; synthetic data (example.invalid), not a capture
+  const inject = (jp) => pageDescriptionOf(html.replace('</head>', `<script type="application/ld+json">${JSON.stringify(jp)}</script></head>`), {});
+  const full = inject({ ...ld,
+    applicationContact: { '@type': 'ContactPoint', name: 'Erika Mustermann', contactType: 'Recruiting', email: 'mailto:recruiting@example.invalid', telephone: '+49 89 0000000' },
+    hiringOrganization: { '@type': 'Organization', name: 'Example GmbH', email: 'jobs@example.invalid', telephone: 'tel:+49 89 0000001' } });
+  assert.ok(full.startsWith('Build satellites.'));
+  assert.ok(full.endsWith('\n\nContact: Erika Mustermann, Recruiting, recruiting@example.invalid, +49 89 0000000; Example GmbH, jobs@example.invalid, +49 89 0000001'), full.slice(-160));
+  assert.equal(full.split('Contact:').length, 2, 'one line');
+  assert.doesNotMatch(pageDescriptionOf(withLd, {}), /Contact:/, 'no contact in the posting: no line');
+  assert.doesNotMatch(inject({ ...ld, hiringOrganization: { '@type': 'Organization', name: 'Example GmbH', sameAs: 'https://example.invalid' } }), /Contact:/, 'an organisation without e-mail or telephone adds nothing');
+  assert.ok(inject({ ...ld, applicationContact: [{ '@type': 'ContactPoint', email: 'a@example.invalid' }, { '@type': 'ContactPoint', telephone: '+49 89 0000002' }, {}] })
+    .endsWith('\n\nContact: a@example.invalid; +49 89 0000002'), 'a list of contact points, an empty one skipped');
+  assert.ok(inject({ ...ld, applicationContact: 'Recruiting team, recruiting@example.invalid' }).endsWith('\n\nContact: Recruiting team, recruiting@example.invalid'), 'a bare string is kept as text');
 });
 
 test('successfactors: an empty tile response makes the fetch throw instead of listing 0 jobs', async () => {
