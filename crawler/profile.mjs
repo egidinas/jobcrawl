@@ -53,6 +53,7 @@ export function loadProfile(dirArg) {
   if (crawl.review_dir !== undefined && typeof crawl.review_dir !== 'string') throw new ProfileError('crawl.review_dir must be a string');
   if (crawl.min_free_mb !== undefined && (typeof crawl.min_free_mb !== 'number' || !(crawl.min_free_mb >= 0))) throw new ProfileError('crawl.min_free_mb must be a number >= 0');
   if (crawl.jd_keep_days !== undefined && (typeof crawl.jd_keep_days !== 'number' || !Number.isFinite(crawl.jd_keep_days) || crawl.jd_keep_days < 0)) throw new ProfileError('crawl.jd_keep_days must be a number >= 0');
+  if (crawl.history_prune_days !== undefined && (typeof crawl.history_prune_days !== 'number' || !Number.isFinite(crawl.history_prune_days) || crawl.history_prune_days < 0)) throw new ProfileError('crawl.history_prune_days must be a number >= 0');
   return {
     dir,
     file,
@@ -70,6 +71,7 @@ export function loadProfile(dirArg) {
     locationFilter: crawl.location_filter ?? null,
     minFreeMb: crawl.min_free_mb ?? 0,
     jdKeepDays: crawl.jd_keep_days ?? 90,
+    historyPruneDays: crawl.history_prune_days ?? 0,   // 0 = never prune (hoard first, reduce later)
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,
   };

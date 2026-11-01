@@ -131,6 +131,23 @@ test('crawl.jd_keep_days defaults to 90 and must be a number >= 0', () => {
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
+test('crawl.history_prune_days defaults to 0 (never prune) and must be a number >= 0', () => {
+  const d = tmp();
+  const write = (name, obj) => { mkdirSync(join(d, name), { recursive: true }); writeFileSync(join(d, name, 'profile.json'), JSON.stringify(obj)); };
+  try {
+    write('none', {});
+    assert.equal(loadProfile(join(d, 'none')).historyPruneDays, 0);
+    write('zero', { crawl: { history_prune_days: 0 } });
+    assert.equal(loadProfile(join(d, 'zero')).historyPruneDays, 0);
+    write('valid', { crawl: { history_prune_days: 365 } });
+    assert.equal(loadProfile(join(d, 'valid')).historyPruneDays, 365);
+    write('str', { crawl: { history_prune_days: '90' } });
+    assert.throws(() => loadProfile(join(d, 'str')), (e) => e instanceof ProfileError && e.message === 'crawl.history_prune_days must be a number >= 0');
+    write('neg', { crawl: { history_prune_days: -1 } });
+    assert.throws(() => loadProfile(join(d, 'neg')), (e) => e instanceof ProfileError && e.message === 'crawl.history_prune_days must be a number >= 0');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
 test('crawl --jd-cleanup-only removes the old descriptions, runs no crawl and prints the one-line summary', () => {
   const { data, jd, names } = fixture();
   const p = tmp();
