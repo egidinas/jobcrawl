@@ -207,7 +207,7 @@ async function main() {
   if (!rawDir || !existsSync(join(rawDir, 'index'))) fail(`no raw store (JOBCRAWL_RAW_DIR or --raw): ${rawDir ?? 'unset'}`);
   process.env.JOBCRAWL_RAW_DIR = rawDir;
   if (!flag('dry-run') && !installRawCapture(rawDir)) fail('the raw capture could not be installed');
-  tuning.minGapMs = Math.max(500, Number(opt('gap', tuning.minGapMs)) || 1000);   // never faster than 2 req/s, whatever is passed
+  tuning.minGapMs = Math.max(1000, Number(opt("gap", tuning.minGapMs)) || 1000);   // never faster than 1 req/s, whatever is passed
   setEuresRateFile(pathResolve(dataDir, 'eures-rate.json'));
 
   const lockFile = pathResolve(dataDir, 'eures-employer-detail.lock');
