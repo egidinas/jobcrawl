@@ -8,6 +8,11 @@
 // every job carries meta.source = 'EURES (ELA)'. A profile entry: { provider: 'eures', slug: '<keyword>|<country codes>' } or a
 // portal search URL as careers_url. Pages are read 1 s apart, newest first (MOST_RECENT = lastModificationDate desc), until the
 // results run out, 2,000 vacancies (entry.max_jobs) or the time budget (crawl.mjs gives an entry 35 s), whichever comes first.
+// Employer mode (slug 'employer:<name>|<codes>', one board per tracked EEA employer, eures-employer-boards.mjs writes them) collects
+// the EURES copies of an employer's own postings for the cross-listing and their richer metadata: the name goes to the backend as
+// specificSearchCode EMPLOYER, which is a FUZZY full-text match ("OHB" also finds every "oHG"; probe 2026-11-01 in eures-api.md), so
+// that mode sorts BEST_MATCH (the exact employer comes first), keeps only vacancies whose employer name contains the searched name as
+// whole words (euresEmployerMatches) and stops at the first page without one. 'legalid:<id>|<codes>' sends LEGAL_ID the same way.
 // EURES is an aggregator (the national public employment services feed it), so like the other aggregator providers the employer
 // name gets the "(via EURES)" suffix (crosslist.mjs isAggregatorRow): an EURES copy of a role the employer lists on its own ATS is
 // a cross-listing, not a second role. 'eures' is in crosslist.mjs AGGREGATOR_PROVIDERS.
@@ -71,24 +76,38 @@ function meta(o) {
 // ---- slug <-> portal URL ----
 // slug: "<keyword>|<lowercase country or NUTS codes, comma-separated>", e.g. "satellite|de,fr", "satellite|" (all countries), "|lu".
 // The backend takes lowercase NUTS codes ("de", "de1", "de147") and "<country>-NS" for vacancies of a country without a region.
+// Two more modes, told apart by a prefix on the keyword part: "employer:<name>|<codes>" searches the employer name only
+// (specificSearchCode EMPLOYER) and "legalid:<id>|<codes>" the employer's legal id (LEGAL_ID). A keyword that itself starts with
+// "employer:" or "legalid:" cannot be searched in keyword mode.
 const CODE = /^[a-z]{2}(?:-NS|[a-z0-9]{1,3})?$/;
+const MODE_PREFIX = /^(employer|legal[-_]?id):\s*/i;
+/** The slug prefix of each search mode; the mode of a slug without one is EVERYWHERE (the keyword mode). */
+export const SLUG_PREFIX = { EVERYWHERE: '', EMPLOYER: 'employer:', LEGAL_ID: 'legalid:' };
+/** The portal URL parameter that carries the keyword of each mode (keywordsEverywhere is the portal's own; the other two are this crawler's, see detectEures). */
+const URL_PARAM = { EVERYWHERE: 'keywordsEverywhere', EMPLOYER: 'keywordsEmployer', LEGAL_ID: 'keywordsLegalId' };
 
-/** { keyword, codes } of a slug. Codes are lowercased ("-NS" kept upper) and deduplicated; anything that is not a country/NUTS code is dropped. */
+/**
+ * { keyword, codes, mode } of a slug. mode is 'EVERYWHERE' (keyword mode), 'EMPLOYER' or 'LEGAL_ID' (the specificSearchCode sent); the
+ * prefix is removed from the keyword. Codes are lowercased ("-NS" kept upper) and deduplicated; anything that is not a country/NUTS code is dropped.
+ */
 export function parseSlug(slug = '') {
   const i = String(slug).indexOf('|');
-  const keyword = (i === -1 ? String(slug) : slug.slice(0, i)).trim();
+  let keyword = (i === -1 ? String(slug) : slug.slice(0, i)).trim();
+  let mode = 'EVERYWHERE';
+  const m = MODE_PREFIX.exec(keyword);
+  if (m) { mode = m[1].toLowerCase().startsWith('employer') ? 'EMPLOYER' : 'LEGAL_ID'; keyword = keyword.slice(m[0].length).trim(); }
   const codes = i === -1 ? [] : [...new Set(slug.slice(i + 1).split(/[,\s]+/).map((c) => c.trim().toLowerCase().replace(/-ns$/, '-NS')).filter((c) => CODE.test(c)))];
-  return { keyword, codes };
+  return { keyword, codes, mode };
 }
 
-/** The portal search URL of a slug (the inverse of detect). */
+/** The portal search URL of a slug (the inverse of detect): keywordsEverywhere, keywordsEmployer or keywordsLegalId by mode. */
 export function euresBoardUrl(slug) {
-  const { keyword, codes } = parseSlug(slug);
+  const { keyword, codes, mode } = parseSlug(slug);
   const u = new URL(`${EURES_PORTAL}/search`);
   u.searchParams.set('page', '1');
   u.searchParams.set('resultsPerPage', '10');
-  u.searchParams.set('orderBy', 'MOST_RECENT');
-  if (keyword) u.searchParams.set('keywordsEverywhere', keyword);
+  u.searchParams.set('orderBy', mode === 'EVERYWHERE' ? 'MOST_RECENT' : 'BEST_MATCH');
+  if (keyword) u.searchParams.set(URL_PARAM[mode], keyword);
   for (const c of codes) u.searchParams.append('locationCodes', c);
   u.searchParams.set('lang', 'en');
   return u.href;
@@ -97,27 +116,64 @@ export function euresBoardUrl(slug) {
 /**
  * A tracked EURES "board" is a portal search: https://europa.eu/eures/portal/jv-se/search?keywordsEverywhere=satellite&locationCodes=de
  * (the portal's own parameters; several locationCodes repeated or comma-joined), or the short form ?keyword=satellite&location=de,fr.
- * Returns "<keyword>|<codes>", or null for anything else (other pages of the portal, a search with neither keyword nor location).
+ * Employer mode: ?keywordsEmployer=<name> or the short form ?employer=<name>; legal-id mode: ?keywordsLegalId=<id> or ?legalId=<id>
+ * (this crawler's parameter names, modelled on keywordsEverywhere; the portal's advanced form has the fields but their URL parameters
+ * were not verified). One keyword per board: an employer parameter wins over a legal id, which wins over an everywhere keyword.
+ * Returns "<keyword>|<codes>", "employer:<name>|<codes>" or "legalid:<id>|<codes>", or null for anything else (other pages of the
+ * portal, a search with neither keyword nor location).
  */
 export function detectEures(url = '') {
   let u;
   try { u = new URL(String(url)); } catch { return null; }
   if (!/^(?:www\.)?europa\.eu$/i.test(u.hostname) || !/^\/eures\/portal\/jv-se\/(?:search|advanced)\/?$/i.test(u.pathname)) return null;
   const p = u.searchParams;
-  const keyword = (p.get('keywordsEverywhere') ?? p.get('keyword') ?? p.get('keywords') ?? p.get('q') ?? '').trim();
+  const employer = (p.get('keywordsEmployer') ?? p.get('employer') ?? '').trim();
+  const legalId = (p.get('keywordsLegalId') ?? p.get('legalId') ?? p.get('legalid') ?? '').trim();
+  const everywhere = (p.get('keywordsEverywhere') ?? p.get('keyword') ?? p.get('keywords') ?? p.get('q') ?? '').trim();
+  const mode = employer ? 'EMPLOYER' : legalId ? 'LEGAL_ID' : 'EVERYWHERE';
+  const keyword = employer || legalId || everywhere;
   const raw = [...p.getAll('locationCodes'), ...p.getAll('location'), ...p.getAll('locations')];
   const { codes } = parseSlug(`|${raw.join(',')}`);
   if (!keyword && !codes.length) return null;
-  return `${keyword}|${codes.join(',')}`;
+  return `${SLUG_PREFIX[mode]}${keyword}|${codes.join(',')}`;
+}
+
+/**
+ * Does an employer name the backend returned belong to the employer searched for? The searched name's words must appear in the
+ * returned name as whole words, in order and adjacent: "OHB System" matches "OHB-System AG" and "OHB System AG", not "OHB Digital
+ * Connect GmbH"; "OHB" matches all three, not "K2Trans OHG". Case, diacritics (ü = ue) and punctuation do not count, and the
+ * connectors "and"/"und"/"&" are ignored on both sides ("Airbus Defence and Space" = "Airbus Defence & Space"). Needed because the
+ * backend's EMPLOYER search is fuzzy (eures-api.md).
+ */
+export function euresEmployerMatches(searched, actual) {
+  const want = nameTokens(searched), have = nameTokens(actual);
+  if (!want.length || want.length > have.length) return false;
+  for (let i = 0; i + want.length <= have.length; i++) {
+    let j = 0;
+    while (j < want.length && have[i + j] === want[j]) j++;
+    if (j === want.length) return true;
+  }
+  return false;
+}
+const CONNECTORS = new Set(['and', 'und', 'et', 'en']);
+const UMLAUTS = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss' };
+function nameTokens(s) {
+  return String(s ?? '').toLowerCase().replace(/[äöüß]/g, (c) => UMLAUTS[c]).normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter((w) => w && !CONNECTORS.has(w));
 }
 
 // ---- API ----
 
-/** The search request body the portal sends, with this crawler's defaults (newest first, English labels, 50 per page). */
-export function searchBody({ keyword = '', codes = [], page = 1, size = EURES_PAGE_SIZE, extra = {} } = {}) {
+/**
+ * The search request body the portal sends, with this crawler's defaults (English labels, 50 per page). mode is the specificSearchCode
+ * of the keyword: 'EVERYWHERE' (default; sorted newest first) or 'EMPLOYER' / 'LEGAL_ID' (sorted BEST_MATCH, so the exact employer comes
+ * before the fuzzy matches). Anything else falls back to EVERYWHERE.
+ */
+export function searchBody({ keyword = '', codes = [], page = 1, size = EURES_PAGE_SIZE, extra = {}, mode = 'EVERYWHERE' } = {}) {
+  const code = Object.hasOwn(SLUG_PREFIX, mode) ? mode : 'EVERYWHERE';
   const body = {
-    resultsPerPage: size, page, sortSearch: 'MOST_RECENT',
-    keywords: keyword ? [{ keyword, specificSearchCode: 'EVERYWHERE' }] : [],
+    resultsPerPage: size, page, sortSearch: code === 'EVERYWHERE' ? 'MOST_RECENT' : 'BEST_MATCH',
+    keywords: keyword ? [{ keyword, specificSearchCode: code }] : [],
     publicationPeriod: null, occupationUris: [], skillUris: [], requiredExperienceCodes: [], positionScheduleCodes: [], sectorCodes: [],
     educationAndQualificationLevelCodes: [], positionOfferingCodes: [], locationCodes: codes, euresFlagCodes: [], otherBenefitsCodes: [],
     requiredLanguages: [], minNumberPost: null, sessionId: 'jobcrawl', userPreferredLanguage: null, requestLanguage: 'en',
@@ -284,29 +340,38 @@ export const eures = {
     return [text, euresDetailSection(d)].filter(Boolean).join('\n\n');
   },
   /**
-   * slug "<keyword>|<codes>"; entry.max_jobs caps the result (default and maximum 2,000); entry.eures sets extra search filters
-   * (publicationPeriod, positionOfferingCodes, sectorCodes, requiredLanguages, ...; see docs/sources/eures-api.md).
+   * slug "<keyword>|<codes>", "employer:<name>|<codes>" or "legalid:<id>|<codes>"; entry.max_jobs caps the result (default and maximum
+   * 2,000); entry.eures sets extra search filters (publicationPeriod, positionOfferingCodes, sectorCodes, requiredLanguages, ...; see
+   * docs/sources/eures-api.md). Employer mode keeps only the vacancies whose employer name matches (euresEmployerMatches) and stops at the
+   * first page that holds none: the BEST_MATCH order puts the exact employer first and the fuzzy rest (thousands for a short name) after it.
    */
   async fetch(slug, entry = {}) {
-    const { keyword, codes } = parseSlug(slug);
+    const { keyword, codes, mode } = parseSlug(slug);
+    if (mode !== 'EVERYWHERE' && !keyword) throw new Error(`eures: ${SLUG_PREFIX[mode]} mode needs a name; the slug is "${SLUG_PREFIX[mode]}<name>|<country codes>" (got "${slug}")`);
     if (!keyword && !codes.length) throw new Error(`eures: refusing an unfiltered search; the slug is "<keyword>|<country codes>" (got "${slug}")`);
     const cap = Number.isInteger(entry.max_jobs) && entry.max_jobs > 0 ? Math.min(entry.max_jobs, EURES_MAX_JOBS) : EURES_MAX_JOBS;
     const extra = entry.eures && typeof entry.eures === 'object' ? entry.eures : {};
+    const keep = mode === 'EMPLOYER' ? (v) => euresEmployerMatches(keyword, v.employer?.name) : () => true;
     const out = [], seen = new Set(), t0 = Date.now();
     for (let page = 1; out.length < cap; page++) {
       if (page > 1) { if (Date.now() - t0 > tuning.budgetMs) break; await sleep(tuning.pageDelayMs); }
-      const d = await api('/jv-searchengine/public/jv-search/search', searchBody({ keyword, codes, page, extra }));
+      const d = await api('/jv-searchengine/public/jv-search/search', searchBody({ keyword, codes, page, extra, mode }));
       if (!Array.isArray(d?.jvs)) throw new Error(`eures: unexpected search response (keys: ${d && typeof d === 'object' ? Object.keys(d).join(', ') : typeof d})`);
-      const labels = await escoLabels(d.jvs.flatMap((v) => v?.jobCategoriesCodes ?? []));
+      const picked = [];
       let fresh = 0;
       for (const v of d.jvs) {
         if (!v?.id || seen.has(v.id)) continue;
         seen.add(v.id); fresh++;
+        if (keep(v)) picked.push(v);
+      }
+      const labels = picked.length ? await escoLabels(picked.flatMap((v) => v.jobCategoriesCodes ?? [])) : {};
+      for (const v of picked) {
         out.push(euresJob(v, labels));
         if (out.length >= cap) break;
       }
       const total = Number.isFinite(d.numberRecords) ? d.numberRecords : Infinity;
       if (!fresh || d.jvs.length < EURES_PAGE_SIZE || out.length >= Math.min(cap, total)) break;
+      if (mode === 'EMPLOYER' && !picked.length) break;   // past the exact matches: the rest of the fuzzy result is other employers
     }
     return out;
   },
