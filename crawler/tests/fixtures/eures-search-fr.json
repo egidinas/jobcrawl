@@ -1,0 +1,220 @@
+{
+ "numberRecords": 1510,
+ "jvs": [
+  {
+   "title": "OPERATEUR NETTOYAGE AGROALIMENTAIRE (H/F)",
+   "description": "METIER INTERIM CHALLANS recrute pour notre client spécialisé dans l'agroalimentaire, un AGENT NETTOYAGE AGROALIMENTAIRE H/F.Sous la responsabilité de votre chef, vos principales taches seront les suivantes :- Assurer des opérations de nettoyage en mode manuel ou automatique du matériel et des installations selon le plan de nettoyage établi- Vérifier l'efficacité du nettoyage- Assurer le contrôle du matériel de nettoyage (satellite, cellule de lavage ...) - Réaliser les opérations de montage et démontage de la cellule de lavage - Assurer la gestion des consommables liés à l'hygiène du personnel (rangement des stocks et mise à disposition)- Respecter les règles de stockage des produits chimiques et alerte en cas de dysfonctionnement - Utiliser le matériel de levage mis à disposition par l'entreprise en respectant les consignes d'utilisation. -manipulation du transpalette électrique et du chariot élévateur si CACES GERBEUR.Horaire :7h30-15h30 la première semaine puis 4h-11h30 et/ou 10h-18h.Mission d'intérim à pourvoir de suite sur du long terme.Si cette offre vous intéresse, merci de postuler en ligne&nbsp;&nbsp; Vous avez une expérience en milieu agroalimentaire, idéalement&nbsp;&nbsp;sur poste en nettoyage.Vous acceptez le travail au froid entre 5 et 9 degrés.",
+   "id": "ODQ1ODk4MyA5",
+   "creationDate": 1793536346000,
+   "lastModificationDate": 1793536347000,
+   "numberOfPosts": 1,
+   "locationMap": {
+    "FR": [
+     "FRG05"
+    ]
+   },
+   "euresFlag": false,
+   "jobCategoriesCodes": [
+    "http://data.europa.eu/esco/occupation/303a1e34-cb16-4054-b323-81e5eec17397"
+   ],
+   "positionScheduleCodes": [],
+   "positionOfferingCode": "temporary",
+   "employer": {
+    "name": "METIER INTERIM ET CDI CHALLANS",
+    "legalID": null,
+    "organisationSizeCode": null,
+    "organisationOwnershipTypeCode": null,
+    "website": null,
+    "sectorCodes": [],
+    "description": null
+   },
+   "availableLanguages": [
+    "fr"
+   ],
+   "score": null,
+   "translationType": "FIRST_LANGUAGE",
+   "translations": {
+    "fr": {
+     "title": "OPERATEUR NETTOYAGE AGROALIMENTAIRE (H/F)",
+     "description": "METIER INTERIM CHALLANS recrute pour notre client spécialisé dans l'agroalimentaire, un AGENT NETTOYAGE AGROALIMENTAIRE H/F.Sous la responsabilité de votre chef, vos principales taches seront les suivantes :- Assurer des opérations de nettoyage en mode manuel ou automatique du matériel et des installations selon le plan de nettoyage établi- Vérifier l'efficacité du nettoyage- Assurer le contrôle du matériel de nettoyage (satellite, cellule de lavage ...) - Réaliser les opérations de montage et démontage de la cellule de lavage - Assurer la gestion des consommables liés à l'hygiène du personnel (rangement des stocks et mise à disposition)- Respecter les règles de stockage des produits chimiques et alerte en cas de dysfonctionnement - Utiliser le matériel de levage mis à disposition par l'entreprise en respectant les consignes d'utilisation. -manipulation du transpalette électrique et du chariot élévateur si CACES GERBEUR.Horaire :7h30-15h30 la première semaine puis 4h-11h30 et/ou 10h-18h.Mission d'intérim à pourvoir de suite sur du long terme.Si cette offre vous intéresse, merci de postuler en ligne&nbsp;&nbsp; Vous avez une expérience en milieu agroalimentaire, idéalement&nbsp;&nbsp;sur poste en nettoyage.Vous acceptez le travail au froid entre 5 et 9 degrés."
+    }
+   }
+  }
+ ],
+ "facets": {
+  "POSITION_OFFERING": {
+   "facetEntriesList": [
+    {
+     "code": "recruitmentreserve",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "temporary",
+     "count": 169,
+     "childrenList": []
+    },
+    {
+     "code": "seasonal",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "NS",
+     "count": 118,
+     "childrenList": []
+    },
+    {
+     "code": "contract",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "temporarytohire",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "contracttohire",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "selfemployed",
+     "count": 6,
+     "childrenList": []
+    },
+    {
+     "code": "volunteer",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "apprenticeship",
+     "count": 1,
+     "childrenList": []
+    },
+    {
+     "code": "oncall",
+     "count": 0,
+     "childrenList": []
+    },
+    {
+     "code": "directhire",
+     "count": 1210,
+     "childrenList": []
+    },
+    {
+     "code": "internship",
+     "count": 6,
+     "childrenList": []
+    }
+   ]
+  },
+  "POSITION_SCHEDULE": {
+   "facetEntriesList": [
+    {
+     "code": "parttime",
+     "count": 115,
+     "childrenList": []
+    },
+    {
+     "code": "flextime",
+     "count": 85,
+     "childrenList": []
+    },
+    {
+     "code": "NS",
+     "count": 667,
+     "childrenList": []
+    },
+    {
+     "code": "fulltime",
+     "count": 828,
+     "childrenList": []
+    }
+   ]
+  },
+  "EURES_FLAG": {
+   "facetEntriesList": [
+    {
+     "code": "WITHOUT",
+     "count": 1510,
+     "childrenList": []
+    },
+    {
+     "code": "WITH",
+     "count": 0,
+     "childrenList": []
+    }
+   ]
+  },
+  "POSITION_LOCATION": {
+   "facetEntriesList": [
+    {
+     "code": "de",
+     "count": 754,
+     "childrenList": [
+      {
+       "code": "deb",
+       "count": 24,
+       "childrenList": []
+      },
+      {
+       "code": "dea",
+       "count": 99,
+       "childrenList": []
+      },
+      {
+       "code": "ded",
+       "count": 40,
+       "childrenList": []
+      }
+     ]
+    },
+    {
+     "code": "be",
+     "count": 183,
+     "childrenList": [
+      {
+       "code": "be3",
+       "count": 5,
+       "childrenList": []
+      },
+      {
+       "code": "be-NS",
+       "count": 0,
+       "childrenList": []
+      },
+      {
+       "code": "be2",
+       "count": 169,
+       "childrenList": []
+      }
+     ]
+    },
+    {
+     "code": "fr",
+     "count": 756,
+     "childrenList": [
+      {
+       "code": "frk1",
+       "count": 2,
+       "childrenList": []
+      },
+      {
+       "code": "frk2",
+       "count": 38,
+       "childrenList": []
+      },
+      {
+       "code": "fri1",
+       "count": 16,
+       "childrenList": []
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

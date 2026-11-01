@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { extraProviders } from './providers-extra.mjs';
 import { usajobsDetect, usajobsFetch } from './providers-usajobs.mjs';
+import { eures } from './providers-eures.mjs';
 import { UA } from './useragent.mjs';
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -2872,6 +2873,8 @@ for (const [id, p] of Object.entries(extraProviders)) if (!(id in providers)) pr
 // USAJOBS Search API (providers-usajobs.mjs; key from the environment). Registered from its hoisted functions, not its `usajobs` object:
 // that module imports plain() and metaOf() from here, and function declarations exist before either module runs, so the cycle is safe.
 providers.usajobs = { detect: usajobsDetect, fetch: usajobsFetch };
+// EURES portal search backend (providers-eures.mjs): unofficial endpoint, ELA attribution; detects only portal search URLs.
+providers.eures = eures;
 
 /** Work out { provider, slug } for a config entry from explicit fields or its careers URL. */
 export function resolve(entry) {
