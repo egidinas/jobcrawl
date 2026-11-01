@@ -129,6 +129,16 @@ every EURES role carries `meta.source = "EURES (ELA)"` and the company suffix `(
 as a copy of the employer's own posting. A tracked EURES board is a portal search (`provider: "eures"`, `slug:
 "<keyword>|<country codes>"`), read 50 vacancies per page, one page per second, newest first, at most 2,000 per crawl.
 
+A direct poll of an employer's own board is always preferable to an aggregator copy, so the aggregators double as a discovery
+source: `node crawler/aggregator-employers.mjs --profile <dir> --data <dir> [--min-open 1] [--out <dir>]` groups the history's
+`(via <Board>)` rows by employer (crosslist.mjs `canonCompany`, plus the web-site domain when the EURES meta names one) and
+writes `<out>/aggregator-employers.csv`: per employer the channels, open/extra/gone/filtered counts, first and last seen, three
+sample titles, `employer_site`, NUTS and ESCO hints, and the status `tracked` (an enabled board exists in the companies file),
+`catalogue` (known company, no board) or `new`. The `new` and `catalogue` employers with at least `--min-open` open postings
+also go to `<out>/aggregator-employers.seed.json` (name, plus the web site when the meta or the catalogue names one), the
+`--seed` input of `crawler/ats-resolve.mjs`, which finds their boards. Both files are for a human to review; nothing is added
+to the companies file automatically.
+
 ## Reference implementations
 
 * https://madenetwork.de/jobs.html: the aerospace board, with Match me and the Atlas, built from the reference profile.
