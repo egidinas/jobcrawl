@@ -356,12 +356,12 @@ class PublishCopiesTrendsOnly(unittest.TestCase):
                 with open(os.path.join(vectors, name), 'w', encoding='utf-8') as fh:
                     fh.write(body)
             files = publish.publish(site, load_profile(PROFILE), vectors, log=silent)
-            self.assertIn(os.path.join('match', 'role-trends.json'), files)
+            self.assertIn('match/role-trends.json', files)
             self.assertTrue(os.path.exists(os.path.join(site, 'match', 'role-trends.json')))
-            self.assertIn(os.path.join('match', 'role-timeline.bin'), files)
+            self.assertIn('match/role-timeline.bin', files)
             self.assertTrue(os.path.exists(os.path.join(site, 'match', 'role-timeline.json')))
             self.assertTrue(os.path.exists(os.path.join(site, 'match', 'role-timeline.bin')))
-            self.assertIn(os.path.join('match', 'role-timeline-names-000.json'), files)
+            self.assertIn('match/role-timeline-names-000.json', files)
             with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
                 self.assertEqual(json.load(fh).get('timeline'), 'match/role-timeline.json')
             for root, _, names in os.walk(site):
@@ -378,7 +378,7 @@ class PublishCopiesTrendsOnly(unittest.TestCase):
             with open(os.path.join(tr, 'role-trends.json'), 'w', encoding='utf-8') as fh:
                 fh.write('{"version": 1}')
             files = publish.publish(site, load_profile(PROFILE), vectors, log=silent, traces=tr)
-            self.assertIn(os.path.join('match', 'role-trends.json'), files)
+            self.assertIn('match/role-trends.json', files)
             with open(os.path.join(site, 'config.json'), encoding='utf-8') as fh:
                 self.assertNotIn('timeline', json.load(fh))           # no timeline published: the atlas does not look for one
         finally:

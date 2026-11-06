@@ -73,7 +73,7 @@ class PublishFixture(unittest.TestCase):
         for name in MATCH_FILES:
             self.assertTrue(os.path.exists(os.path.join(site, 'match', name)), name)
         self.assertTrue(os.path.exists(os.path.join(site, 'config.json')))
-        self.assertIn(os.path.join('match', 'role-nb.bin'), files)
+        self.assertIn('match/role-nb.bin', files)
         self.assertIn('config.json', files)
         self.assertEqual(os.path.getsize(os.path.join(site, 'match', 'role-nb.bin')), len(rows) * 10 * 2)
 
@@ -91,7 +91,7 @@ class PublishFixture(unittest.TestCase):
     def test_without_vectors_keywords_and_config_only(self):
         site = self.fresh_site('keywords')
         files = publish.publish(site, self.profile, os.path.join(self.tmp, 'no-such-vectors'), log=silent)
-        self.assertIn(os.path.join('match', 'match-bm25.json'), files)
+        self.assertIn('match/match-bm25.json', files)
         self.assertIn('config.json', files)
         for name in ('match-vec.bin', 'match-prefs.json', 'role-nb.bin'):
             self.assertFalse(os.path.exists(os.path.join(site, 'match', name)), name)
@@ -177,7 +177,7 @@ class PublishFixture(unittest.TestCase):
             fh.write('{"k": 10}')
         with mock.patch('jobcrawl.index.neighbours.build', side_effect=AssertionError('neighbours rebuilt')):
             files = publish.publish(site, self.profile, vectors, log=silent)
-        self.assertIn(os.path.join('match', 'role-nb.bin'), files)
+        self.assertIn('match/role-nb.bin', files)
         with open(os.path.join(site, 'match', 'role-nb.bin'), 'rb') as fh:
             self.assertEqual(fh.read(), b'prebuilt')
 

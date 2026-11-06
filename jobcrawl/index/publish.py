@@ -138,4 +138,5 @@ def publish(site, profile, vectors=None, log=print, text_from=None, traces=None)
     with open(os.path.join(site, 'config.json'), 'w', encoding='utf-8') as fh:
         json.dump(cfg, fh, ensure_ascii=False, indent=1)
         fh.write('\n')
-    return sorted(os.path.join('match', n) for n in written) + ['config.json']
+    # site-relative paths with '/' on every OS (on Windows os.path.join gave match\geo-map.json; the config and callers use '/')
+    return sorted('match/' + n for n in written) + ['config.json']
