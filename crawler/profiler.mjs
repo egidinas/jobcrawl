@@ -109,6 +109,7 @@ function splice() {
   const max = Number(opt('max', 0));
   const raw = readFileSync(file, 'utf8');
   const cfg = JSON.parse(raw);
+  const EOL = raw.includes('\r\n') ? '\r\n' : '\n';   // keep the file's line endings (the madenetwork.de blob is CRLF)
   const names = new Set(cfg.tracked_companies.map((c) => c.name.toLowerCase()));
   const hostsOf = (c) => [c.careers_url, c.slug, c.list?.url].filter((u) => /^https?:\/\//.test(u ?? '')).map((u) => hostOf(u));
   const hosts = new Set(cfg.tracked_companies.flatMap(hostsOf));
@@ -188,7 +189,7 @@ function splice() {
     const canon = (o) => JSON.stringify(o, null, 2) + '\n';
     if (canon(JSON.parse(raw)) !== raw.replace(/\r\n/g, '\n')) throw new Error('splice --replace: the companies file is not in canonical JSON form; replace by hand');
     cfg.tracked_companies.push(...added);
-    writeFileSync(file, canon(cfg));
+    writeFileSync(file, canon(cfg).replace(/\n/g, EOL));
     say(`splice: wrote ${added.length} new and ${replaced.length} replaced entries to ${file}`, true);
     return;
   }
@@ -199,7 +200,8 @@ function splice() {
   const head = raw.slice(0, m.index).replace(/\s*$/, '');
   const next = `${head},\n${block}\n${m[1]}]\n}\n`;
   JSON.parse(next);
-  writeFileSync(file, next);
+  writeFileSync(file, next.replace(/?
+/g, EOL));
   say(`splice: wrote ${added.length} entries to ${file}`, true);
 }
 
