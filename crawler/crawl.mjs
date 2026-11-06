@@ -116,11 +116,12 @@ function prepareFilters(cfg) {
   // location_filter.allow_country_codes (e.g. ["DE", "AT", "CH"]): a location text that names one of these ISO codes as its own token
   // ("Ulm, DE, 89077", "Graz (AT)") passes without the city being on the allow list. Audit 2026-11-06: the allow list alone silently
   // dropped 4,229 of 24,325 fetched roles (HENSOLDT 440 of 478: Ulm, Fürstenfeldbruck, Oberkochen ...), because SuccessFactors and
-  // Workday write "<City>, DE, <PLZ>" with no country word. A 5-digit German postcode counts as a DE token too.
+  // Workday write "<City>, DE, <PLZ>" with no country word. (A postcode clause was tried and dropped the same day: any 5-digit
+  // number would have passed US ZIP codes; SuccessFactors always writes the country code, so the token rule suffices.)
   const codes = (lf.allow_country_codes ?? []).map((c) => norm(c)).filter((c) => /^[a-z]{2,3}$/.test(c));
   const countryCodeRegex = codes.length ? new RegExp(`(?:^|[^a-z])(?:${codes.join('|')})(?=$|[^a-z])`) : null;
   const postcodeRegex = codes.includes('de') ? /(?:^|[^0-9])\d{5}(?=$|[^0-9])/ : null;
-  const allowCountryCode = (normLocation) => Boolean((countryCodeRegex && countryCodeRegex.test(normLocation)) || (postcodeRegex && postcodeRegex.test(normLocation)));
+  const allowCountryCode = (normLocation) => Boolean(countryCodeRegex && countryCodeRegex.test(normLocation));
 
   const companyMap = new Map();
   for (const c of cfg.tracked_companies ?? []) {
