@@ -62,7 +62,13 @@ export async function makeSniffer({ ua, log = () => {}, timeoutMs = 25000, maxRe
     return { responses, html, requests, blocked, error, urls };
   }
   return {
-    sniff(url) { const p = queue.then(() => sniffOne(url)); queue = p.catch(() => {}); return p; },
+    // a page that never settles (a hung context.close, a download dialog) must not block the queue: 60 s, then the next page
+    sniff(url) {
+      const hung = () => new Promise((r) => setTimeout(() => r({ responses: [], html: '', requests: 0, error: 'browser timeout 60 s', urls: [] }), 60000).unref());
+      const p = queue.then(() => Promise.race([sniffOne(url), hung()]));
+      queue = p.catch(() => {});
+      return p;
+    },
     async close() { await browser.close().catch(() => {}); },
   };
 }
