@@ -14,6 +14,7 @@ import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueN
   useRelevance, INDUSTRY_AGGREGATOR_PROVIDERS, INDUSTRY_VIA, PROBATION_VERDICT } from './relevance.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters, entryTimeoutMs } from './profile.mjs';
 import { setUserAgent } from './useragent.mjs';
+import { reprofileCycle } from './profiler/health.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
@@ -317,7 +318,11 @@ async function scan() {
     else { h.fails = 0; h.last_ok = today(); if (n > 0) { h.last_jobs = n; h.zero = 0; } else if (h.last_jobs > 0) h.zero++; }
     if (h.fails >= 3) problems.push(`ALERT ${name}: failed ${h.fails} cycles in a row (last ok ${h.last_ok || 'never'})`);
     if (h.zero >= 3) problems.push(`ALERT ${name}: returned 0 jobs for ${h.zero} cycles (last non-empty run had ${h.last_jobs})`);
+    // Profiled entries (crawler/profiler.mjs): a yield under the profiling baseline, or repeated failures, flag reprofile_due.
+    const rp = reprofileCycle(h, profileOf.get(name), { ok, n, today: today() });
+    if (rp) problems.push(`${name}: ${rp}`);
   }
+  const profileOf = new Map(cfg.tracked_companies.filter((c) => c.profile).map((c) => [c.name, c.profile]));
   const stats = { fetched: 0, filtered: 0, seen: 0, crosslisted: 0, shadowed: 0 };
   // Aggregator boards (their employer is named in the title or the company suffix, so employer names cannot be compared).
   const boardNames = new Set(cfg.tracked_companies.filter((c) => AGGREGATOR_PROVIDERS.has(c.provider)).map((c) => c.name));

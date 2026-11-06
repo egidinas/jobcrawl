@@ -33,7 +33,7 @@ async function request(url, init = {}, { timeoutMs = 20000, retries = 2 } = {}) 
     }
     const transient = !res || res.status === 429 || res.status >= 500;
     if (!transient || attempt >= retries) throw new Error(`HTTP ${res?.status} ${url}`);
-    const retryAfter = Number(res.headers.get('retry-after'));
+    const retryAfter = Number(res?.headers.get('retry-after'));   // res is undefined after a network error (retried, not a TypeError)
     await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 20000) : 1000 * 2 ** attempt + Math.random() * 500);
   }
 }
