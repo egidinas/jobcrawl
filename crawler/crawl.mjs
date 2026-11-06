@@ -113,6 +113,14 @@ function prepareFilters(cfg) {
   const seniorityMatcher = compileMatcher(tf.seniority_boost);
   const blockHardLocMatcher = compileMatcher(lf.block_hard);
   const allowLocMatcher = compileMatcher(lf.allow);
+  // location_filter.allow_country_codes (e.g. ["DE", "AT", "CH"]): a location text that names one of these ISO codes as its own token
+  // ("Ulm, DE, 89077", "Graz (AT)") passes without the city being on the allow list. Audit 2026-11-06: the allow list alone silently
+  // dropped 4,229 of 24,325 fetched roles (HENSOLDT 440 of 478: Ulm, Fürstenfeldbruck, Oberkochen ...), because SuccessFactors and
+  // Workday write "<City>, DE, <PLZ>" with no country word. A 5-digit German postcode counts as a DE token too.
+  const codes = (lf.allow_country_codes ?? []).map((c) => norm(c)).filter((c) => /^[a-z]{2,3}$/.test(c));
+  const countryCodeRegex = codes.length ? new RegExp(`(?:^|[^a-z])(?:${codes.join('|')})(?=$|[^a-z])`) : null;
+  const postcodeRegex = codes.includes('de') ? /(?:^|[^0-9])\d{5}(?=$|[^0-9])/ : null;
+  const allowCountryCode = (normLocation) => Boolean((countryCodeRegex && countryCodeRegex.test(normLocation)) || (postcodeRegex && postcodeRegex.test(normLocation)));
 
   const companyMap = new Map();
   for (const c of cfg.tracked_companies ?? []) {
@@ -129,6 +137,7 @@ function prepareFilters(cfg) {
     seniorityMatcher,
     blockHardLocMatcher,
     allowLocMatcher,
+    allowCountryCode,
     allowUnknownLoc: lf.allow_unknown !== false,
     companyMap,
   };
@@ -149,7 +158,7 @@ function locationVerdictCompiled(filters, normLocation, company) {
   if (filters.blockHardLocMatcher(normLocation)) return 'blocked-location';
   const c = filters.companyMap.get(company);
   if (c?.locOnly) return c.locOnly(normLocation) ? null : 'location-not-allowed';
-  if (filters.allowLocMatcher(normLocation) || (c?.locAllow && c.locAllow(normLocation))) return null;
+  if (filters.allowLocMatcher(normLocation) || (c?.locAllow && c.locAllow(normLocation)) || filters.allowCountryCode(normLocation)) return null;
   return 'location-not-allowed';
 }
 
@@ -296,6 +305,7 @@ async function scan() {
   const fresh = [];
   const problems = [];
   const needLazyJd = [];
+  const dropReasons = {};   // verdict -> roles dropped this cycle (all of them get a 'filtered' row); printed in the notes
   // Source health: a board that errors or silently returns 0 jobs for 3 cycles in a row is reported, so a broken decoder does not go unnoticed.
   const HEALTH_FILE = pathResolve(OUT_DIR, 'source-health.json');
   let health = {};
@@ -444,7 +454,9 @@ async function scan() {
         if (why || extraOnly) {
           if (extraOnly) { prior.status = 'extra'; prior.last_seen = date; stats.extra = (stats.extra ?? 0) + 1; if (collectOnly) stats.collectOnly = (stats.collectOnly ?? 0) + 1; continue; }
           prior.status = 'filtered';
+          prior.last_seen = date;
           stats.filtered++;
+          dropReasons[why] = (dropReasons[why] ?? 0) + 1;
           continue;
         }
         stats.seen++;
@@ -483,9 +495,12 @@ async function scan() {
           continue;
         }
         stats.filtered++;
-        // A role held back only by the probation gate is recorded as 'filtered' (like a known role that fails a filter), so it is not
-        // treated as new again; if the company is promoted later it turns 'open' by itself. No description is saved for it.
-        if (why === PROBATION_VERDICT) history.set(j.url, { url: j.url, company: j.company || name, title: j.title, location: j.location, first_seen: date, last_seen: date, status: 'filtered', posted: postedDate(j.postedAt) });
+        // Every dropped role is recorded as 'filtered' with its reason tallied (owner 2026-11-06: no silent drops; before, only the
+        // probation gate wrote a row and a location or stale verdict left no trace, so a wrong allow list was invisible). A filtered
+        // row is never new again; if the filter or the company's state changes later the role turns 'open' by itself on the next
+        // fetch. No description is saved for it. Consumers read 'open' rows only, so the board is unaffected.
+        history.set(j.url, { url: j.url, company: j.company || name, title: j.title, location: j.location, first_seen: date, last_seen: date, status: 'filtered', posted: postedDate(j.postedAt) });
+        dropReasons[why] = (dropReasons[why] ?? 0) + 1;
         continue;
       }
       const companyName = j.company || name;
@@ -644,6 +659,7 @@ async function scan() {
 
   fresh.sort((a, b) => Number(b.seniority) - Number(a.seniority) || a.company.localeCompare(b.company));
   console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}`);
+  if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   if (problems.length) console.log('\nNotes:\n' + problems.map((p) => '  - ' + p).join('\n'));
 
   if (flag('dry-run')) return console.log('\n(dry run: nothing written)');
