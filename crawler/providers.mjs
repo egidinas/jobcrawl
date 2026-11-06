@@ -529,7 +529,7 @@ export const providers = {
       const todo = urls.filter((u) => cache[u.url]?.lastmod !== u.lastmod || !cache[u.url]?.job);
       // Optional per-entry pacing for big boards (entry.page_budget_ms, entry.page_concurrency): stop starting page fetches once the
       // budget is spent and return what the cache holds, so a first fill of thousands of pages spreads over several cycles instead of
-      // one burst, and the fetch ends well inside the crawl's 35 s per-board timeout (a timed-out fetch would not save its cache).
+      // one burst, and the fetch ends well inside the crawl's per-board timeout (entry.timeout_ms, default 35 s) (a timed-out fetch would not save its cache).
       const budget = Number(entry.page_budget_ms) > 0 ? Number(entry.page_budget_ms) : 0, started = Date.now();
       const workers = Math.min(4, Math.max(1, Number(entry.page_concurrency) || 4));
       let i = 0;

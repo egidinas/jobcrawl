@@ -5,7 +5,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters, ProfileError } from '../profile.mjs';
+import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters, ProfileError, entryTimeoutMs, DEFAULT_TIMEOUT_MS } from '../profile.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const tmp = () => mkdtempSync(join(tmpdir(), 'jobcrawl-profile-'));
@@ -102,4 +102,14 @@ test('crawl.user_agent and crawl.review_dir are optional and resolved like the o
     ua.setUserAgent(null);
     assert.equal(ua.UA, ua.DEFAULT_UA);
   } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('entryTimeoutMs: default 35 s, per-entry timeout_ms, capped at 10 min, garbage ignored', () => {
+  assert.equal(DEFAULT_TIMEOUT_MS, 35000);
+  assert.equal(entryTimeoutMs({}), 35000);
+  assert.equal(entryTimeoutMs(), 35000);
+  assert.equal(entryTimeoutMs({ timeout_ms: 180000 }), 180000);
+  assert.equal(entryTimeoutMs({ timeout_ms: '120000' }), 120000);
+  assert.equal(entryTimeoutMs({ timeout_ms: 5e6 }), 600000);
+  for (const bad of [0, -1, 'soon', null, NaN]) assert.equal(entryTimeoutMs({ timeout_ms: bad }), 35000, String(bad));
 });

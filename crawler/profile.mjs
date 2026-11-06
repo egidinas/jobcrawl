@@ -93,3 +93,11 @@ export function applyProfileFilters(cfg, profile) {
     ...(profile.locationFilter ? { location_filter: profile.locationFilter } : {}),
   };
 }
+
+// Per-entry fetch budget: "timeout_ms" on a companies-file entry (default 35 s, at most 10 min). crawl.mjs gives a board this long
+// before it counts as failed; big Workday tenants (Thales, ZEISS, Leidos: thousands of rows paged by 20) need 2 to 4 minutes.
+export const DEFAULT_TIMEOUT_MS = 35000;
+export function entryTimeoutMs(entry = {}) {
+  const n = Number(entry?.timeout_ms);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 600000) : DEFAULT_TIMEOUT_MS;
+}

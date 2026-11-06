@@ -61,6 +61,8 @@ job-board URL. The minimal profile polls three boards:
 ```
 
 * `interval_hours` (2 to 48) polls an employer only when it is due.
+* `timeout_ms` is the fetch budget of one entry (default 35000, at most 600000): raise it for a huge board that pages slowly, e.g. a
+  Workday tenant with thousands of rows (`"timeout_ms": 180000`).
 * `enabled: false` skips an employer without removing it.
 * `collect_only: true` collects a board without publishing it: its roles are kept in the history as `extra` (never `open` or NEW),
   for aggregator feeds whose scope is decided downstream.

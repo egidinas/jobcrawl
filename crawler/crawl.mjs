@@ -12,7 +12,7 @@ import { fingerprintText } from './fingerprint.mjs';
 import { isCrossListing, sameEmployer, canonCompany, isAggregatorRow, AGGREGATOR_PROVIDERS, rowPostingKeys, setApplyKeys } from './crosslist.mjs';
 import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueNames, strictVerdict, probationCycle, newProbation,
   useRelevance, INDUSTRY_AGGREGATOR_PROVIDERS, INDUSTRY_VIA, PROBATION_VERDICT } from './relevance.mjs';
-import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
+import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters, entryTimeoutMs } from './profile.mjs';
 import { setUserAgent } from './useragent.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
@@ -377,8 +377,9 @@ async function scan() {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');
     let timer;
+    const ms = entryTimeoutMs(entry);   // entry.timeout_ms, default 35 s
     const timeoutPromise = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`Timed out after 35s (${entry.name})`)), 35000);
+      timer = setTimeout(() => reject(new Error(`Timed out after ${Math.round(ms / 1000)}s (${entry.name})`)), ms);
     });
     try {
       const fetchPromise = providers[r.provider].fetch(r.slug, entry);
