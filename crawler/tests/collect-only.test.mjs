@@ -128,3 +128,21 @@ test('without a collect_only board the summary line is unchanged (no collect-onl
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('any_location: an in-scope employer keeps a role that passes the title filter wherever it is; other boards still filter it', async () => {
+  const server = await serve();
+  const dir = mkdtempSync(join(tmpdir(), 'jobcrawl-any-location-'));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const { prof, data } = writeProfile(dir, base, { any_location: true });
+    const r = await crawl(prof, data);
+    assert.equal(r.status, 0, r.stderr);
+    const rows = history(data);
+    assert.equal(statusOf(rows, 'agg', 3), 'open', 'any_location board: the Paris engineer is kept');
+    assert.equal(statusOf(rows, 'agg', 2), 'extra', 'any_location board: a title failure is still extra');
+    assert.equal(statusOf(rows, 'normal', 3), 'filtered', 'a board without the flag still filters the location');
+  } finally {
+    server.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

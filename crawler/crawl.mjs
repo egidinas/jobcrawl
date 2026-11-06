@@ -129,7 +129,9 @@ function prepareFilters(cfg) {
     const extraPositive = c.extra_positive?.length ? compileMatcher(c.extra_positive) : null;
     const locOnly = c.location_only?.length ? compileMatcher(c.location_only) : null;
     const locAllow = c.location_allow?.length ? compileMatcher(c.location_allow) : null;
-    companyMap.set(c.name, { extraPositive, locOnly, locAllow });
+    // any_location (owner 2026-11-06, "scope by content, not country"): for an in-scope employer a role that passes the title filter is kept
+    // wherever it is; the allow list stays a region feature for the board, and block_hard and location_only still apply.
+    companyMap.set(c.name, { extraPositive, locOnly, locAllow, anyLoc: c.any_location === true });
   }
 
   return {
@@ -160,6 +162,7 @@ function locationVerdictCompiled(filters, normLocation, company) {
   if (filters.blockHardLocMatcher(normLocation)) return 'blocked-location';
   const c = filters.companyMap.get(company);
   if (c?.locOnly) return c.locOnly(normLocation) ? null : 'location-not-allowed';
+  if (c?.anyLoc) return null;
   if (filters.allowLocMatcher(normLocation) || (c?.locAllow && c.locAllow(normLocation)) || filters.allowCountryCode(normLocation)) return null;
   return 'location-not-allowed';
 }
