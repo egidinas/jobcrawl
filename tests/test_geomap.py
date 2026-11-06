@@ -365,3 +365,58 @@ class PublishGeomap(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RoleSitesSidecar(unittest.TestCase):
+    """role_places with the site resolver's sidecar (read_role_sites): a role pinned at site precision gets its employer's site as its first place
+    (key 'site:<id>', the site's name and point, pr 'site'); an unpinned role in the same city keeps the city place; company_points carries the
+    precision on the branch point. A sidecar of another version, or a role without a point, changes nothing."""
+
+    SHAPES = {'countries': [{'id': 'DE', 'name': 'Germany', 'kind': 'country', 'cc': 'DE', 'rings': [[[5.0, 47.0], [15.0, 47.0], [15.0, 55.0], [5.0, 55.0]]]}], 'states': [], 'unmatched': []}
+
+    def test_pinned_role_has_its_site_as_first_place(self):
+        from jobcrawl.map import geomap as g
+        index = [('r1', 'Test engineer', 'Mynaric', 'https://x/1', 'mynaric'), ('r2', 'Optics engineer', 'Mynaric', 'https://x/2', 'mynaric')]
+        desc = {'r1': {'l': 'Munich, Germany'}, 'r2': {'l': 'Munich, Germany'}}
+        pins = {'r1': {'lat': 48.11, 'lon': 11.29, 'p': 'site', 's': 'Mynaric (Gilching)', 'sid': 'mynaric:abc', 'uid': 'mynaric'}}
+        keys = {}
+        table, unplaced, _share = g.role_places(index, desc, self.SHAPES, keys, pins)
+        self.assertEqual(unplaced, 0)
+        self.assertEqual(keys['r1'], ['site:mynaric:abc'])
+        self.assertEqual(keys['r2'], ['DE|Munich'])
+        site = table['site:mynaric:abc']
+        self.assertEqual(site['name'], 'Mynaric (Gilching)')
+        self.assertEqual(site['ll'], (48.11, 11.29))
+        self.assertEqual(site['pr'], 'site')
+        self.assertEqual(site['sid'], 'mynaric:abc')
+        self.assertEqual(table['DE|Munich']['pr'], 'city')
+        comp = g.company_points(index, keys, table, {'mynaric': (48.14, 11.58)}, near_km=1.0)
+        branch = next(c for c in comp if c[4]['k'] == 'branch')
+        self.assertEqual(branch[4]['pn'], 'Mynaric (Gilching)')
+        self.assertEqual(branch[4]['pr'], 'site')
+        self.assertEqual(branch[2], ['r1'])
+
+    def test_city_pin_gives_a_point_to_a_city_without_one(self):
+        from jobcrawl.map import geomap as g
+        index = [('r3', 'Engineer', 'Co', 'https://x/3', 'co')]
+        desc = {'r3': {'l': 'Weßling, Germany'}}
+        keys = {}
+        table, _u, _s = g.role_places(index, desc, self.SHAPES, keys, {'r3': {'lat': 48.07, 'lon': 11.25, 'p': 'city', 'uid': 'co'}})
+        key = keys['r3'][0]
+        self.assertTrue(key.startswith('DE|'))
+        self.assertEqual(table[key]['ll'], (48.07, 11.25))
+
+    def test_read_role_sites_ignores_other_versions_and_pointless_roles(self):
+        from jobcrawl.map import geomap as g
+        tmp = tempfile.mkdtemp(prefix='jc-role-sites-')
+        try:
+            p = os.path.join(tmp, 'role-sites.json')
+            with open(p, 'w', encoding='utf-8') as fh:
+                json.dump({'version': 1, 'roles': {'a': {'lat': 1.0, 'lon': 2.0, 'p': 'site', 'sid': 's'}, 'b': {'p': 'country'}}}, fh)
+            self.assertEqual(set(g.read_role_sites(p)), {'a'})
+            with open(p, 'w', encoding='utf-8') as fh:
+                json.dump({'version': 2, 'roles': {'a': {'lat': 1.0, 'lon': 2.0}}}, fh)
+            self.assertEqual(g.read_role_sites(p), {})
+            self.assertEqual(g.read_role_sites(os.path.join(tmp, 'missing.json')), {})
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)

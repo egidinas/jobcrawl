@@ -579,9 +579,23 @@ def centroid(rings):
     return None if best is None else (best[2], best[1])
 
 
-def role_places(index, desc, shapes, keys_of=None):
+def read_role_sites(path):
+    """The resolver's sidecar (Atlas scripts/atlas/geo/resolve_site.py, role-sites.json version 1): {role id: {lat, lon, p (precision: site | postcode |
+    city | region | country), s (site name), sid (site id), uid (employer)}}. Only roles with a point are returned; nothing else is renamed or dropped."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, encoding='utf-8') as fh:
+        d = json.load(fh)
+    if d.get('version') != 1:
+        return {}
+    return {rid: v for rid, v in (d.get('roles') or {}).items() if v.get('lat') is not None and v.get('lon') is not None}
+
+
+def role_places(index, desc, shapes, keys_of=None, sites=None):
     """The places of the board's roles: {key: {'key', 'name', 'cc', 'n' (roles naming it), 'share' (sum of 1/places per role),
-    'll' (lat, lon) or None, 'shape' (polygon id or None)}}, the roles with no place, and the roles' share per polygon id."""
+    'll' (lat, lon) or None, 'shape' (polygon id or None), 'pr' (precision of the point)}}, the roles with no place, and the roles' share
+    per polygon id. With `sites` (read_role_sites), a role pinned at site or postcode precision gets the site as its first place (key
+    'site:<site id>', the site's name and point) and a city-precision pin gives a city without a gazetteer point its point."""
     by_id = {s['id']: s for s in shapes['countries'] + shapes['states']}
     state_id = {(s['cc'], s['name']): s['id'] for s in shapes['states']}
     country_id = {s['cc']: s['id'] for s in shapes['countries']}
@@ -594,9 +608,13 @@ def role_places(index, desc, shapes, keys_of=None):
             unplaced += 1
             continue
         share = 1.0 / len(places)
-        for p in places:
+        pin = (sites or {}).get(rid)
+        for i, p in enumerate(places):
             cc, city, state = p['country'], p.get('city', ''), p.get('state', '')
             key = f'{cc}|{city or state}' if (city or state) else cc
+            pr = 'city' if city else ('region' if state else 'country')
+            if pin and i == 0 and pin.get('p') in ('site', 'postcode') and pin.get('sid'):
+                key, pr = 'site:' + pin['sid'], pin['p']
             if keys_of is not None:
                 keys_of.setdefault(rid, []).append(key)
             rec = table.get(key)
@@ -605,10 +623,16 @@ def role_places(index, desc, shapes, keys_of=None):
                 ll = coords.get(f'{cc}|{city}') if city else None
                 if ll is not None:
                     ll = (float(ll[0]), float(ll[1]))
+                elif pin and i == 0 and pin.get('p') in ('site', 'postcode', 'city'):
+                    ll = (float(pin['lat']), float(pin['lon']))   # the resolver's point: the site, or a city the gazetteer has no point for
                 elif shape is not None:
                     ll = centroid(by_id[shape]['rings'])        # no city point: the state's (or country's) polygon centre
                 name = city or state or geo.COUNTRY.get(cc, {}).get('en', cc)
-                rec = table[key] = {'key': key, 'name': name, 'cc': cc, 'n': 0, 'share': 0.0, 'll': ll, 'shape': shape}
+                if key.startswith('site:'):
+                    ll, name = (float(pin['lat']), float(pin['lon'])), pin.get('s') or name
+                rec = table[key] = {'key': key, 'name': name, 'cc': cc, 'n': 0, 'share': 0.0, 'll': ll, 'shape': shape, 'pr': pr}
+                if key.startswith('site:'):
+                    rec['sid'], rec['uid'], rec['city'] = pin['sid'], pin.get('uid', ''), city
             rec['n'] += 1
             rec['share'] += share
             if rec['shape']:
@@ -726,12 +750,12 @@ def company_points(index, keys_of, table, hq, near_km=15.0, max_branches=12, his
             if ll is None or (base is not None and km(base, ll) <= near_km) or len(branches) >= max_branches:
                 home += ids
             else:
-                branches.append((ll, ids, key, table[key]['name']))
+                branches.append((ll, ids, key, table[key]['name'], table[key].get('pr')))
         if base is not None:
             out.append((slug, base, home if branches else None, None, {'k': 'hq'}))
             seen.setdefault(slug, []).append(base)
-        for ll, ids, key, name in branches:
-            out.append((slug, ll, ids, key, {'k': 'branch', 'pn': name}))
+        for ll, ids, key, name, pr in branches:
+            out.append((slug, ll, ids, key, {'k': 'branch', 'pn': name, 'pr': pr}))
             seen.setdefault(slug, []).append(ll)
     near = lambda slug, ll: any(km(ll, q) <= near_km for q in seen.get(slug, []))
     for slug, key, name, ll, n, last in sorted(history or [], key=lambda h: -h[4]):
@@ -1071,8 +1095,10 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, 
         pos = carto.apply([[x, y] for _rec, x, y in inside_places])
         pos_m = carto_m.apply([[x, y] for _rec, x, y in inside_places])
         for (rec, x, y), (cx, cy), (mx, my) in zip(inside_places, pos, pos_m):
-            out_places.append({'id': rec['key'], 'name': rec['name'], 'n': rec['n'], 'x': round(x, DEC), 'y': round(y, DEC),
-                               'cx': round(float(cx), DEC), 'cy': round(float(cy), DEC), 'mx': round(float(mx), DEC), 'my': round(float(my), DEC)})
+            row = {'id': rec['key'], 'name': rec['name'], 'n': rec['n'], 'x': round(x, DEC), 'y': round(y, DEC),
+                   'cx': round(float(cx), DEC), 'cy': round(float(cy), DEC), 'mx': round(float(mx), DEC), 'my': round(float(my), DEC)}
+            row.update({kk: rec[kk] for kk in ('pr', 'sid', 'uid', 'city') if rec.get(kk)})   # precision of the point and, for a site, its id, employer and city
+            out_places.append(row)
     out_rivers = river_rows(frame, rivers, carto, carto_m, log)
     out_companies = []
     if comp_in:
@@ -1088,7 +1114,7 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, 
             if key:
                 row['b'] = key
             if meta.get('k') != 'hq':
-                row.update({kk: vv for kk, vv in (('k', meta.get('k')), ('pn', meta.get('pn')), ('h', meta.get('h')), ('ls', meta.get('ls'))) if vv})
+                row.update({kk: vv for kk, vv in (('k', meta.get('k')), ('pn', meta.get('pn')), ('h', meta.get('h')), ('ls', meta.get('ls')), ('pr', meta.get('pr'))) if vv})
             out_companies.append(row)
     log(f'  {len(out_shapes)} shapes, {len(out_places)} places, {len(out_companies)} companies in the extent')
     return {'extent': [round(v, 4) for v in box], 'box': [round(v, 7) for v in frame.box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
@@ -1096,7 +1122,7 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, 
             'moderate': {'error': round(res_m['error'], 4), 'method': method_m, 'mix': MODERATE}}
 
 
-def build(site, profile, vectors, companies=None, cache=None, log=print, history=None, verified=None):
+def build(site, profile, vectors, companies=None, cache=None, log=print, history=None, verified=None, role_sites=None):
     """Writes VECTORS/geo-map-<scope id>.json for each scope and the index VECTORS/geo-map.json for the board in SITE. Returns the index's path."""
     if not os.path.exists(os.path.join(site, 'jobs-index.json')):
         raise GeoMapError(f'no jobs-index.json in {site} (run jobcrawl build first)')
@@ -1104,8 +1130,10 @@ def build(site, profile, vectors, companies=None, cache=None, log=print, history
     shapes = geo_base.load(cache, ('DE',), log)
     index, desc = read_site(site)
     keys_of = {}
-    table, unplaced, shape_share = role_places(index, desc, shapes, keys_of)
-    log(f'roles: {len(index)}, placed {len(index) - unplaced}, not placed {unplaced} (remote or no place named); {len(table)} places')
+    pins = read_role_sites(role_sites)
+    table, unplaced, shape_share = role_places(index, desc, shapes, keys_of, pins)
+    log(f'roles: {len(index)}, placed {len(index) - unplaced}, not placed {unplaced} (remote or no place named); {len(table)} places'
+        + (f'; {len(pins)} roles pinned by the site resolver, {sum(1 for k in table if k.startswith("site:"))} sites' if pins else ''))
     hq = dict(read_companies(companies)) if companies else {}
     hist, addrs = [], []
     if history and os.path.exists(history) and companies:

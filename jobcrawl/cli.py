@@ -73,6 +73,7 @@ def build_parser():
             sp.add_argument("--vectors", metavar="DIR", help="vectors folder (default: SITE/../vectors); geo-map.json goes there")
             sp.add_argument("--companies", metavar="FILE", help="companies catalogue (companies[].coordinates): their points go on the map")
             sp.add_argument("--cache", metavar="DIR", help="folder for the Natural Earth files (default: VECTORS/.geo-cache)")
+            sp.add_argument("--role-sites", metavar="FILE", help="role-sites.json of the site resolver (Atlas): roles pinned at their employer's site, with precision")
         if name == "traces":
             sp.add_argument("--site", metavar="DIR", required=True, help="site folder (from jobcrawl build)")
             sp.add_argument("--profile", metavar="DIR", help="profile folder (scope, field and level order; without it the board's order)")
@@ -251,7 +252,7 @@ def cmd_geomap(args):
         return _usage_error("geomap", e)
     vectors = args.vectors or default_vectors(args.site)
     try:
-        geomap.build(args.site, profile, vectors, companies=args.companies, cache=args.cache)
+        geomap.build(args.site, profile, vectors, companies=args.companies, cache=args.cache, role_sites=getattr(args, 'role_sites', None))
     except (geomap.GeoMapError, OSError, ValueError) as e:
         return _usage_error("geomap", e)
     except ImportError as e:
