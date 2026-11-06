@@ -5,7 +5,7 @@
 //   node crawler/profiler.mjs run --profile <dir> --input sites.jsonl --out report.jsonl [--log run.log] [--concurrency 4] [--limit N]
 //        [--budget 10] [--browser] [--llm http://127.0.0.1:8091] [--steps ats,jsonld,sitemap,rss,dom,xhr,llm] [--save-pages <dir>]
 //        [--date YYYY-MM-DD] [--no-resume]
-//   node crawler/profiler.mjs splice --profile <dir> --report report.jsonl [--companies <file>] [--date D] [--max N] [--dry-run]
+//   node crawler/profiler.mjs splice --profile <dir> --report report.jsonl [--companies <file>] [--date D] [--max N] [--replace] [--dry-run]
 //   node crawler/profiler.mjs reprofile-queue --profile <dir> [--data <dir>] --out sites.jsonl
 //
 // sites.jsonl: one JSON object per line { key, name, website, careers_url, posting_url, country, source, signal } (website or a URL needed).
@@ -114,7 +114,10 @@ function splice() {
   const hosts = new Set(cfg.tracked_companies.flatMap(hostsOf));
   const doms = new Map();
   for (const c of cfg.tracked_companies) for (const h of hostsOf(c)) doms.set(regDomain(h), c.name);
-  const added = [], skipped = {};
+  const added = [], skipped = {}, replaced = [];
+  const REPLACE = flag('replace');
+  const BOARD_KEYS = ['careers_url', 'provider', 'slug', 'list', 'job_url_pattern', 'url_pattern', 'link_hosts', 'jsonld_only', 'pages', 'sitemap', 'max_jobs',
+    'page_budget_ms', 'page_concurrency', 'api', 'feed_url', 'queries', 'search_text', 'filter_text', 'facets', 'region', 'profile'];
   const skip = (why, r) => { (skipped[why] ??= []).push(r.name); };
   const all = readJsonl(report);
   const latest = new Map();
@@ -143,7 +146,19 @@ function splice() {
     // a dataset row without an employer name ("[url]"): the site's own name, else its domain
     if (/^\[?(?:url|link|none|null|n\/a)?\]?$/i.test(e.name)) e.name = decode(r.name_suggested ?? '') || regDomain(hostOf(e.careers_url ?? ''));
     if (!e.name) { skip('no_name', r); continue; }
-    if (names.has(e.name.toLowerCase())) { skip('name_tracked', r); continue; }
+    if (names.has(e.name.toLowerCase())) {
+      // --replace: a re-profiled or re-resolved board replaces the board fields of the entry with exactly this name (the rest - tags,
+      // any_location, probation, interval - stays); the entry is enabled again
+      const old = REPLACE && !r.watch ? cfg.tracked_companies.find((c) => c.name === e.name) : null;
+      if (!old) { skip('name_tracked', r); continue; }
+      for (const k of BOARD_KEYS) delete old[k];
+      for (const [k, v] of Object.entries(e)) if (k !== 'name' && k !== 'profile') old[k] = v;
+      if (old.provider === 'jsonld_direct') old.jsonld_only = true;
+      old.profile = e.profile; old.enabled = true;
+      old.note = `${old.note ? `${old.note} | ` : ''}re-profiled ${e.profile.method} ${DATE}: ${r.items} items (expected ${e.profile.expected_min}-${e.profile.expected_max})`.slice(-900);
+      replaced.push(old.name);
+      continue;
+    }
     const h = hostsOf(e);
     // a shared ATS host (boards.greenhouse.io) is not a duplicate; the board slug is. A company domain already tracked is.
     const ats = e.provider !== 'paginated_list' && e.provider !== 'jsonld_direct' && e.provider !== 'sitemap';
@@ -166,7 +181,17 @@ function splice() {
   }
   say(`splice: ${added.length} entries to add (${added.filter((x) => x.interval_hours === 168).length} watch/empty) from ${latest.size} verified or watch records; skipped ${Object.entries(skipped).map(([k, v]) => `${k} ${v.length}`).join(', ') || 'none'}`, true);
   for (const [k, v] of Object.entries(skipped)) say(`splice: skipped ${k}: ${v.slice(0, 40).join('; ')}`, true);
-  if (flag('dry-run') || !added.length) { if (flag('dry-run')) console.log(JSON.stringify(added.slice(0, 3), null, 2)); return; }
+  if (replaced.length) say(`splice: replaced the board of ${replaced.length} tracked entries: ${replaced.join('; ')}`, true);
+  if (flag('dry-run') || (!added.length && !replaced.length)) { if (flag('dry-run')) console.log(JSON.stringify(added.slice(0, 3), null, 2)); return; }
+  if (replaced.length) {
+    // replacing in place rewrites the file: only when it is in canonical form (JSON.stringify, 2 spaces), so the diff stays the entries
+    const canon = (o) => JSON.stringify(o, null, 2) + '\n';
+    if (canon(JSON.parse(raw)) !== raw.replace(/\r\n/g, '\n')) throw new Error('splice --replace: the companies file is not in canonical JSON form; replace by hand');
+    cfg.tracked_companies.push(...added);
+    writeFileSync(file, canon(cfg));
+    say(`splice: wrote ${added.length} new and ${replaced.length} replaced entries to ${file}`, true);
+    return;
+  }
   // textual append before the closing "]" of tracked_companies, so the rest of the hand-kept file is untouched
   const block = added.map((e) => JSON.stringify(e, null, 2).replace(/^/gm, '    ')).join(',\n');
   const m = raw.match(/\n(\s*)\]\s*\}\s*$/);

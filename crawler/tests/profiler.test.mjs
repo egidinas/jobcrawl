@@ -242,5 +242,15 @@ test('splice: verified entries appended with probation and profile, tracked name
     assert.equal(added.profile.expected_min, 1);
     assert.match(added.note, /^profiled dom 2026-11-06/);
     assert.equal(cfg.tracked_companies.length, 3);
+    // --replace: the verified board of a tracked name replaces that entry's board fields (re-resolved / re-profiled), nothing is added
+    const out2 = execFileSync(process.execPath, [new URL('../profiler.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), 'splice', '--profile', dir, '--report', report, '--date', '2026-11-07', '--replace'], { encoding: 'utf8' });
+    assert.match(out2, /replaced the board of 2 tracked entries: New Co; Old Co/);
+    const cfg2 = JSON.parse(readFileSync(companies, 'utf8'));
+    const old = cfg2.tracked_companies.find((c) => c.name === 'Old Co');
+    assert.equal(old.provider, 'paginated_list');
+    assert.equal(old.careers_url, 'https://www.x.de/jobs');
+    assert.equal(old.enabled, true);
+    assert.equal(old.slug, 'profiled-b');
+    assert.equal(cfg2.tracked_companies.length, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
