@@ -20,7 +20,7 @@ import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
 import { UA, setUserAgent } from './useragent.mjs';
 import { makeNet } from './profiler/net.mjs';
 import { profileSite } from './profiler/cascade.mjs';
-import { hostOf, regDomain } from './profiler/detect.mjs';
+import { hostOf, regDomain, decode } from './profiler/detect.mjs';
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -116,34 +116,56 @@ function splice() {
   for (const c of cfg.tracked_companies) for (const h of hostsOf(c)) doms.set(regDomain(h), c.name);
   const added = [], skipped = {};
   const skip = (why, r) => { (skipped[why] ??= []).push(r.name); };
-  const recs = readJsonl(report).filter((r) => r.verified && r.entry);
+  const all = readJsonl(report);
   const latest = new Map();
-  for (const r of recs) latest.set(r.key, r);   // a later run of the same key wins
+  for (const r of all.filter((x) => x.verified && x.entry)) latest.set(r.key, r);   // a later run of the same key wins
+  // WATCH (owner 2026-11-06: "no job is no reason to not be on the crawl"): an in-scope employer whose careers page says it has no
+  // openings today gets a slow probation entry on that page (JobPosting JSON-LD only, so nothing but real postings is ever read);
+  // `reprofile-queue` hands watch entries back to the profiler after 30 days, when the page may carry a readable list.
+  // a real careers page (not the home page): it says "no openings", or it has no list the cascade could read today
+  const watchable = (r) => r.reason === 'no_openings' || (['no_job_list_found', 'few_or_unreadable_items'].includes(r.reason) && /^ok:(?:careers|careers-guess|list|posting-parent)$/.test(r.steps?.landing ?? ''));
+  for (const r of all) {
+    if (r.verified || latest.has(r.key) || !r.careers_page || !watchable(r)) continue;
+    latest.set(r.key, { ...r, watch: true, items: 0, samples: [],
+      entry: { name: r.name, careers_url: r.careers_page, provider: 'jsonld_direct', slug: r.careers_page, max_jobs: 30, profile: { method: 'watch', at: DATE, items: 0, expected_min: 0, expected_max: 20 } } });
+  }
   for (const r of latest.values()) {
     if (max && added.length >= max) break;
     // the verification's site-title guard, re-applied to the stored samples (records written before the guard existed)
     const st = new Set((r.samples ?? []).map((s) => String(s.title).toLowerCase()));
     if ((r.samples ?? []).length >= 2 && st.size === 1 && /\s[-|–]\s/.test(r.samples[0].title)) { skip('samples_are_site_titles', r); continue; }
+    // an ATS board larger than the profiling budget is a multinational's whole tenant (Accenture, the Airbus Workday behind Tesat):
+    // never auto-added, listed for review
+    if (/larger than the profiling budget/.test(r.steps?.ats ?? '')) { skip('board_larger_than_budget', r); continue; }
     const e = { ...r.entry };
-    e.name = String(r.name_display ?? r.name_suggested ?? e.name ?? r.name).trim();
+    // "Bayern Photonics: inno-spec" / "Pixel Photonics › QBN": the list's prefix or breadcrumb is the source, not the employer
+    e.name = decode(String(r.name_display ?? r.name_suggested ?? e.name ?? r.name)).replace(/^[^:]{3,40}:\s+/, '').replace(/\s+[›»|]\s+.*$/, '').trim();
+    // a dataset row without an employer name ("[url]"): the site's own name, else its domain
+    if (/^\[?(?:url|link|none|null|n\/a)?\]?$/i.test(e.name)) e.name = decode(r.name_suggested ?? '') || regDomain(hostOf(e.careers_url ?? ''));
     if (!e.name) { skip('no_name', r); continue; }
     if (names.has(e.name.toLowerCase())) { skip('name_tracked', r); continue; }
     const h = hostsOf(e);
     // a shared ATS host (boards.greenhouse.io) is not a duplicate; the board slug is. A company domain already tracked is.
     const ats = e.provider !== 'paginated_list' && e.provider !== 'jsonld_direct' && e.provider !== 'sitemap';
     if (ats ? cfg.tracked_companies.some((c) => c.provider === e.provider && c.slug === e.slug) : h.some((x) => hosts.has(x) || doms.has(regDomain(x)))) { skip('host_tracked', r); continue; }
-    const sample = (r.samples ?? []).slice(0, 3).map((s) => s.title).join(' | ');
+    const sample = decode((r.samples ?? []).slice(0, 3).map((s) => s.title).join(' | '));
     const entry = { name: e.name, careers_url: e.careers_url, provider: e.provider, ...(e.slug ? { slug: e.slug } : {}) };
     for (const [k, v] of Object.entries(e)) if (!(k in entry) && k !== 'profile' && k !== 'name') entry[k] = v;
-    Object.assign(entry, { enabled: true, probation: true, interval_hours: 24 });
+    const empty = !(r.items > 0);
+    Object.assign(entry, { enabled: true, probation: true, interval_hours: empty ? 168 : 24 });
+    if (entry.provider === 'jsonld_direct') entry.jsonld_only = true;   // verified on JobPosting markup: never read other pages as postings
     if (r.collect_only) entry.collect_only = true;
     entry.profile = e.profile;
-    entry.note = `profiled ${e.profile.method} ${DATE}: ${r.items} items on the profiling day (expected ${e.profile.expected_min}-${e.profile.expected_max}); source ${r.input?.source ?? '?'}${r.input?.signal ? `, in-scope signal ${r.input.signal}` : ''}; sample: ${sample}`.slice(0, 600);
+    const src = `source ${r.input?.source ?? '?'}${r.input?.signal ? `, in-scope signal ${r.input.signal}` : ''}`;
+    entry.note = (empty
+      ? `profiled: empty at ${DATE} (${!r.watch ? `${e.profile.method}: the board answered with 0 postings` : r.reason === 'no_openings' ? 'the careers page says there are no openings' : 'careers page found, no readable job list'}); weekly, JobPosting pages only, until postings appear; ${src}`
+      : `profiled ${e.profile.method} ${DATE}: ${r.items} items on the profiling day (expected ${e.profile.expected_min}-${e.profile.expected_max}); ${src}; sample: ${sample}`).slice(0, 600);
     names.add(entry.name.toLowerCase());
     for (const x of h) { hosts.add(x); if (!ats) doms.set(regDomain(x), entry.name); }
     added.push(entry);
   }
-  say(`splice: ${added.length} entries to add from ${latest.size} verified records; skipped ${Object.entries(skipped).map(([k, v]) => `${k} ${v.length}`).join(', ') || 'none'}`, true);
+  say(`splice: ${added.length} entries to add (${added.filter((x) => x.interval_hours === 168).length} watch/empty) from ${latest.size} verified or watch records; skipped ${Object.entries(skipped).map(([k, v]) => `${k} ${v.length}`).join(', ') || 'none'}`, true);
+  for (const [k, v] of Object.entries(skipped)) say(`splice: skipped ${k}: ${v.slice(0, 40).join('; ')}`, true);
   if (flag('dry-run') || !added.length) { if (flag('dry-run')) console.log(JSON.stringify(added.slice(0, 3), null, 2)); return; }
   // textual append before the closing "]" of tracked_companies, so the rest of the hand-kept file is untouched
   const block = added.map((e) => JSON.stringify(e, null, 2).replace(/^/gm, '    ')).join(',\n');
@@ -161,8 +183,10 @@ function reprofileQueue() {
   const out = opt('out');
   const health = JSON.parse(readFileSync(join(data, 'source-health.json'), 'utf8'));
   const cfg = JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8'));
-  const due = cfg.tracked_companies.filter((c) => health[c.name]?.reprofile_due);
-  const lines = due.map((c) => JSON.stringify({ key: `reprofile:${c.name}`, name: c.name, careers_url: c.careers_url ?? '', website: '', source: 'reprofile', reason: health[c.name].reprofile_reason ?? '', previous: { provider: c.provider, method: c.profile?.method } }));
+  // flagged by the crawl, plus watch entries (empty careers pages) whose last profile is 30 days old
+  const stale = (c) => c.profile?.method === 'watch' && Date.now() - Date.parse(c.profile.at) > 30 * 864e5;
+  const due = cfg.tracked_companies.filter((c) => health[c.name]?.reprofile_due || stale(c));
+  const lines = due.map((c) => JSON.stringify({ key: `reprofile:${c.name}`, name: c.name, careers_url: c.careers_url ?? '', website: '', source: 'reprofile', reason: health[c.name]?.reprofile_reason ?? (stale(c) ? 'watch entry, 30 days' : ''), previous: { provider: c.provider, method: c.profile?.method } }));
   writeFileSync(out, lines.join('\n') + (lines.length ? '\n' : ''));
   say(`reprofile-queue: ${due.length} companies flagged reprofile_due in ${join(data, 'source-health.json')} -> ${out}`, true);
 }

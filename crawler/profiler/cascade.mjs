@@ -12,7 +12,7 @@ import { jobsFromJsonLd } from '../providers-generic.mjs';
 import { getPage, BudgetError, RobotsError } from './net.mjs';
 import {
   atsFingerprints, careerLinks, listLinks, feedLinks, linkGroups, htmlListConfig, pagination, jobArrays, pagingParam, sitemapLocs,
-  robotsSitemaps, sitemapJobGroup, rssItems, RSS_LIST, inlineJsonJobs, titleScore, isJobLike, regDomain, hostOf, reEscape, JOB_URL_TOKENS, textOf,
+  robotsSitemaps, sitemapJobGroup, rssItems, RSS_LIST, inlineJsonJobs, titleScore, jobAnchors, commonJobDir, isJobLike, regDomain, hostOf, reEscape, JOB_URL_TOKENS, textOf,
 } from './detect.mjs';
 
 const JOBPOSTING = /["']@type["']\s*:\s*\[?\s*["']JobPosting["']|itemtype=["']https?:\/\/schema\.org\/JobPosting["']/i;
@@ -101,7 +101,7 @@ export async function profileSite(site, env) {
       home = await fetchPage(website || new URL(postingIn).origin + '/', 'home');
       if (home?.robots) { rec.reason = 'robots'; steps.landing = 'fail:robots'; return rec; }
       if (!home) { rec.reason = 'homepage_failed'; steps.landing = 'fail:homepage_failed'; return rec; }
-      if (!rec.name || /^[a-z0-9-]+$/.test(rec.name.replace(/^[^:]+:\s*/, ''))) {
+      if (!rec.name || /^\[?url\]?$/i.test(rec.name) || /^[a-z0-9-]+$/.test(rec.name.replace(/^[^:]+:\s*/, ''))) {
         const sn = home.html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']{2,60})["']/i)?.[1];
         if (sn) rec.name_suggested = textOf(sn);
       }
@@ -179,7 +179,22 @@ export async function profileSite(site, env) {
           if (v.ok && v.n >= Math.min(2, best.n)) return finish('jsonld', entry, v, best.n);
         } else steps.jsonld_detail = detail?.robots ? 'fail:robots' : 'fail:no_jobposting_on_posting_page';
       }
-    } else steps.jsonld_detail = 'skip:no_link_group';
+    } else if (want('jsonld')) {
+      // a small employer with one or two openings has no repeated group: its posting links (a job title, a job directory) are enough
+      // when the posting page carries JobPosting JSON-LD; the pattern is that job directory, never the careers landing path itself
+      const few = pages.filter((p) => !/sitemap|posting/.test(p.role)).flatMap((p) => jobAnchors(p.html, p.url).map((a) => ({ ...a, page: p }))).filter((a) => ownHost(hostOf(a.url)));
+      const dir = few.length ? commonJobDir(few.map((a) => a.url)) : null;
+      if (dir && !few.some((a) => new URL(a.page.url).pathname === dir)) {
+        const detail = await fetchPage(few[0].url, 'posting');
+        const jp = detail && !detail.robots ? jobsFromJsonLd(detail.html, detail.url)[0] : null;
+        if (jp?.title) {
+          const entry = { name: site.name, careers_url: few[0].page.url, provider: 'jsonld_direct', slug: few[0].page.url, job_url_pattern: `^${reEscape(dir)}`, max_jobs: 100 };
+          const v = await verifyEntry(entry, { minJobLike: 0, minItems: 1 });
+          steps.jsonld_detail = v.ok ? `ok:${v.n} parsed, ${few.length} posting links (no group)` : `fail:${v.error ?? `${v.n} parsed`}`;
+          if (v.ok) return finish('jsonld', entry, v, new Set(few.map((a) => a.url)).size);
+        } else steps.jsonld_detail = `fail:no_jobposting_on_posting_page (${few.length} posting links, no group)`;
+      } else steps.jsonld_detail = 'skip:no_link_group';
+    }
     // job sitemap (robots.txt Sitemap: lines, else /sitemap.xml)
     if (!want("sitemap")) steps.sitemap = "skip:steps";
     else if (ctx.requests < ctx.budget - 2) {

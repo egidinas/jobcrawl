@@ -78,6 +78,19 @@ test('repeated link group -> paginated_list html config that the production pars
   assert.ok(!linkGroups(LIST, url).some((x) => x.urls.some((u) => /impressum/.test(u)) && x.titleFrac > 0.4));
 });
 
+test('repeated link group on a captured careers page (dresden-elektronik.de, verified 2026-11-06)', () => {
+  const html = fixture('profiler-dresden-elektronik-careers.html');
+  const url = 'https://www.dresden-elektronik.de/karriere.html';
+  const g = linkGroups(html, url).filter((x) => x.titleFrac >= 0.5)[0];
+  assert.equal(g.hp.prefix, '/stellenangebot/');
+  const list = htmlListConfig(g, url, html, pagination(html, url, g.n));
+  assert.ok(!/category_8|arc_6/.test(list.items), 'no instance/category classes in the item pattern');
+  const jobs = itemsOf(html, list).items.map((it) => fieldsOf(it, { ...list, url_base: url })).filter((j) => j.title && j.url);
+  assert.ok(jobs.length >= 5, `${jobs.length} jobs`);
+  assert.ok(jobs.some((j) => j.title === 'Embedded Softwareentwickler in der Verkehrstechnik (m/w/d)'), jobs.map((j) => j.title).join(' | '));
+  assert.ok(jobs.every((j) => j.url.startsWith('https://www.dresden-elektronik.de/stellenangebot/')));
+});
+
 test('job sitemap (captured: autoflug.com jobs-sitemap.xml)', () => {
   const { isIndex, locs } = sitemapLocs(fixture('profiler-autoflug-jobs-sitemap.xml'));
   assert.equal(isIndex, false);
@@ -210,17 +223,24 @@ test('splice: verified entries appended with probation and profile, tracked name
     const rec = (name, url, key) => ({ key, name, verified: true, method: 'dom', items: 6, samples: [{ title: 'Engineer (m/w/d)', url: `${url}/1` }], input: { source: 'universe:assoc:tierA', signal: 10 },
       entry: { name, careers_url: url, provider: 'paginated_list', slug: `profiled-${key}`, list: { kind: 'html', url, items: '<a>.*?</a>' }, profile: { method: 'dom', at: '2026-11-06', items: 6, expected_min: 1, expected_max: 34 } } });
     const report = join(dir, 'r.jsonl');
-    writeFileSync(report, [rec('New Co', 'https://www.new.de/karriere', 'a'), rec('Old Co', 'https://www.x.de/jobs', 'b'), rec('Same Host', 'https://jobs.old.de/list', 'c')].map((r) => JSON.stringify(r)).join('\n') + '\n');
+    writeFileSync(report, [rec('New Co', 'https://www.new.de/karriere', 'a'), rec('Old Co', 'https://www.x.de/jobs', 'b'), rec('Same Host', 'https://jobs.old.de/list', 'c'),
+      { key: 'd', name: 'Watch Co', verified: false, reason: 'no_openings', careers_page: 'https://www.watch.de/karriere', input: { source: 'universe:assoc:tierA' } }].map((r) => JSON.stringify(r)).join('\n') + '\n');
     const { execFileSync } = await import('node:child_process');
     const out = execFileSync(process.execPath, [new URL('../profiler.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), 'splice', '--profile', dir, '--report', report, '--date', '2026-11-06'], { encoding: 'utf8' });
-    assert.match(out, /1 entries to add/);
+    assert.match(out, /2 entries to add \(1 watch\/empty\)/);
     const cfg = JSON.parse(readFileSync(companies, 'utf8'));
-    const added = cfg.tracked_companies.at(-1);
+    const watch = cfg.tracked_companies.at(-1);
+    assert.equal(watch.name, 'Watch Co');
+    assert.equal(watch.interval_hours, 168);
+    assert.equal(watch.jsonld_only, true);
+    assert.equal(watch.probation, true);
+    assert.match(watch.note, /^profiled: empty at 2026-11-06/);
+    const added = cfg.tracked_companies.at(-2);
     assert.equal(added.name, 'New Co');
     assert.equal(added.probation, true);
     assert.equal(added.enabled, true);
     assert.equal(added.profile.expected_min, 1);
     assert.match(added.note, /^profiled dom 2026-11-06/);
-    assert.equal(cfg.tracked_companies.length, 2);
+    assert.equal(cfg.tracked_companies.length, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

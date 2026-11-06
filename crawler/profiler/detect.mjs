@@ -153,6 +153,25 @@ export function listLinks(html, pageUrl) {
   return [...out.entries()].sort((a, b) => b[1] - a[1]).map(([url, score]) => ({ url, score }));
 }
 
+/** Single posting links: a strong job title (title words + a gender marker, or score >= 0.85) whose URL has a job token. */
+export function jobAnchors(html, pageUrl) {
+  const out = new Map();
+  for (const a of anchorsOf(html, pageUrl)) {
+    const u = new URL(a.url);
+    if (/\.(?:pdf|docx?|jpe?g|png)$/i.test(u.pathname) || out.has(a.url)) continue;
+    if (titleScore(a.text) >= 0.85 && JOB_URL_TOKENS.test(u.pathname + u.search)) out.set(a.url, { url: a.url, text: a.text });
+  }
+  return [...out.values()];
+}
+/** The job directory several posting URLs share ("/karriere/stellenangebote/"), or null when it is not a job-specific directory. */
+export function commonJobDir(urls) {
+  const dirs = urls.map((u) => new URL(u).pathname.replace(/[^/]*$/, ''));
+  let d = dirs[0];
+  for (const x of dirs) while (d && !x.startsWith(d)) d = d.replace(/[^/]*\/$/, '');
+  const last = d.split('/').filter(Boolean).pop() ?? '';
+  return /^(?:jobs?|stellen\w*|stellenangebote?|offene-stellen|vacanc\w*|positions?|job-?offers?|ausschreibung\w*|jobangebote?|karriere-jobs|open-positions)$/i.test(last) ? d : null;
+}
+
 /** RSS/Atom feeds a page announces. */
 export function feedLinks(html, pageUrl) {
   const out = [];
@@ -208,7 +227,8 @@ export function nodeText(n) {
 }
 const clean = (s) => s.replace(/\s+/g, ' ').trim();
 // A class token that names a structure (job-item) rather than a state or an instance (active, col-md-6, item-123, css-1x2y3z).
-const stableClasses = (cls) => cls.split(' ').filter((c) => c && !/\d{2,}|^(?:active|selected|odd|even|first|last|show|hide|hidden|visible|open|is-|has-|js-|col-|row$|d-|m[tblrxy]?-|p[tblrxy]?-|w-|h-|text-|bg-|flex|grid|css-|sc-|jsx-|svelte-)/i.test(c));
+// (a class with a digit names an instance or a category - item-3, category_8, arc_6 - so it would split one list into several groups)
+const stableClasses = (cls) => cls.split(' ').filter((c) => c && !/\d|^(?:active|selected|odd|even|first|last|show|hide|hidden|visible|open|is-|has-|js-|col-|row$|d-|m[tblrxy]?-|p[tblrxy]?-|w-|h-|text-|bg-|flex|grid|css-|sc-|jsx-|svelte-)/i.test(c));
 const sig = (n) => `${n.tag}${stableClasses(n.cls).slice(0, 3).map((c) => '.' + c).join('')}`;
 
 function walk(n, fn) { fn(n); for (const c of n.children ?? []) if (c.text === undefined) walk(c, fn); }

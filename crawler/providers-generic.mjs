@@ -6,7 +6,8 @@
 //                    search page. Config in entry.list, documented at `paginatedListConfig` below.
 //   jsonld_direct    A company careers page: collect the posting links of the list page(s) (or of a job sitemap), fetch each posting
 //                    once (cached by URL with a TTL) and read its schema.org JobPosting JSON-LD (title, location, date, description,
-//                    hiring organisation). Config in the entry: slug = the list URL, optional pages, job_url_pattern, sitemap, max_jobs.
+//                    hiring organisation). Config in the entry: slug = the list URL, optional pages, job_url_pattern, sitemap, max_jobs,
+//                    jsonld_only (a posting page without JobPosting markup is skipped instead of read by the generic page parser).
 //
 // The pure pieces (jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd) are exported so the tests run them on captured documents.
 import { UA } from './useragent.mjs';
@@ -212,7 +213,7 @@ export const genericProviders = {
           const u = todo[i++];
           try {
             const html = await fetchText(u, { timeoutMs: 25000 });
-            const job = jobsFromJsonLd(html, u)[0] ?? parseJobPage(html, u);
+            const job = jobsFromJsonLd(html, u)[0] ?? (entry.jsonld_only ? null : parseJobPage(html, u));   // jsonld_only: pages without JobPosting markup are not postings
             cache[u] = { t: now, job: job?.title ? { ...job, url: u } : null };
           } catch { if (!cache[u]) cache[u] = { t: now, job: null }; }
           await sleep(300);
