@@ -120,7 +120,6 @@ function prepareFilters(cfg) {
   // number would have passed US ZIP codes; SuccessFactors always writes the country code, so the token rule suffices.)
   const codes = (lf.allow_country_codes ?? []).map((c) => norm(c)).filter((c) => /^[a-z]{2,3}$/.test(c));
   const countryCodeRegex = codes.length ? new RegExp(`(?:^|[^a-z])(?:${codes.join('|')})(?=$|[^a-z])`) : null;
-  const postcodeRegex = codes.includes('de') ? /(?:^|[^0-9])\d{5}(?=$|[^0-9])/ : null;
   const allowCountryCode = (normLocation) => Boolean(countryCodeRegex && countryCodeRegex.test(normLocation));
 
   const companyMap = new Map();
