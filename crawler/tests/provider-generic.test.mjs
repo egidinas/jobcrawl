@@ -62,6 +62,11 @@ test('paginated_list json: walks {page} until the total is reached or a page rep
   const calls2 = await withFetch(() => page, async () => { jobs = await providers.paginated_list.fetch('x', { list: { ...JSON_LIST, page_size: 10 } }); });
   assert.equal(calls2.length, 1, 'a page shorter than page_size is the last one');
   await assert.rejects(providers.paginated_list.fetch('x', { list: { url: 'https://x/' } }), /entry\.list needs url and kind/);
+  // a 404 past the last page ends the walk with what was gathered; a 404 on the first page is the board's error
+  const calls3 = await withFetch((u) => (u.endsWith('page=1') ? page : null), async () => { jobs = await providers.paginated_list.fetch('x', { list: { ...JSON_LIST, total: undefined, page_size: 3 } }); });
+  assert.equal(calls3.length, 2);
+  assert.equal(jobs.length, 3);
+  await assert.rejects(withFetch(() => null, async () => { await providers.paginated_list.fetch('x', { list: JSON_LIST }); }), /HTTP 404/);
 });
 
 test('paginated_list html: items by regex, fields by capture group, {offset} and relative URLs', async () => {

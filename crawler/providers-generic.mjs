@@ -159,7 +159,13 @@ export const genericProviders = {
       for (let page = first, n = 0; n < maxPages; page++, n++) {
         if (n) await sleep(delay);
         const url = sub(list.url, page);
-        const body = await fetchText(url, { method: list.method ?? 'GET', headers: list.headers ?? {}, body: list.body ? sub(list.body, page) : undefined });
+        let body;
+        try {
+          body = await fetchText(url, { method: list.method ?? 'GET', headers: list.headers ?? {}, body: list.body ? sub(list.body, page) : undefined });
+        } catch (e) {
+          if (n && /^HTTP 4\d\d /.test(e.message)) break;   // a 404/410 past the last page ends the walk; on the first page it is the board's error
+          throw e;
+        }
         const { items, total } = itemsOf(body, { ...list, url_base: list.url_base ?? url });
         const jobs = items.map((it) => fieldsOf(it, { ...list, url_base: list.url_base ?? url })).filter((j) => j.title && j.url);
         const keys = jobs.map((j) => j.url).join('\n');
