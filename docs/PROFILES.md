@@ -61,6 +61,12 @@ job-board URL. The minimal profile polls three boards:
 ```
 
 * `interval_hours` (2 to 48) polls an employer only when it is due.
+* `provider: "paginated_list"` reads any paged list endpoint from configuration in `list` (`url` with `{page}`/`{offset}`, `kind` json or
+  html, `items`, `fields`, `page_size`, `max_pages`, `total`, `company_suffix`; the full key list is `paginatedListConfig` in
+  `crawler/providers-generic.mjs`). `provider: "jsonld_direct"` reads a company careers page: `slug` = the list URL (plus `pages`), the
+  posting links matching `job_url_pattern` (default: job/stellen/career-like paths) are fetched once per `detail_ttl_hours` (72) and their
+  schema.org JobPosting JSON-LD gives title, location, date and description; `sitemap` is the fallback when the list page links nothing;
+  `max_jobs` caps the postings read (300).
 * `timeout_ms` is the fetch budget of one entry (default 35000, at most 600000): raise it for a huge board that pages slowly, e.g. a
   Workday tenant with thousands of rows (`"timeout_ms": 180000`).
 * `enabled: false` skips an employer without removing it.

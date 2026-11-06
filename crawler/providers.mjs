@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { extraProviders } from './providers-extra.mjs';
 import { researchProviders } from './providers-research.mjs';
+import { genericProviders } from './providers-generic.mjs';
 import { usajobsDetect, usajobsFetch } from './providers-usajobs.mjs';
 import { eures } from './providers-eures.mjs';
 import { UA } from './useragent.mjs';
@@ -173,14 +174,14 @@ let cacheDir = null;
 /** Where providers may keep small caches (the crawl's data folder). Without it the sitemap provider re-fetches pages. */
 export function setCacheDir(dir) { cacheDir = dir; }
 const cacheFile = (slug) => (cacheDir ? join(cacheDir, `sitemap-cache-${createHash('sha1').update(slug).digest('hex').slice(0, 10)}.json`) : null);
-function loadSitemapCache(slug) {
+export function loadSitemapCache(slug) {
   try { return JSON.parse(readFileSync(cacheFile(slug), 'utf8')); } catch { return {}; }
 }
-function saveSitemapCache(slug, c) {
+export function saveSitemapCache(slug, c) {
   const f = cacheFile(slug);
   if (f) { mkdirSync(cacheDir, { recursive: true }); writeFileSync(f, JSON.stringify(c)); }
 }
-async function robotsDisallow(origin) {
+export async function robotsDisallow(origin) {
   try {
     const txt = await get(`${origin}/robots.txt`, { json: false, timeoutMs: 10000 });
     const out = [];
@@ -198,7 +199,7 @@ const attr = (html, prop) => html.match(new RegExp(`<meta[^>]+itemprop="${prop}"
 const dateOnly = (raw) => { const d = isoDate(decode(raw || '')); return /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : ''; };
 
 /** One job page to { title, url, location, postedAt, description } from JobPosting JSON-LD, else microdata. */
-function parseJobPage(html, url) {
+export function parseJobPage(html, url) {
   for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
     let data;
     try { data = JSON.parse(m[1]); } catch { continue; }
@@ -207,7 +208,8 @@ function parseJobPage(html, url) {
     if (!jp) continue;
     const loc = [].concat(jp.jobLocation ?? []).map((l) => [l.address?.addressLocality, l.address?.addressCountry?.name ?? l.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
     const org = [].concat(jp.hiringOrganization ?? []).map((o) => (typeof o === 'string' ? o : o?.name ?? o?.legalName ?? '')).find(Boolean) ?? '';
-    return { title: decode(jp.title ?? ''), url, location: loc, postedAt: dateOnly(jp.datePosted), description: plain(jp.description ?? ''), ...(org ? { organization: decode(String(org)) } : {}) };
+    // A JSON-LD title can carry markup (mpg.de: "...Biology<br>"): tags go, whitespace collapses.
+    return { title: plain(jp.title ?? '').replace(/\s+/g, ' ').trim(), url, location: loc, postedAt: dateOnly(jp.datePosted), description: plain(jp.description ?? ''), ...(org ? { organization: decode(String(org)) } : {}) };
   }
   const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i)?.[1];
   const tagTitle = html.match(/<title>([^<]*?)(?:\s+(?:Job Details|at|\|)|$).*?<\/title>/i)?.[1];
@@ -2961,6 +2963,8 @@ export const providers = {
 for (const [id, p] of Object.entries(extraProviders)) if (!(id in providers)) providers[id] = p;
 // Research-organisation portals (providers-research.mjs: mpg, desy, hzdr), same rule.
 for (const [id, p] of Object.entries(researchProviders)) if (!(id in providers)) providers[id] = p;
+// Config-driven boards (providers-generic.mjs: paginated_list, jsonld_direct), same rule.
+for (const [id, p] of Object.entries(genericProviders)) if (!(id in providers)) providers[id] = p;
 // USAJOBS Search API (providers-usajobs.mjs; key from the environment). Registered from its hoisted functions, not its `usajobs` object:
 // that module imports plain() and metaOf() from here, and function declarations exist before either module runs, so the cycle is safe.
 providers.usajobs = { detect: usajobsDetect, fetch: usajobsFetch };

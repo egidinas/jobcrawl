@@ -120,7 +120,8 @@ polls three software employers in Germany, and see:
 ## Sources
 
 The crawler reads the public feeds of employers' own applicant-tracking systems (the providers in `crawler/providers.mjs` and
-`crawler/providers-extra.mjs`, and the German research portals Max Planck, DESY and HZDR in `crawler/providers-research.mjs`) and the
+`crawler/providers-extra.mjs`, the German research portals Max Planck, DESY and HZDR in `crawler/providers-research.mjs`, and the config-driven `paginated_list` and
+`jsonld_direct` providers in `crawler/providers-generic.mjs` for boards and company sites without an ATS) and the
 aggregator boards a profile names. One of those aggregators is EURES, the European
 Employment Services portal of the European Labour Authority (ELA), which carries the vacancies of the national public employment
 services: `crawler/providers-eures.mjs` calls the portal's own search backend. That backend is undocumented and unofficial, so it

@@ -1,0 +1,48 @@
+{
+ "_note": "www.helmholtz.de/api/v1/en/jobs/ (TYPO3 headless solr), 2026-11-06, trimmed to 3 of 257 results; used only as a JSON paging fixture (the live API is not crawled: robots Disallow /*? and Crawl-delay 30)",
+ "content": {
+  "colPos0": [
+   {
+    "content": {
+     "data": {
+      "documents": {
+       "pagination": {
+        "currentPage": 1,
+        "numberOfPages": 26
+       },
+       "list": {
+        "count": 257,
+        "results": [
+         {
+          "mark": "Work placement",
+          "title": "Studentische Pflichtpraktika sowie Grund-/Vorpraktikum m/w/d",
+          "subtitle": "Forschungszentrum Jülich",
+          "teaser": "Standort: Jülich",
+          "url": "https://www.fz-juelich.de/de/karriere/stellenangebote/2024P-029",
+          "isExternal": true
+         },
+         {
+          "mark": "Work placement",
+          "title": "Studentische freiwillige, studienbegleitende Praktika von maximal drei Monaten Dauer",
+          "subtitle": "Forschungszentrum Jülich",
+          "teaser": "Standort: Jülich",
+          "url": "https://www.fz-juelich.de/de/karriere/stellenangebote/2024P-030",
+          "isExternal": true
+         },
+         {
+          "mark": "Work placement",
+          "title": "Freiwillige Praktika ohne Studienbezug",
+          "subtitle": "Forschungszentrum Jülich",
+          "teaser": "Standort: Jülich",
+          "url": "https://www.fz-juelich.de/de/karriere/stellenangebote/2024P-031",
+          "isExternal": true
+         }
+        ]
+       }
+      }
+     }
+    }
+   }
+  ]
+ }
+}
