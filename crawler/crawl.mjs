@@ -397,6 +397,20 @@ async function scan() {
   const trustedSg = protectedIdx;   // strict Singapore gate keeps jobs of protected employers
   let gatedSg = 0, gatedProbation = 0;
 
+  // Per-provider health line (owner 2026-11-06: silent degradation must show): boards fetched this cycle per provider, how many
+  // failed and how many answered with 0 jobs, so a provider that breaks (JOIN returned [] for weeks) is visible in every cycle's notes.
+  {
+    const ph = {};
+    results.forEach((res, i) => {
+      const p = companies[i].provider ?? res?.r?.provider ?? '?';
+      const x = (ph[p] ??= { n: 0, fail: 0, zero: 0 });
+      x.n++;
+      if (!res || res.error) x.fail++;
+      else if (!res.jobs?.length) x.zero++;
+    });
+    const parts = Object.entries(ph).sort((a, b) => b[1].n - a[1].n).map(([p, x]) => `${p} ${x.n}${x.fail ? ` (${x.fail} failed)` : ''}${x.zero ? ` (${x.zero} empty)` : ''}`);
+    if (parts.length) problems.push(`provider health: ${parts.join(', ')}`);
+  }
   results.forEach((res, i) => {
     const name = companies[i].name;
     if (!res || res.error) { noteHealth(name, false, 0); return problems.push(`${name}: ${res?.error ?? 'failed'}`); }
