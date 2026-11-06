@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { extraProviders } from './providers-extra.mjs';
+import { researchProviders } from './providers-research.mjs';
 import { usajobsDetect, usajobsFetch } from './providers-usajobs.mjs';
 import { eures } from './providers-eures.mjs';
 import { UA } from './useragent.mjs';
@@ -2958,6 +2959,8 @@ export const providers = {
 
 // Providers ported from career-ops (see providers-extra.mjs). Appended after the built-ins and never overriding one, so resolve() order is unchanged.
 for (const [id, p] of Object.entries(extraProviders)) if (!(id in providers)) providers[id] = p;
+// Research-organisation portals (providers-research.mjs: mpg, desy, hzdr), same rule.
+for (const [id, p] of Object.entries(researchProviders)) if (!(id in providers)) providers[id] = p;
 // USAJOBS Search API (providers-usajobs.mjs; key from the environment). Registered from its hoisted functions, not its `usajobs` object:
 // that module imports plain() and metaOf() from here, and function declarations exist before either module runs, so the cycle is safe.
 providers.usajobs = { detect: usajobsDetect, fetch: usajobsFetch };
