@@ -5,6 +5,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { extraProviders } from './providers-extra.mjs';
 import { usajobsDetect, usajobsFetch } from './providers-usajobs.mjs';
 import { eures } from './providers-eures.mjs';
@@ -37,7 +38,13 @@ async function request(url, init = {}, { timeoutMs = 20000, retries = 2 } = {}) 
 
 async function get(url, { json = true, timeoutMs = 20000 } = {}) {
   const res = await request(url, { headers: { 'user-agent': UA, accept: json ? 'application/json' : '*/*' } }, { timeoutMs });
-  return json ? res.json() : res.text();
+  if (json) return res.json();
+  // A sitemap served as a raw gzip file (jobs.b-ite.com/sitemap.xml.gz) has no Content-Encoding, so fetch does not inflate it.
+  if (/\.gz(?:[?#]|$)/i.test(url)) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf).toString('utf8') : buf.toString('utf8');
+  }
+  return res.text();
 }
 
 const decode = (s = '') =>
@@ -198,7 +205,8 @@ function parseJobPage(html, url) {
     const jp = nodes.find((n) => n && [].concat(n['@type']).includes('JobPosting'));
     if (!jp) continue;
     const loc = [].concat(jp.jobLocation ?? []).map((l) => [l.address?.addressLocality, l.address?.addressCountry?.name ?? l.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
-    return { title: decode(jp.title ?? ''), url, location: loc, postedAt: dateOnly(jp.datePosted), description: plain(jp.description ?? '') };
+    const org = [].concat(jp.hiringOrganization ?? []).map((o) => (typeof o === 'string' ? o : o?.name ?? o?.legalName ?? '')).find(Boolean) ?? '';
+    return { title: decode(jp.title ?? ''), url, location: loc, postedAt: dateOnly(jp.datePosted), description: plain(jp.description ?? ''), ...(org ? { organization: decode(String(org)) } : {}) };
   }
   const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)["']/i)?.[1];
   const tagTitle = html.match(/<title>([^<]*?)(?:\s+(?:Job Details|at|\|)|$).*?<\/title>/i)?.[1];
@@ -538,7 +546,10 @@ export const providers = {
       const live = new Set(urls.map((u) => u.url));
       for (const k of Object.keys(cache)) if (!live.has(k)) delete cache[k];
       saveSitemapCache(slug, cache);
-      return urls.map((u) => cache[u.url]?.job).filter((j) => j?.title);
+      // entry.org_filter (regex, case-insensitive): on a sitemap shared by many employers (jobs.b-ite.com lists every BITE tenant's
+      // postings under /jobposting/<hash>, no tenant in the URL) keep only the postings whose JSON-LD hiringOrganization matches.
+      const orgPat = entry.org_filter ? new RegExp(entry.org_filter, 'i') : null;
+      return urls.map((u) => cache[u.url]?.job).filter((j) => j?.title && (!orgPat || orgPat.test(j.organization ?? '')));
     },
   },
 
@@ -1876,6 +1887,50 @@ export const providers = {
         }
         if (!fresh || page >= (parsed.meta?.totalPages || 1)) break;
         await new Promise((r) => setTimeout(r, 200));
+      }
+      return out;
+    },
+  },
+
+  // BITE (b-ite.com, German mid-market ATS "Bewerbermanager"): a career page embeds the jobs-api loader with
+  // data-bite-jobs-api-listing="<customer>:<listing>". The listing definition cs-assets.b-ite.com/<customer>/jobs-api/<listing>.min.js
+  // carries the public API key; POST jobs.b-ite.com/api/v1/postings/search (Content-Type application/json;charset=utf-8, exactly:
+  // without the charset the API answers 406) returns jobPostings (id, title, url on the tenant's career domain, address, startsOn,
+  // employer.name) with page {offset, total}. No description in the list: the posting page carries JSON-LD (lazy JD). Reverse-engineered
+  // from the loader (api-v5.min.js) on 2026-11-06, first tenant Vincorion; the posting pages are robots-allowed (Disallow only */apply).
+  // slug = "<customer>:<listing>" (e.g. vincorion-jenoptik-advanced-systems:internet) or the listing's full cs-assets URL.
+  bite: {
+    detect: (u) => u.match(/data-bite-jobs-api-listing="([\w.-]+:[\w-]+)"/)?.[1] ?? u.match(/cs-assets\.b-ite\.com\/([\w.-]+)\/jobs-api\/([\w-]+)(?:\.min)?\.js/)?.slice(1, 3).join(':') ?? null,
+    async fetch(slug) {
+      const [customer, listing = 'internet'] = String(slug).split(':');
+      if (!/^[\w.-]+$/.test(customer) || !/^[\w-]+$/.test(listing)) throw new Error(`bite: bad slug "${slug}"`);
+      const def = await get(`https://cs-assets.b-ite.com/${customer}/jobs-api/${listing}.min.js`, { json: false });
+      const key = def.match(/\bkey\s*:\s*["']([A-Za-z0-9_-]{16,})["']/)?.[1];
+      if (!key) throw new Error(`bite: no API key in the listing definition of ${slug}`);
+      const out = [];
+      for (let offset = 0, total = Infinity, page = 0; offset < total && page < 40; page++) {
+        const res = await request('https://jobs.b-ite.com/api/v1/postings/search', {
+          method: 'POST',
+          headers: { 'user-agent': UA, accept: 'application/json', 'content-type': 'application/json;charset=utf-8', 'Bite-JobsApi-Client': 'v5-20230925-9df79de' },
+          body: JSON.stringify({ key, filter: {}, limit: 100, offset }),
+        }, { timeoutMs: 25000 });
+        const d = await res.json();
+        const rows = d.jobPostings ?? [];
+        total = Number(d.page?.total ?? rows.length);
+        for (const p of rows) {
+          const a = p.address ?? {};
+          out.push({
+            title: decode(String(p.title ?? '')).trim(),
+            url: p.url || `https://jobs.b-ite.com/jobposting/${p.id}`,
+            location: [a.city, a.country ? String(a.country).toUpperCase() : ''].filter(Boolean).join(', '),
+            postedAt: isoDate(p.startsOn || p.activatedOn || p.createdOn || ''),
+            company: p.employer?.name || undefined,
+            employmentType: [].concat(p.employmentType ?? []).join(', ') || undefined,
+          });
+        }
+        if (!rows.length) break;
+        offset += rows.length;
+        await sleep(200);
       }
       return out;
     },

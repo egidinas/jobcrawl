@@ -118,6 +118,7 @@ const urlsIn = (html) => [...new Set([...html.matchAll(/(?:https?:)?\/\/[\w.-]+\
 const CAREER_OPS = 'https://github.com/career-ops-hq/career-ops/blob/main';
 const KNOWN_SYSTEMS = [
   ['SAP SuccessFactors', /successfactors|sapsf\./i, 'successfactors', 'Try provider "sitemap" first (real dates).'],
+  ['BITE jobs-api', /b-ite\.com\/jobs-api|data-bite-jobs-api-listing/i, 'bite', 'Supported: slug = the data-bite-jobs-api-listing value "<customer>:<listing>".'],
   ['iCIMS', /icims\.com/i, 'icims'], ['Phenom', /phenompeople|phenom\.com/i, 'phenom'],
   ['Avature', /avature\.net/i, 'avature'], ['Breezy HR', /breezy\.hr/i, 'breezy'],
   ['Comeet', /comeet\.(?:co|com)/i, 'comeet'], ['Pinpoint', /pinpointhq\.com/i, 'pinpoint'], ['JazzHR', /applytojob\.com|jazz\.co/i, 'jazzhr'],
