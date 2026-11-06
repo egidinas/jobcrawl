@@ -10,13 +10,19 @@
 //
 // The pure pieces (jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd) are exported so the tests run them on captured documents.
 import { UA } from './useragent.mjs';
-import { parseJobPage, loadSitemapCache, saveSitemapCache, robotsDisallow, plain } from './providers.mjs';
+// providers.mjs imports this module and merges genericProviders at its top level; importing it back statically would be a cycle whose
+// order depends on which module is loaded first (a test importing this file first hit the TDZ), so the shared helpers load lazily.
+const core = () => import('./providers.mjs');
+const plain = (html = '') => String(html).replace(/<(?:br|\/p|\/li|\/h\d|\/div)\s*\/?>/gi, '\n').replace(/<li[^>]*>/gi, '- ').replace(/<[^>]+>/g, ' ')
+  .replace(/[ \t]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const decode = (s = '') => String(s)
+const decodeEntities = (s = '') => String(s)
   .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
   .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+const decode = decodeEntities;
 const text = (s = '') => decode(String(s).replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+const plainText = (h) => decode(plain(h));
 const num = (v, dflt) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : dflt);
 const isoDate = (raw = '') => {
   const s = String(raw).trim();
@@ -80,7 +86,7 @@ export function fieldsOf(item, list) {
   if (url && list.url_base) { try { url = new URL(decode(url), list.url_base).href; } catch { url = ''; } }
   const title = pick('title') || (list.kind === 'json' ? '' : text(item.match(/<a[^>]*>([\s\S]*?)<\/a>/)?.[1] ?? ''));
   const out = { title: text(title), url, location: pick('location'), department: pick('department'), postedAt: isoDate(pick('postedAt')) };
-  const desc = pick('description'); if (desc) out.description = list.kind === 'json' ? plain(desc) : desc;
+  const desc = pick('description'); if (desc) out.description = list.kind === 'json' ? plainText(desc) : desc;
   const company = pick('company'); if (company) out.company = list.company_suffix ? `${company} ${list.company_suffix}` : company;
   return out;
 }
@@ -121,7 +127,7 @@ export function jobsFromJsonLd(html, pageUrl) {
       if (!url || !/^https?:/.test(url)) continue;
       const loc = [].concat(jp.jobLocation ?? []).map((l) => [l.address?.addressLocality, l.address?.addressCountry?.name ?? l.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
       const org = [].concat(jp.hiringOrganization ?? []).map((o) => (typeof o === 'string' ? o : o?.name ?? '')).find(Boolean) ?? '';
-      out.push({ title: text(jp.title ?? ''), url, location: loc, department: '', postedAt: isoDate(jp.datePosted ?? ''), description: plain(jp.description ?? ''), ...(org ? { organization: text(org) } : {}) });
+      out.push({ title: text(jp.title ?? ''), url, location: loc, department: '', postedAt: isoDate(jp.datePosted ?? ''), description: plainText(jp.description ?? ''), ...(org ? { organization: text(org) } : {}) });
     }
   }
   return out.filter((j) => j.title);
@@ -173,6 +179,7 @@ export const genericProviders = {
       if (!pages.length) throw new Error('jsonld_direct: slug must be the careers list URL');
       const pattern = entry.job_url_pattern ? new RegExp(entry.job_url_pattern, 'i') : DEFAULT_JOB_PATTERN;
       const origin = new URL(pages[0]).origin;
+      const { parseJobPage, loadSitemapCache, saveSitemapCache, robotsDisallow } = await core();
       const disallow = await robotsDisallow(origin);
       const allowed = (u) => { try { const p = new URL(u).pathname; return !disallow.some((d) => p.startsWith(d)); } catch { return false; } };
       const found = new Map();   // url -> job (from the list page's JSON-LD) or null (to fetch)
