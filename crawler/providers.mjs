@@ -2491,13 +2491,24 @@ export const providers = {
       return m ? m[1] : null;
     },
     async fetch(slug) {
-      const url = `https://join.com/companies/${slug}`;
-      const html = await get(url, { json: false });
-      const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-      if (!nextMatch) return [];
-      const data = JSON.parse(nextMatch[1]);
-      const state = data.props?.pageProps?.initialState;
-      const items = state?.jobs?.items || [];
+      // The company page moved its data from pageProps.initialState to pageProps.pageData (seen 2026-11-06); both shapes are read.
+      // A page with neither is a fetch failure (counted by source health and retried next cycle), never "0 jobs": the old code
+      // returned [] and 15 of 38 live boards were reported empty for weeks (audit 2026-11-06). Pages beyond the first follow
+      // pagination.pageCount (?page=N).
+      const items = [];
+      let pages = 1;
+      for (let page = 1; page <= Math.min(pages, 50); page++) {
+        const url = `https://join.com/companies/${slug}${page > 1 ? `?page=${page}` : ''}`;
+        const html = await get(url, { json: false });
+        const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+        if (!nextMatch) throw new Error('join: no __NEXT_DATA__ on the company page (page structure changed?)');
+        const pp = JSON.parse(nextMatch[1]).props?.pageProps;
+        const jobs = pp?.pageData?.jobs ?? pp?.initialState?.jobs;
+        if (!jobs?.items) throw new Error('join: unexpected page structure (no jobs.items in pageData or initialState)');
+        pages = jobs.pagination?.pageCount || 1;
+        items.push(...jobs.items);
+        if (page > 1) await new Promise((r) => setTimeout(r, 200));
+      }
       return items.map((j) => {
         const idParam = j.idParam || j.id;
         const jobUrl = `https://join.com/companies/${slug}/jobs/${idParam}`;
@@ -2516,8 +2527,8 @@ export const providers = {
         const html = await get(job.url, { json: false });
         const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
         if (nextMatch) {
-          const data = JSON.parse(nextMatch[1]);
-          const j = data.props?.pageProps?.initialState?.job;
+          const pp = JSON.parse(nextMatch[1]).props?.pageProps;
+          const j = pp?.pageData?.job ?? pp?.initialState?.job;
           if (j?.sanitizedDescription || j?.description) {
             return plain(j.sanitizedDescription || j.description);
           }
