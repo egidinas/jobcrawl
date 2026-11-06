@@ -104,8 +104,9 @@ async function api(pairs, key, email) {
  * through usajobsJob(). Note crawl.mjs gives an entry 35 s: keep a board to a few pages (one agency, DatePosted=60) rather than all of USAJOBS.
  */
 export async function usajobsFetch(slug) {
-  const key = process.env.USAJOBS_KEY, email = process.env.USAJOBS_EMAIL;
-  if (!key || !email) throw new Error('usajobs: USAJOBS_KEY and USAJOBS_EMAIL must be set');
+  // USAJOBS_API_KEY first: the key was regenerated around 2026-11-03 and stored under that name; the old USAJOBS_KEY answers 401.
+  const key = process.env.USAJOBS_API_KEY || process.env.USAJOBS_KEY, email = process.env.USAJOBS_EMAIL || process.env.USAJOBS_USER_AGENT;
+  if (!key || !email) throw new Error('usajobs: USAJOBS_API_KEY (or USAJOBS_KEY) and USAJOBS_EMAIL must be set');
   const params = pairsOf(slug);
   if (!params.length) throw new Error(`usajobs: the slug must be a Search query, e.g. "Organization=NN&DatePosted=60" (got "${slug}")`);
   const given = new Set(params.map(([k]) => k.toLowerCase()));

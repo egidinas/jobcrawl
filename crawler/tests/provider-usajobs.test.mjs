@@ -15,7 +15,7 @@ import { providers, plain } from '../providers.mjs';
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/usajobs-search.json', import.meta.url), 'utf8'));
 const MODULE_URL = new URL('../providers-usajobs.mjs', import.meta.url).href;
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-const MISSING = 'usajobs: USAJOBS_KEY and USAJOBS_EMAIL must be set';
+const MISSING = 'usajobs: USAJOBS_API_KEY (or USAJOBS_KEY) and USAJOBS_EMAIL must be set';
 
 test('usajobs: registered in the provider registry, no fetchDescription', () => {
   assert.equal(providers.usajobs.detect, usajobs.detect);
