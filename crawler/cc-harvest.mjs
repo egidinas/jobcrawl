@@ -84,7 +84,7 @@ function saveState() {
 // ---------------------------------------------------------------- vendors
 // SURT key prefixes (host reversed, comma separated) per vendor. `slug(url)` returns the board id from a crawled URL.
 const NOT_SLUG = /^(www|api|embed|jobs|careers|app|static|assets|help|support|blog|status|mail|cdn|developers?|docs|login|auth|admin|apply|boards|v1|v0|j|robots\.txt|favicon\.ico|sitemap\.xml|_next|companies|about|pricing|cdn-cgi|oauth|sso|signin|signup|partners|marketing|learn|go|hr|info|email|ftp|test|demo|staging|dev|secure|connect|home|my|portal|careers-page|hrm|hiring|talent|recruiting|recruit|accounts?|id|sandbox|oneclick-ui|company|search|sitemap|wp-content|wp-json|static-assets)$/;
-const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const SLUG_OK = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;   // ":" for BITE customer:listing
 const firstSeg = (u) => u.pathname.split('/').filter(Boolean)[0];
 const subdomain = (u, depth) => { const h = u.hostname.split('.'); return h.length === depth ? h[0] : undefined; };
 const VENDORS = {
@@ -102,6 +102,14 @@ const VENDORS = {
   bamboohr: { provider: 'bamboohr', prefixes: ['com,bamboohr,'], slug: (u) => subdomain(u, 3) },
   smartrecruiters: { provider: 'smartrecruiters', prefixes: ['com,smartrecruiters,jobs)/', 'com,smartrecruiters,careers)/'], slug: firstSeg },
   workday: { provider: 'workday', prefixes: ['com,myworkdayjobs,wd'], slug: null },
+  // German mid-market ATSs (added 2026-11-06, crawler audit: never enumerated before; the providers existed). Slugs follow each
+  // provider: d.vinci = the tenant host, umantis = the recruitingapp number, rexx = the tenant before "-portal", onlyfy = the
+  // tenant subdomain, BITE = "<customer>:<listing>" from the cs-assets listing-definition path.
+  dvinci: { provider: 'dvinci', prefixes: ['com,dvinci-hr,'], slug: (u) => (/^[a-z0-9-]+\.dvinci-hr\.com$/i.test(u.hostname) ? u.hostname.toLowerCase() : undefined) },
+  umantis: { provider: 'umantis', prefixes: ['com,umantis,de,recruitingapp-'], slug: (u) => u.hostname.match(/^recruitingapp-(\d+)\.de\.umantis\.com$/i)?.[1] },
+  rexx: { provider: 'rexx', prefixes: ['com,rexx-systems,'], slug: (u) => u.hostname.match(/^([a-z0-9-]+?)-portal\.rexx-systems\.com$/i)?.[1]?.toLowerCase() },
+  onlyfy: { provider: 'onlyfy', prefixes: ['jobs,onlyfy,'], slug: (u) => subdomain(u, 3) },
+  bite: { provider: 'bite', prefixes: ['com,b-ite,cs-assets)/'], slug: (u) => { const m = u.pathname.match(/^\/([\w.-]+)\/jobs-api\/([\w-]+?)(?:\.min)?\.js$/); return m ? `${m[1]}:${m[2]}` : undefined; } },
 };
 const WD_HOST = /^([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com$/;
 const WD_LOCALE = /^[a-z]{2}-[A-Za-z]{2}$/;
@@ -691,7 +699,7 @@ function matchStage(cfg) {
   log(`[match] apply selection ${selected.size} (cap ${MAX_APPLY}): +${estReq} requests per cycle, worst-case JD storage ${estMb} MB (${MAX_JOBS_PER_ENTRY} jobs x ${JD_KB} KB x entries)`);
   state.estimate = { entries: estReq, requests_per_cycle: estReq, worst_case_jd_mb: estMb };
   const head = ['selected_for_apply', 'est_added_requests_per_cycle', 'est_worst_case_jd_mb', 'tier', 'score', 'provider', 'vendor', 'slug', 'name', 'name_source', 'jobs', 'pass_roles', 'title_pass', 'relevance_roles', 'relevance_pass', 'match_level', 'match', 'evidence', 'sample_titles', 'board_url'];
-  const boardUrl = (r) => ({ greenhouse: `https://boards.greenhouse.io/${r.slug}`, ashby: `https://jobs.ashbyhq.com/${r.slug}`, lever: `https://jobs.${r.vendor === 'lever-eu' ? 'eu.' : ''}lever.co/${r.slug}`, workable: `https://apply.workable.com/${r.slug}`, personio: `https://${r.slug}.jobs.personio.${r.vendor === 'personio-com' ? 'com' : 'de'}`, recruitee: `https://${r.slug}.recruitee.com`, teamtailor: `https://${r.slug}.teamtailor.com`, join: `https://join.com/companies/${r.slug}`, bamboohr: `https://${r.slug}.bamboohr.com/careers`, smartrecruiters: `https://jobs.smartrecruiters.com/${r.slug}`, workday: (() => { const [t, w, s] = r.slug.split('|'); return `https://${t}.${w}.myworkdayjobs.com/${s}`; })() }[r.provider] ?? '');
+  const boardUrl = (r) => ({ dvinci: `https://${r.slug}/`, umantis: `https://recruitingapp-${r.slug}.de.umantis.com/`, rexx: `https://${r.slug}-portal.rexx-systems.com/stellenangebote.html`, onlyfy: `https://${r.slug}.onlyfy.jobs/`, bite: `https://cs-assets.b-ite.com/${r.slug.split(":")[0]}/jobs-api/${r.slug.split(":")[1]}.min.js`, greenhouse: `https://boards.greenhouse.io/${r.slug}`, ashby: `https://jobs.ashbyhq.com/${r.slug}`, lever: `https://jobs.${r.vendor === 'lever-eu' ? 'eu.' : ''}lever.co/${r.slug}`, workable: `https://apply.workable.com/${r.slug}`, personio: `https://${r.slug}.jobs.personio.${r.vendor === 'personio-com' ? 'com' : 'de'}`, recruitee: `https://${r.slug}.recruitee.com`, teamtailor: `https://${r.slug}.teamtailor.com`, join: `https://join.com/companies/${r.slug}`, bamboohr: `https://${r.slug}.bamboohr.com/careers`, smartrecruiters: `https://jobs.smartrecruiters.com/${r.slug}`, workday: (() => { const [t, w, s] = r.slug.split('|'); return `https://${t}.${w}.myworkdayjobs.com/${s}`; })() }[r.provider] ?? '');
   const lines = [head.join(',')];
   for (const r of rows) {
     const x = r.rec;
