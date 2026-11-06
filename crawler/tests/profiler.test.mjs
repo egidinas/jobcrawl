@@ -224,10 +224,12 @@ test('splice: verified entries appended with probation and profile, tracked name
       entry: { name, careers_url: url, provider: 'paginated_list', slug: `profiled-${key}`, list: { kind: 'html', url, items: '<a>.*?</a>' }, profile: { method: 'dom', at: '2026-11-06', items: 6, expected_min: 1, expected_max: 34 } } });
     const report = join(dir, 'r.jsonl');
     writeFileSync(report, [rec('New Co', 'https://www.new.de/karriere', 'a'), rec('Old Co', 'https://www.x.de/jobs', 'b'), rec('Same Host', 'https://jobs.old.de/list', 'c'),
-      { key: 'd', name: 'Watch Co', verified: false, reason: 'no_openings', careers_page: 'https://www.watch.de/karriere', input: { source: 'universe:assoc:tierA' } }].map((r) => JSON.stringify(r)).join('\n') + '\n');
+      { key: 'd', name: 'Watch Co', verified: false, reason: 'no_openings', careers_page: 'https://www.watch.de/karriere', input: { source: 'universe:assoc:tierA' } },
+      { ...rec('Staff AB', 'https://www.staff.se/jobb', 'e'), samples: [{ title: 'Svetsare till Volvo i Göteborg', url: 'https://www.staff.se/jobb/1' }, { title: 'Staff AB söker CNC-operatör', url: 'https://www.staff.se/jobb/2' }] }].map((r) => JSON.stringify(r)).join('\n') + '\n');
     const { execFileSync } = await import('node:child_process');
     const out = execFileSync(process.execPath, [new URL('../profiler.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), 'splice', '--profile', dir, '--report', report, '--date', '2026-11-06'], { encoding: 'utf8' });
     assert.match(out, /2 entries to add \(1 watch\/empty\)/);
+    assert.match(out, /skipped staffing_by_titles: Staff AB/);
     const cfg = JSON.parse(readFileSync(companies, 'utf8'));
     const watch = cfg.tracked_companies.at(-1);
     assert.equal(watch.name, 'Watch Co');

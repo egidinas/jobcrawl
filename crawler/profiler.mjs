@@ -104,6 +104,7 @@ async function run() {
 }
 
 function splice() {
+  const STAFFING_TITLE = /\s(?:till|hos|åt)\s+[A-ZÅÄÖ][\w&.-]+|für (?:unseren|einen) (?:Kunden|namhaften)|bei unserem Kunden|im Kundenauftrag|for (?:our|a) client|on behalf of (?:our|a) client|\bsöker\b|\bsucht\b.*\bfür\b/;
   const report = opt('report');
   const file = resolve(opt('companies', PROFILE.companiesFile));
   const max = Number(opt('max', 0));
@@ -141,6 +142,8 @@ function splice() {
     // an ATS board larger than the profiling budget is a multinational's whole tenant (Accenture, the Airbus Workday behind Tesat):
     // never auto-added, listed for review
     if (/larger than the profiling budget/.test(r.steps?.ats ?? '')) { skip('board_larger_than_budget', r); continue; }
+    // a staffing agency's board (owner: no staffing): its postings name the client ("Servicetekniker till Nibe", "für unseren Kunden")
+    if ((r.samples ?? []).filter((s) => STAFFING_TITLE.test(s.title ?? '')).length >= 2) { skip('staffing_by_titles', r); continue; }
     const e = { ...r.entry };
     // "Bayern Photonics: inno-spec" / "Pixel Photonics › QBN": the list's prefix or breadcrumb is the source, not the employer
     e.name = decode(String(r.name_display ?? r.name_suggested ?? e.name ?? r.name)).replace(/^[^:]{3,40}:\s+/, '').replace(/\s+[›»|]\s+.*$/, '').trim();
