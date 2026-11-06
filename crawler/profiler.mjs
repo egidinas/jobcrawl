@@ -200,8 +200,7 @@ function splice() {
   const head = raw.slice(0, m.index).replace(/\s*$/, '');
   const next = `${head},\n${block}\n${m[1]}]\n}\n`;
   JSON.parse(next);
-  writeFileSync(file, next.replace(/?
-/g, EOL));
+  writeFileSync(file, next.replace(/\r?\n/g, EOL));
   say(`splice: wrote ${added.length} entries to ${file}`, true);
 }
 
