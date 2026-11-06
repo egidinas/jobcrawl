@@ -36,6 +36,7 @@ options:
   --all               ignore the title and location filters (see everything)
   --jd                also save the job description of every tracked role
   --refresh-only      update known roles only, never add new ones
+  --force-due         fetch every enabled board now, ignoring interval_hours (a full refresh; one progress line per 50 boards)
   --dry-run           print the summary, write nothing
   --jd-cleanup-only   no crawl: remove the descriptions of roles not seen for more than jd_keep_days days, then exit
                       (with --dry-run it only counts them)
@@ -278,7 +279,7 @@ async function scan() {
   // offset so the heavy boards do not all fall into the same cycle. --company, --all and --dry-run ignore the schedule.
   const crawlState = existsSync(STATE_FILE) ? JSON.parse(readFileSync(STATE_FILE, 'utf8')) : {};
   const nowMs = Date.now();
-  const due = (c) => !c.interval_hours || only || flag('all') || flag('dry-run') || !crawlState[c.name] || Date.parse(crawlState[c.name]) <= nowMs;
+  const due = (c) => !c.interval_hours || only || flag('all') || flag('dry-run') || flag('force-due') || !crawlState[c.name] || Date.parse(crawlState[c.name]) <= nowMs;
   const stagger = (c) => (parseInt(createHash('md5').update(c.name).digest('hex').slice(0, 6), 16) / 0xffffff) * 0.4 + 0.8;   // 0.8..1.2 of the interval
   const history = loadHistory();
   const metaSeen = new Map();   // url -> board metadata of this cycle (department, workplace type, employment type, ...); written to job-meta.json
@@ -367,7 +368,12 @@ async function scan() {
 
   const boardLabels = loadLabels(OUT_DIR);
   let labelsDirty = false;
+  let boardsDone = 0;
+  const crawlStarted = Date.now();
   const results = await pool(companies, async (entry) => {
+    try { return await crawlOne(entry); } finally { if (++boardsDone % 50 === 0 || boardsDone === companies.length) console.log(`[crawl] ${boardsDone}/${companies.length} boards done, ${((Date.now() - crawlStarted) / 60000).toFixed(1)} min`); }
+  });
+  async function crawlOne(entry) {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');
     let timer;
@@ -381,7 +387,7 @@ async function scan() {
     } finally {
       clearTimeout(timer);
     }
-  });
+  }
 
   // The employers the industry aggregators carry this cycle are protected too.
   for (const res of results) {
