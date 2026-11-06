@@ -170,6 +170,8 @@ function splice() {
     const empty = !(r.items > 0);
     Object.assign(entry, { enabled: true, probation: true, interval_hours: empty ? 168 : 24 });
     if (entry.provider === 'jsonld_direct') entry.jsonld_only = true;   // verified on JobPosting markup: never read other pages as postings
+    // the first fill of a big jsonld_direct board reads one page per posting (2 at a time): more than the crawl's default 35 s
+    if (entry.provider === 'jsonld_direct' && r.items > 40) entry.timeout_ms = 120000;
     if (r.collect_only) entry.collect_only = true;
     entry.profile = e.profile;
     const src = `source ${r.input?.source ?? '?'}${r.input?.signal ? `, in-scope signal ${r.input.signal}` : ''}`;
