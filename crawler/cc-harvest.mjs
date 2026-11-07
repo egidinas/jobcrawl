@@ -31,6 +31,7 @@ import { providers, resolve as resolveEntry } from './providers.mjs';
 import { loadProfile } from './profile.mjs';
 import { useRelevance } from './relevance.mjs';
 import { setUserAgent } from './useragent.mjs';
+import { successfactorsTenant, rmkProbe, rmkEntryFields } from './rmk.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -109,6 +110,9 @@ const VENDORS = {
   umantis: { provider: 'umantis', prefixes: ['com,umantis,de,recruitingapp-'], slug: (u) => u.hostname.match(/^recruitingapp-(\d+)\.de\.umantis\.com$/i)?.[1] },
   rexx: { provider: 'rexx', prefixes: ['com,rexx-systems,'], slug: (u) => u.hostname.match(/^([a-z0-9-]+?)-portal\.rexx-systems\.com$/i)?.[1]?.toLowerCase() },
   onlyfy: { provider: 'onlyfy', prefixes: ['jobs,onlyfy,'], slug: (u) => subdomain(u, 3) },
+  // SAP SuccessFactors RMK (added 2026-11-07, audit finding 3): the index lists tenant ids under career<N>.successfactors.<eu|com>;
+  // the probe (rmk.mjs) follows each tenant to its RMK site on the employer's own host, which becomes a `sitemap` entry.
+  successfactors: { provider: 'sitemap', prefixes: ['eu,successfactors,career', 'com,successfactors,career'], slug: null },
   bite: { provider: 'bite', prefixes: ['com,b-ite,cs-assets)/'], slug: (u) => { const m = u.pathname.match(/^\/([\w.-]+)\/jobs-api\/([\w-]+?)(?:\.min)?\.js$/); return m ? `${m[1]}:${m[2]}` : undefined; } },
 };
 const WD_HOST = /^([a-z0-9-]+)\.(wd\d+)\.myworkdayjobs\.com$/;
@@ -128,6 +132,7 @@ function extractSlug(vendor, rawUrl) {
   let u;
   try { u = new URL(rawUrl); } catch { return undefined; }
   if (vendor === 'workday') return workdaySlug(u);
+  if (vendor === 'successfactors') return successfactorsTenant(rawUrl);
   let s = VENDORS[vendor].slug(u);
   if (!s) return undefined;
   try { s = decodeURIComponent(s); } catch { return undefined; }
@@ -312,6 +317,18 @@ function relevance(title, dept = '', slugKey = '') {
 }
 
 // ---------------------------------------------------------------- dedupe sets
+let TRACKED_HOSTS = new Set();
+/** Hosts of the career sites the companies file already polls (slug or careers_url), for the RMK probe's tracked check. */
+function trackedHosts(cfg) {
+  const hosts = new Set();
+  for (const e of cfg.tracked_companies ?? []) {
+    for (const v of [e.slug, e.careers_url]) {
+      if (!v || typeof v !== 'string') continue;
+      try { hosts.add(new URL(/^https?:\/\//i.test(v) ? v : `https://${v}`).hostname.toLowerCase()); } catch { /* not a host */ }
+    }
+  }
+  return hosts;
+}
 function existingKeys(cfg) {
   const keys = new Set();
   for (const e of cfg.tracked_companies ?? []) {
@@ -379,6 +396,12 @@ async function probeOne(vendor, slug, F, hist) {
   try {
     let jobs, total;
     if (vendor === 'workday') ({ jobs, total } = await workdayProbe(slug));
+    else if (vendor === 'successfactors') {
+      const p = await rmkProbe(slug, { ua: UA, token: UA });
+      ({ jobs, total } = p);
+      rec.rmkHost = p.host;
+      if (TRACKED_HOSTS.has(p.host)) rec.trackedHost = true;   // the RMK site is already polled (provider successfactors or sitemap)
+    }
     else {
       const entry = { provider: v.provider, slug, ...(v.region ? { region: v.region } : {}), ...(v.tld ? { careers_url: `https://${slug}.jobs.personio.${v.tld}` } : {}) };
       let timer;
@@ -465,6 +488,7 @@ function planProbes(cfg, results) {
 }
 async function probe(cfg) {
   const F = makeFilters(cfg);
+  TRACKED_HOSTS = trackedHosts(cfg);
   const hist = loadHistoryIndex();
   const results = loadResults();
   const { queues, skipped } = planProbes(cfg, results);
@@ -474,7 +498,7 @@ async function probe(cfg) {
   const hosts = {};
   for (const [v, q] of Object.entries(queues)) hosts[v] = { q: q.slice(), inflight: 0, next: 0, pauseUntil: 0, backoff: 30000, consecRefused: 0, dropped: false };
   // Workable's widget API answers ~10 requests and then 429s a burst (seen in the slice test): one request at a time, 4 s apart.
-  const gap = { greenhouse: 200, ashby: 200, workable: 4000, workday: 400 };
+  const gap = { greenhouse: 200, ashby: 200, workable: 4000, workday: 400, successfactors: 1500 };
   const hostCap = { workable: 1 };
   const counts = { ok: 0, notfound: 0, refused: 0, error: 0, live: 0 };
   const perVendor = {};
@@ -682,6 +706,7 @@ function matchStage(cfg) {
   for (const rec of results.values()) {
     if (rec.status !== 'ok') continue;
     const dk = dedupeKeyFor(rec.vendor, rec.slug);
+    if (rec.trackedHost) continue;   // an RMK site already tracked under another provider
     if (known.has(dk)) continue;   // spliced in an earlier run (or added by hand since)
     const boardName = nameMap.get(rec.k)?.name || '';
     const found = matchNames(rec, boardName, idx);
@@ -690,7 +715,7 @@ function matchStage(cfg) {
     if (rec.idHits?.length) ev.push(`posting-id ${rec.idHits[0].id} also at ${rec.idHits[0].url.slice(0, 80)} (${rec.idHits[0].company})`);
     if (found[0]) ev.push(`${found[0].src}:"${found[0].name}" via ${found[0].via}`);
     if (rec.relRoles) ev.push(`${rec.relRoles} relevance roles: ${Object.entries(rec.relKw).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([k, n]) => `${k}x${n}`).join(' ')}`);
-    rows.push({ ...sc, rec, name: boardName || prettify(rec.slug), nameSource: boardName ? 'board' : 'slug', evidence: ev.join('; '), match: found[0] ? `${found[0].src}:${found[0].name}` : '' });
+    rows.push({ ...sc, rec, name: boardName || prettify(rec.vendor === 'successfactors' ? rec.slug.split('|')[1] : rec.slug), nameSource: boardName ? 'board' : 'slug', evidence: ev.join('; '), match: found[0] ? `${found[0].src}:${found[0].name}` : '' });
   }
   const T = { HIGH: 0, MEDIUM: 1, LOW: 2, REJECT: 3 };
   rows.sort((a, b) => T[a.tier] - T[b.tier] || b.score - a.score);
@@ -699,7 +724,7 @@ function matchStage(cfg) {
   log(`[match] apply selection ${selected.size} (cap ${MAX_APPLY}): +${estReq} requests per cycle, worst-case JD storage ${estMb} MB (${MAX_JOBS_PER_ENTRY} jobs x ${JD_KB} KB x entries)`);
   state.estimate = { entries: estReq, requests_per_cycle: estReq, worst_case_jd_mb: estMb };
   const head = ['selected_for_apply', 'est_added_requests_per_cycle', 'est_worst_case_jd_mb', 'tier', 'score', 'provider', 'vendor', 'slug', 'name', 'name_source', 'jobs', 'pass_roles', 'title_pass', 'relevance_roles', 'relevance_pass', 'match_level', 'match', 'evidence', 'sample_titles', 'board_url'];
-  const boardUrl = (r) => ({ dvinci: `https://${r.slug}/`, umantis: `https://recruitingapp-${r.slug}.de.umantis.com/`, rexx: `https://${r.slug}-portal.rexx-systems.com/stellenangebote.html`, onlyfy: `https://${r.slug}.onlyfy.jobs/`, bite: `https://cs-assets.b-ite.com/${r.slug.split(":")[0]}/jobs-api/${r.slug.split(":")[1]}.min.js`, greenhouse: `https://boards.greenhouse.io/${r.slug}`, ashby: `https://jobs.ashbyhq.com/${r.slug}`, lever: `https://jobs.${r.vendor === 'lever-eu' ? 'eu.' : ''}lever.co/${r.slug}`, workable: `https://apply.workable.com/${r.slug}`, personio: `https://${r.slug}.jobs.personio.${r.vendor === 'personio-com' ? 'com' : 'de'}`, recruitee: `https://${r.slug}.recruitee.com`, teamtailor: `https://${r.slug}.teamtailor.com`, join: `https://join.com/companies/${r.slug}`, bamboohr: `https://${r.slug}.bamboohr.com/careers`, smartrecruiters: `https://jobs.smartrecruiters.com/${r.slug}`, workday: (() => { const [t, w, s] = r.slug.split('|'); return `https://${t}.${w}.myworkdayjobs.com/${s}`; })() }[r.provider] ?? '');
+  const boardUrl = (r) => ({ sitemap: r.rmkHost ? `https://${r.rmkHost}/` : '', dvinci: `https://${r.slug}/`, umantis: `https://recruitingapp-${r.slug}.de.umantis.com/`, rexx: `https://${r.slug}-portal.rexx-systems.com/stellenangebote.html`, onlyfy: `https://${r.slug}.onlyfy.jobs/`, bite: `https://cs-assets.b-ite.com/${r.slug.split(":")[0]}/jobs-api/${r.slug.split(":")[1]}.min.js`, greenhouse: `https://boards.greenhouse.io/${r.slug}`, ashby: `https://jobs.ashbyhq.com/${r.slug}`, lever: `https://jobs.${r.vendor === 'lever-eu' ? 'eu.' : ''}lever.co/${r.slug}`, workable: `https://apply.workable.com/${r.slug}`, personio: `https://${r.slug}.jobs.personio.${r.vendor === 'personio-com' ? 'com' : 'de'}`, recruitee: `https://${r.slug}.recruitee.com`, teamtailor: `https://${r.slug}.teamtailor.com`, join: `https://join.com/companies/${r.slug}`, bamboohr: `https://${r.slug}.bamboohr.com/careers`, smartrecruiters: `https://jobs.smartrecruiters.com/${r.slug}`, workday: (() => { const [t, w, s] = r.slug.split('|'); return `https://${t}.${w}.myworkdayjobs.com/${s}`; })() }[r.provider] ?? '');
   const lines = [head.join(',')];
   for (const r of rows) {
     const x = r.rec;
@@ -719,6 +744,7 @@ function entryText(r) {
   const x = r.rec;
   const e = { name: r.name, provider: x.provider, slug: x.slug };
   if (x.vendor === 'lever-eu') e.region = 'eu';
+  if (x.vendor === 'successfactors') Object.assign(e, rmkEntryFields(x.rmkHost));
   if (x.vendor === 'personio-com') e.careers_url = `https://${x.slug}.jobs.personio.com`;
   e.enabled = true;
   e.note = `CC harvest ${r.tier} score ${r.score}; prune by classification later`;
