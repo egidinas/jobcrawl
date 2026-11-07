@@ -73,7 +73,7 @@ export function atsFingerprints(html, pageUrl) {
       // A hosted ATS lives on its own host (boards.greenhouse.io, x.jobs.personio.de); a company-specific provider (bwi.de, tttech.com)
       // or an ATS on the company's domain counts only when the URL is on the page's own registrable domain, never on a link elsewhere.
       if (!(ATS_HOST.test(h) || regDomain(h) === pageDom)) continue;
-      if (/^(?:embed|js|job_board|jobs|careers|api|v\d+|www)$/i.test(slug)) continue;   // a path word, not a tenant (greenhouse .../embed/job_board/js)
+      if (/^(?:embed|js|job_board|jobs|careers|api|v\d+|www|app|static|assets|cdn|widget)$/i.test(slug)) continue;   // a path word or the vendor's own host (app.teamtailor.com), not a tenant
       note(name, slug, u); break;
     }
   };
