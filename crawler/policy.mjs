@@ -39,8 +39,8 @@ const AUDIT_LINES_PER_HOST = 50;     // per process; the count in the notes is c
 // ---------- robots.txt ----------
 
 /**
- * robots.txt -> { rules: [{ allow, path }], delay, signals } for the first group naming `token`, else the "*" group. signals: the
- * group's Content-Signal line (e.g. "search=yes, ai-train=no", contentsignals.org), or ''.
+ * robots.txt -> { rules: [{ allow, path }], delay, signals } of the groups naming `token`, else of the "*" groups. signals: their
+ * Content-Signal lines (e.g. "search=yes, ai-train=no", contentsignals.org), or ''.
  */
 export function parseRobots(txt, token) {
   const groups = [];
@@ -61,9 +61,13 @@ export function parseRobots(txt, token) {
     else if (k === 'crawl-delay' && Number(v) > 0) cur.delay = Number(v);
     else if (k === 'content-signal' && v) cur.signals = [cur.signals, v].filter(Boolean).join(', ');
   }
+  // RFC 9309 2.2.1: every group naming the crawler's token applies, combined; without one, every "*" group, combined
+  // (a robots.txt may split the "*" rules over several groups: "User-agent: *" / "Sitemap: ..." / "User-agent: *" / "Disallow: /").
   const t = String(token).toLowerCase();
-  const g = groups.find((x) => x.agents.some((a) => a !== '*' && t.includes(a))) ?? groups.find((x) => x.agents.includes('*'));
-  return g ? { rules: g.rules, delay: g.delay, signals: g.signals ?? '' } : { rules: [], delay: 0, signals: '' };
+  let gs = groups.filter((x) => x.agents.some((a) => a !== '*' && t.includes(a)));
+  if (!gs.length) gs = groups.filter((x) => x.agents.includes('*'));
+  if (!gs.length) return { rules: [], delay: 0, signals: '' };
+  return { rules: gs.flatMap((g) => g.rules), delay: Math.max(...gs.map((g) => g.delay)), signals: gs.map((g) => g.signals).filter(Boolean).join(', ') };
 }
 const ruleRe = (p) => new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$/, '$'));
 /** Is path (pathname + search) allowed by parsed robots rules? Longest match wins, Allow on a tie. */

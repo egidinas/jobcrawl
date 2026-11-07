@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configurePolicy, installGuard, resetPolicy, policyStats, policySummary, noFetchReason, retryAfterSeconds, flushPolicy } from '../policy.mjs';
+import { configurePolicy, installGuard, resetPolicy, policyStats, policySummary, noFetchReason, retryAfterSeconds, flushPolicy, parseRobots, robotsAllows } from '../policy.mjs';
 import { providers, setCacheDir, pageBudget } from '../providers.mjs';
 import { runQueue } from '../detail-backfill.mjs';
 
@@ -60,6 +60,17 @@ test('robots.txt advisory (default): a disallowed page is fetched and logged; st
       assert.equal((await fetch(`${s.base}/careers/jobs`)).status, 200);
     });
   } finally { await s.close(); }
+});
+
+test('robots.txt parsing (RFC 9309): split "*" groups combine, Allow beats Disallow on a tie, the own token group replaces "*"', () => {
+  const split = parseRobots('User-agent: *\nSitemap: https://x/sitemap.xml\n\nUser-agent: *\nDisallow: /\n', 'MADE-jobs-crawler');
+  assert.equal(robotsAllows(split, '/join-us'), false, 'the second "*" group applies too (www.stcorp.nl, 2026-11-07)');
+  const tie = parseRobots('User-agent: *\nAllow: /\nDisallow: /\n', 'MADE-jobs-crawler');
+  assert.equal(robotsAllows(tie, '/job/'), true, 'Allow: / and Disallow: / tie: Allow wins (withtec.de, coatex.fr)');
+  const own = parseRobots('User-agent: *\nDisallow: /\n\nUser-agent: MADE-jobs-crawler\nDisallow: /intern/\nCrawl-delay: 3\n', 'MADE-jobs-crawler');
+  assert.equal(robotsAllows(own, '/jobs'), true);
+  assert.equal(robotsAllows(own, '/intern/x'), false);
+  assert.equal(own.delay, 3);
 });
 
 test('Content-Signal ai-train=no is recorded for the owner (content-signals.json) and the page is still read for the board', async () => {
