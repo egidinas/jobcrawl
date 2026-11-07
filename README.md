@@ -289,7 +289,9 @@ local server.
   its job data) are never requested; terms pages are not parsed automatically, so such a host is added by hand. A response carrying the
   TDM reservation header (`tdm-reservation: 1`, W3C TDMRep) flags its host in `<data>/optout-flags.json`, the cycle's notes name it,
   and the host is not requested again until the owner lists it in `crawl.opt_out_cleared`. The profiler also reads the TDMRep meta tag
-  and never adds a flagged site (`profiler.mjs splice` lists it for the owner instead).
+  and never adds a flagged site (`profiler.mjs splice` lists it for the owner instead). A robots.txt `Content-Signal` with
+  `ai-train=no` (contentsignals.org) is recorded per host in `<data>/content-signals.json` and counted in the notes: reading postings
+  for the board goes ahead, and model training downstream can leave those hosts' postings out.
 * **Rate limits and backoff.** HTTP 429 and 503 put the host on a cooldown: Retry-After (seconds or a date), else 30 s after a 429 and
   10 s after a 503. Every later request to that host waits the cooldown out, or fails at once when more than 20 s are left. The shared
   HTTP helper retries 429, 5xx and network errors at most twice, never before Retry-After; when Retry-After asks for more than 20 s the

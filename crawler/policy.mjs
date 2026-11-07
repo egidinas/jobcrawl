@@ -38,7 +38,10 @@ const AUDIT_LINES_PER_HOST = 50;     // per process; the count in the notes is c
 
 // ---------- robots.txt ----------
 
-/** robots.txt -> { rules: [{ allow, path }], delay } for the first group naming `token`, else the "*" group. */
+/**
+ * robots.txt -> { rules: [{ allow, path }], delay, signals } for the first group naming `token`, else the "*" group. signals: the
+ * group's Content-Signal line (e.g. "search=yes, ai-train=no", contentsignals.org), or ''.
+ */
 export function parseRobots(txt, token) {
   const groups = [];
   let cur = null, lastWasAgent = false;
@@ -56,10 +59,11 @@ export function parseRobots(txt, token) {
     if (k === 'disallow' && v) cur.rules.push({ allow: false, path: v });
     else if (k === 'allow' && v) cur.rules.push({ allow: true, path: v });
     else if (k === 'crawl-delay' && Number(v) > 0) cur.delay = Number(v);
+    else if (k === 'content-signal' && v) cur.signals = [cur.signals, v].filter(Boolean).join(', ');
   }
   const t = String(token).toLowerCase();
   const g = groups.find((x) => x.agents.some((a) => a !== '*' && t.includes(a))) ?? groups.find((x) => x.agents.includes('*'));
-  return g ? { rules: g.rules, delay: g.delay } : { rules: [], delay: 0 };
+  return g ? { rules: g.rules, delay: g.delay, signals: g.signals ?? '' } : { rules: [], delay: 0, signals: '' };
 }
 const ruleRe = (p) => new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$/, '$'));
 /** Is path (pathname + search) allowed by parsed robots rules? Longest match wins, Allow on a tie. */
@@ -82,7 +86,7 @@ const fresh = () => ({
   mode: 'advisory', hosts: [], optOut: [], cleared: [], dataDir: null, base: null,
   robots: new Map(), robotsDisk: null, robotsDirty: false,
   nextSlot: new Map(), cooldown: new Map(),
-  authWalls: {}, authDirty: false, optFlags: {}, optDirty: false,
+  authWalls: {}, authDirty: false, optFlags: {}, optDirty: false, aiTrainNo: {}, aiDirty: false,
   auditByHost: new Map(),
   stats: { robots_disallowed_fetched: 0, robots_refused: 0, no_fetch: 0, cooldown_waits: 0, cooldown_fails: 0, slot_waits: 0, slot_fails: 0, auth_walls: 0, optout_flags: 0 },
   noFetchByReason: {},
@@ -110,6 +114,7 @@ export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutH
   if (dataDir) {
     st.authWalls = readJson(file('auth-walls.json'), {});
     st.optFlags = readJson(file('optout-flags.json'), {});
+    st.aiTrainNo = readJson(file('content-signals.json'), {});
     const audit = file('robots-audit.jsonl');
     try { if (statSync(audit).size > 20e6) renameSync(audit, `${audit}.1`); } catch { /* none yet */ }
   }
@@ -130,12 +135,13 @@ export function robotsModeFor(host) {
 
 /** Writes the robots cache, the auth walls and the opt-out flags (called at exit too). */
 export function flushPolicy() {
-  if (!st.dataDir || !(st.robotsDirty || st.authDirty || st.optDirty)) return;
+  if (!st.dataDir || !(st.robotsDirty || st.authDirty || st.optDirty || st.aiDirty)) return;
   try {
     mkdirSync(st.dataDir, { recursive: true });
     if (st.robotsDirty && st.robotsDisk) { writeFileSync(file('robots-cache.json'), JSON.stringify(st.robotsDisk)); st.robotsDirty = false; }
     if (st.authDirty) { writeFileSync(file('auth-walls.json'), JSON.stringify(st.authWalls, null, 1)); st.authDirty = false; }
     if (st.optDirty) { writeFileSync(file('optout-flags.json'), JSON.stringify(st.optFlags, null, 1)); st.optDirty = false; }
+    if (st.aiDirty) { writeFileSync(file('content-signals.json'), JSON.stringify(st.aiTrainNo, null, 1)); st.aiDirty = false; }
   } catch (e) { console.error(`policy: could not write the policy state in ${st.dataDir}: ${e.message}`); }
 }
 process.on('exit', () => flushPolicy());
@@ -253,6 +259,20 @@ export function robotsFor(origin, fetchImpl = st.base ?? globalThis.fetch) {
   return st.robots.get(origin);
 }
 
+/**
+ * Content-Signal "ai-train=no" (robots.txt, contentsignals.org): an explicit statement that the site's content may not be used to train
+ * models. Crawling for a job board is not training, so the request goes ahead, but the host is recorded in <data>/content-signals.json
+ * (and counted in the notes) so that downstream model training can leave its postings out.
+ */
+export function noteSignals(host, signals) {
+  if (!signals || !/\bai-train\s*=\s*no\b/i.test(signals)) return;
+  host = normHost(host);
+  if (st.aiTrainNo[host]) return;
+  st.aiTrainNo[host] = { signals, at: new Date().toISOString().slice(0, 10) };
+  st.aiDirty = true;
+}
+export const aiTrainOptOuts = () => ({ ...st.aiTrainNo });
+
 /** Logs a request robots.txt disallows that is made anyway (advisory mode). who: the caller (provider, profiler, rmk). */
 export function auditRobots(url, who = '') {
   let u;
@@ -272,6 +292,7 @@ export async function robotsCheck(url, who = '', fetchImpl) {
   const u = new URL(url);
   if (u.pathname === '/robots.txt') return { allowed: true, delayMs: 0 };
   const rb = await robotsFor(u.origin, fetchImpl);
+  noteSignals(u.hostname, rb.signals);
   const delayMs = (rb.delay || 0) * 1000;
   if (robotsAllows(rb, u.pathname + u.search)) return { allowed: true, delayMs };
   if (robotsModeFor(u.hostname) === 'strict') { st.stats.robots_refused++; throw new RobotsError(`robots.txt disallows ${url}`); }
@@ -356,6 +377,8 @@ export function policySummary() {
   if (s.cooldown_waits || s.cooldown_fails) out.push(`HTTP 429/503 cooldowns: ${s.cooldown_waits} requests waited, ${s.cooldown_fails} gave up (Retry-After longer than ${MAX_COOLDOWN_WAIT_MS / 1000} s)`);
   if (s.slot_waits || s.slot_fails) out.push(`Crawl-delay: ${s.slot_waits} requests waited for their slot, ${s.slot_fails} gave up (no slot within ${MAX_SLOT_WAIT_MS / 1000} s)`);
   if (s.auth_walls) out.push(`login walls: ${s.auth_walls} new URLs answered 401/407 or redirected to a login page; never requested again (auth-walls.json)`);
+  const ai = Object.keys(st.aiTrainNo);
+  if (ai.length) out.push(`Content-Signal ai-train=no: ${ai.length} hosts say their content may not train models (content-signals.json; crawled for the board, to be left out of training): ${ai.slice(0, 10).join(', ')}${ai.length > 10 ? ', ...' : ''}`);
   const flags = Object.entries(st.optFlags);
   if (flags.length) out.push(`OPT-OUT FLAGS for the owner (not crawled): ${flags.map(([h, f]) => `${h} (${f.signal}, ${f.at})`).join(', ')}`);
   return out;

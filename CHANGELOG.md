@@ -14,7 +14,8 @@ The commit log has the details of each change.
   one stops before it, a 401/407 URL is never asked again (`auth-walls.json`); deeplist.tech's `/api` and login are never requested;
   explicit opt-outs (`crawl.opt_out_hosts`, the TDMRep `tdm-reservation: 1` header, flagged in `optout-flags.json`) are not crawled;
   HTTP 429/503 put the host on a cooldown that honours Retry-After (the providers' retry never comes earlier; more than 20 s fails the
-  board for the cycle); Crawl-delay is a floor in both modes. Concurrency per host is unchanged.
+  board for the cycle); Crawl-delay is a floor in both modes. Concurrency per host is unchanged. Hosts whose robots.txt says
+  `Content-Signal: ai-train=no` are recorded (`content-signals.json`) so model training can leave their postings out.
 - **Generous with pages**: pagination is followed to the end (fixed caps of 10 to 150 pages replaced by "stop at an empty page, a page
   without new postings or the total", safety stop 500, `max_pages` per board); a sitemap index is read in full (was 10 children);
   defaults `sitemap` max_jobs 10000 (was 3000), `jsonld_direct` 1000 (was 300), Radancy 10000; the profiler writes entries with higher

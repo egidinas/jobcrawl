@@ -66,6 +66,7 @@ built from `catalog.json`, which `crawler/catalog.mjs` derives from the history.
 | `robots-audit.jsonl` | crawl policy (`policy.mjs`) | advisory mode: one line per request that robots.txt disallows and that was made anyway (time, host, URL, caller); at most 50 per host and run, the cycle's notes count all; rotated at 20 MB |
 | `robots-cache.json` | crawl policy | the parsed robots.txt group (rules, Crawl-delay) per origin, kept 24 hours |
 | `auth-walls.json` | crawl policy | URLs that answered 401/407 or redirected to a login page; never requested again (delete an entry to retry it) |
+| `content-signals.json` | crawl policy | hosts whose robots.txt says `Content-Signal: ai-train=no`: crawled for the board, to be left out of model training |
 | `optout-flags.json` | crawl policy | hosts that sent an explicit opt-out signal (`tdm-reservation: 1`); not crawled until the owner lists them in `crawl.opt_out_cleared` |
 
 The `status` of a history row:

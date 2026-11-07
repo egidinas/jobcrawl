@@ -62,6 +62,18 @@ test('robots.txt advisory (default): a disallowed page is fetched and logged; st
   } finally { await s.close(); }
 });
 
+test('Content-Signal ai-train=no is recorded for the owner (content-signals.json) and the page is still read for the board', async () => {
+  const s = await site({ '/robots.txt': 'User-agent: *\nContent-Signal: search=yes, ai-train=no\nAllow: /\n', '/jobs': 'jobs' });
+  try {
+    await withPolicy({}, async (dir) => {
+      assert.equal(await (await fetch(`${s.base}/jobs`)).text(), 'jobs');
+      assert.match(policySummary().join('\n'), /Content-Signal ai-train=no: 1 hosts .*127\.0\.0\.1/);
+      flushPolicy();
+      assert.match(readFileSync(join(dir, 'content-signals.json'), 'utf8'), /ai-train=no/);
+    });
+  } finally { await s.close(); }
+});
+
 test('Crawl-delay is a floor between two requests to the host, in advisory and in strict mode', async () => {
   const s = await site({ '/robots.txt': 'User-agent: *\nCrawl-delay: 1\n', '/a': 'a', '/b': 'b' });
   try {
