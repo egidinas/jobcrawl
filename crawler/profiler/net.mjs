@@ -1,52 +1,21 @@
 // The profiler's network layer: one place every request of a profiling run goes through, including the providers' own fetch() calls
-// during verification (globalThis.fetch is wrapped while a run is active). Per request: the site's budget (requests made on behalf of
-// one employer), robots.txt (the profile's user-agent token and "*", longest match, Allow beats Disallow on a tie), at most one request
-// per second per host (or the host's Crawl-delay, up to 10 s), and a per-site response cache so a verification run re-reads the bytes the
-// profiler already fetched instead of fetching them again. The site a request belongs to is tracked with AsyncLocalStorage.
+// during verification (globalThis.fetch is wrapped while a run is active). Per request: the crawl policy (../policy.mjs: never a login
+// page or a URL behind one, never an opted-out host, 429/503 cooldowns, robots.txt advisory or strict per crawl.robots), the site's
+// budget (requests made on behalf of one employer), at most one request per second per host or the host's Crawl-delay when longer
+// (a Crawl-delay over 60 s ends the site), and a per-site response cache so a verification run re-reads the bytes the profiler already
+// fetched instead of fetching them again. Redirects of GET requests are followed hop by hop, each hop checked. The site a request
+// belongs to is tracked with AsyncLocalStorage.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { UA } from '../useragent.mjs';
+import { parseRobots, robotsAllows, RobotsError, NoFetchError, CooldownError, noFetchReason, checkResponse, robotsModeFor, auditRobots, MAX_SLOT_WAIT_MS } from '../policy.mjs';
 
 const als = new AsyncLocalStorage();
 const realFetch = globalThis.fetch;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export class BudgetError extends Error {}
-export class RobotsError extends Error {}
-
-/** robots.txt -> { rules: [{ allow, path }], delay } for the first group naming `token`, else the "*" group. */
-export function parseRobots(txt, token) {
-  const groups = [];
-  let cur = null, lastWasAgent = false;
-  for (const raw of String(txt).split(/\r?\n/)) {
-    const line = raw.replace(/#.*$/, '').trim();
-    const m = line.match(/^([\w-]+)\s*:\s*(.*)$/);
-    if (!m) continue;
-    const k = m[1].toLowerCase(), v = m[2].trim();
-    if (k === 'user-agent') {
-      if (!lastWasAgent || !cur) { cur = { agents: [], rules: [], delay: 0 }; groups.push(cur); }
-      cur.agents.push(v.toLowerCase()); lastWasAgent = true; continue;
-    }
-    lastWasAgent = false;
-    if (!cur) continue;
-    if (k === 'disallow' && v) cur.rules.push({ allow: false, path: v });
-    else if (k === 'allow' && v) cur.rules.push({ allow: true, path: v });
-    else if (k === 'crawl-delay' && Number(v) > 0) cur.delay = Number(v);
-  }
-  const t = String(token).toLowerCase();
-  const g = groups.find((x) => x.agents.some((a) => a !== '*' && t.includes(a))) ?? groups.find((x) => x.agents.includes('*'));
-  return g ? { rules: g.rules, delay: g.delay } : { rules: [], delay: 0 };
-}
-const ruleRe = (p) => new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$/, '$'));
-/** Is path (pathname + search) allowed by parsed robots rules? */
-export function robotsAllows(robots, path) {
-  let best = null;
-  for (const r of robots.rules) {
-    if (!ruleRe(r.path).test(path)) continue;
-    const len = r.path.replace(/\*/g, '').length;
-    if (!best || len > best.len || (len === best.len && r.allow)) best = { len, allow: r.allow };
-  }
-  return best ? best.allow : true;
-}
+// robots.txt parsing and the crawl policy live in ../policy.mjs (shared with the crawl's fetch guard); re-exported for older imports.
+export { parseRobots, robotsAllows, RobotsError };
 
 /**
  * A network for one profiling run. token: the user-agent product token robots groups are matched against (e.g. "MADE-jobs-crawler").
@@ -55,7 +24,7 @@ export function robotsAllows(robots, path) {
 export function makeNet({ token = 'jobcrawl', minGapMs = 1000, budget = 10, maxBytes = 6e6, timeoutMs = 20000, log = () => {} } = {}) {
   const lastAt = new Map();      // host -> time of the last request start
   const robots = new Map();      // origin -> Promise<parsed>
-  const stats = { requests: 0, robots_blocked: 0, budget_hits: 0 };
+  const stats = { requests: 0, robots_blocked: 0, robots_ignored: 0, policy_refused: 0, budget_hits: 0 };
 
   async function pace(host, gap) {
     for (;;) {
@@ -97,25 +66,43 @@ export function makeNet({ token = 'jobcrawl', minGapMs = 1000, budget = 10, maxB
     const method = (init.method ?? 'GET').toUpperCase();
     const key = `${method} ${url} ${typeof init.body === 'string' ? init.body : ''}`;
     if (ctx?.cache.has(key)) { const c = ctx.cache.get(key); return mkResponse(c); }
-    if (u.pathname !== '/robots.txt') {
-      const rb = await robotsFor(u.origin);
-      if (!robotsAllows(rb, u.pathname + u.search)) { stats.robots_blocked++; if (ctx) ctx.robotsBlocked.push(url); throw new RobotsError(`robots.txt disallows ${url}`); }
-      count(ctx, url, method === 'GET' ? '' : method);
-      await pace(u.host, Math.max(minGapMs, Math.min(10, rb.delay || 0) * 1000));
-    } else {
-      // robots.txt was (or is now) read once per origin for the checks above: serve the same bytes to the provider's own robots reader
-      const rb = await robotsFor(u.origin);
-      return mkResponse({ status: rb.status && rb.status < 400 ? 200 : 404, headers: [['content-type', 'text/plain']], body: Buffer.from(rb.txt ?? ''), url });
-    }
+    const manual = (init.redirect ?? 'follow') === 'follow' && (method === 'GET' || method === 'HEAD');
     const headers = { ...(init.headers ?? {}) };
     if (!Object.keys(headers).some((h) => h.toLowerCase() === 'user-agent')) headers['user-agent'] = UA;
     const t0 = Date.now();
-    let res;
-    try {
-      res = await realFetch(url, { ...init, headers, redirect: init.redirect ?? 'follow', signal: init.signal ?? AbortSignal.timeout(timeoutMs) });
-    } catch (e) { log(`  net FAIL ${url}: ${e.message}`); throw e; }
+    let cur = u, hops = 0, res;
+    for (;;) {
+      const why = noFetchReason(cur.href);
+      if (why) { stats.policy_refused++; throw new NoFetchError(`not fetched: ${cur.href} (${hops ? `redirect from ${url}: ` : ''}${why})`); }
+      if (cur.pathname === '/robots.txt') {
+        // robots.txt was (or is now) read once per origin for the checks below: serve the same bytes to the provider's own robots reader
+        const rb = await robotsFor(cur.origin);
+        return mkResponse({ status: rb.status && rb.status < 400 ? 200 : 404, headers: [['content-type', 'text/plain']], body: Buffer.from(rb.txt ?? ''), url: cur.href });
+      }
+      const rb = await robotsFor(cur.origin);
+      if (!robotsAllows(rb, cur.pathname + cur.search)) {
+        if (robotsModeFor(cur.hostname) === 'strict') { stats.robots_blocked++; if (ctx) ctx.robotsBlocked.push(cur.href); throw new RobotsError(`robots.txt disallows ${cur.href}`); }
+        stats.robots_ignored++; if (ctx) ctx.robotsIgnored.push(cur.href);
+        auditRobots(cur.href, 'profiler');
+      }
+      if ((rb.delay || 0) * 1000 > MAX_SLOT_WAIT_MS) throw new CooldownError(`not fetched: ${cur.href} (Crawl-delay ${rb.delay} s of ${cur.host} is longer than probing waits)`);
+      count(ctx, cur.href, method === 'GET' ? '' : method);
+      await pace(cur.host, Math.max(minGapMs, (rb.delay || 0) * 1000));
+      try {
+        res = await realFetch(cur.href, { ...init, headers, redirect: manual ? 'manual' : init.redirect ?? 'follow', signal: init.signal ?? AbortSignal.timeout(timeoutMs) });
+      } catch (e) { log(`  net FAIL ${cur.href}: ${e.message}`); throw e; }
+      const bad = checkResponse(cur.href, res);
+      if (bad) { if (ctx) ctx.optout = bad; stats.policy_refused++; throw new NoFetchError(`not fetched: ${cur.href} (${bad})`); }
+      const loc = manual && res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!loc) break;
+      if (++hops > 10) throw new Error(`too many redirects from ${url}`);
+      try { await res.body?.cancel(); } catch { /* nothing to drop */ }
+      cur = new URL(loc, cur);
+    }
     const buf = Buffer.from(await res.arrayBuffer());
-    const c = { status: res.status, headers: [...res.headers.entries()].filter(([k]) => k !== 'content-encoding' && k !== 'content-length'), body: buf.subarray(0, maxBytes), url: res.url || url, ms: Date.now() - t0 };
+    // TDMRep in the page itself (<meta name="tdm-reservation" content="1">): an explicit opt-out, recorded for the owner
+    if (ctx && /<meta[^>]+name=["']tdm-reservation["'][^>]+content=["']1["']/i.test(buf.subarray(0, 200000).toString('latin1'))) ctx.optout = `${cur.host} reserves text and data mining (tdm-reservation meta tag)`;
+    const c = { status: res.status, headers: [...res.headers.entries()].filter(([k]) => k !== 'content-encoding' && k !== 'content-length'), body: buf.subarray(0, maxBytes), url: cur.href, ms: Date.now() - t0 };
     if (ctx) ctx.cache.set(key, c);
     return mkResponse(c);
   }
@@ -133,7 +120,7 @@ export function makeNet({ token = 'jobcrawl', minGapMs = 1000, budget = 10, maxB
     uninstall() { globalThis.fetch = realFetch; },
     /** Run fn inside one site's context (its own budget, cache and trace). */
     run(site, fn, siteBudget = budget) {
-      const ctx = { site, budget: siteBudget, requests: 0, cache: new Map(), trace: [], robotsBlocked: [] };
+      const ctx = { site, budget: siteBudget, requests: 0, cache: new Map(), trace: [], robotsBlocked: [], robotsIgnored: [], optout: null };
       return als.run(ctx, async () => { try { return await fn(ctx); } finally { ctx.cache.clear(); } });
     },
     context: () => als.getStore(),
@@ -148,6 +135,6 @@ export async function getPage(url, { accept = 'text/html,application/xhtml+xml;q
     const html = await res.text();
     return { ok: res.ok, status: res.status, url: res.url || url, html, type };
   } catch (e) {
-    return { ok: false, status: 0, url, html: '', type: '', error: e instanceof BudgetError ? 'budget' : e instanceof RobotsError ? 'robots' : e.message };
+    return { ok: false, status: 0, url, html: '', type: '', error: e instanceof BudgetError ? 'budget' : e instanceof RobotsError ? 'robots' : e instanceof NoFetchError || e instanceof CooldownError ? 'policy' : e.message };
   }
 }

@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { successfactorsTenant, tenantSearchUrl, rmkJobFromUrl, rmkProbe, rmkEntryFields } from '../rmk.mjs';
+import { configurePolicy, resetPolicy, policyStats } from '../policy.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -59,12 +60,19 @@ test('rmkProbe: follows the tenant to its RMK host and lists the job pages of th
       'https://jobs.acme.example/job/Graz-Test-Engineer-8010/4444444/',
     ]) },
   });
-  const p = await rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: fn });
-  assert.equal(p.host, 'jobs.acme.example');
-  assert.deepEqual(p.jobs.map((j) => j.title), ['Ulm Avionics Engineer 89077', 'Graz Test Engineer 8010']);
-  assert.equal(p.total, 2);
-  assert.ok(!asked.includes('https://other.example/sitemap.xml'), 'a child sitemap on another host is not read');
-  assert.ok(!asked.some((u) => u.includes('/services/')), 'the robots-disallowed search API is never asked');
+  try {
+    configurePolicy({ robots: 'strict' });
+    const p = await rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: fn });
+    assert.equal(p.host, 'jobs.acme.example');
+    assert.deepEqual(p.jobs.map((j) => j.title), ['Ulm Avionics Engineer 89077', 'Graz Test Engineer 8010'], 'strict: the disallowed job page is left out');
+    assert.equal(p.total, 2);
+    assert.ok(!asked.includes('https://other.example/sitemap.xml'), 'a child sitemap on another host is not read');
+    assert.ok(!asked.some((u) => u.includes('/services/')), 'the search API is never asked (the probe reads the sitemap only)');
+    configurePolicy({ robots: 'advisory' });
+    const a = await rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: fn });
+    assert.deepEqual(a.jobs.map((j) => j.title), ['Ulm Avionics Engineer 89077', 'Secret Role', 'Graz Test Engineer 8010'], 'advisory: kept, and logged');
+    assert.equal(policyStats().robots_disallowed_fetched, 1);
+  } finally { resetPolicy(); }
 });
 
 test('rmkProbe: no redirect is an absence (HTTP 404), a disallowed sitemap is a robots error, a failed tenant page an HTTP error', async () => {
@@ -74,8 +82,15 @@ test('rmkProbe: no redirect is an absence (HTTP 404), a disallowed sitemap is a 
     [SEARCH]: { finalUrl: 'https://jobs.acme.example/search' },
     'https://jobs.acme.example/robots.txt': { body: 'User-agent: *\nDisallow: /\n' },
   });
-  await assert.rejects(rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: blocked.fn }), /robots\.txt of jobs\.acme\.example disallows \/sitemap\.xml/);
-  assert.deepEqual(blocked.asked.filter((u) => u.endsWith('sitemap.xml')), [], 'the sitemap is not fetched');
+  try {
+    configurePolicy({ robots: 'strict' });
+    await assert.rejects(rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: blocked.fn }), /robots\.txt of jobs\.acme\.example disallows \/sitemap\.xml/);
+    assert.deepEqual(blocked.asked.filter((u) => u.endsWith('sitemap.xml')), [], 'strict: the sitemap is not fetched');
+    configurePolicy({ robots: 'advisory', robotsHosts: { 'acme.example': 'strict' } });
+    await assert.rejects(rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: blocked.fn }), /disallows \/sitemap\.xml/, 'a per-host strict override beats the advisory default');
+    configurePolicy({ robots: 'advisory' });
+    await assert.rejects(rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: blocked.fn }), /HTTP 404 https:\/\/jobs\.acme\.example\/sitemap\.xml/, 'advisory: the sitemap is asked for (absent here)');
+  } finally { resetPolicy(); }
   const down = fakeFetch({ [SEARCH]: { status: 503 } });
   await assert.rejects(rmkProbe('career5.successfactors.eu|acmegroup', { fetchImpl: down.fn }), /HTTP 503/);
 });

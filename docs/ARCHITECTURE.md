@@ -62,6 +62,11 @@ built from `catalog.json`, which `crawler/catalog.mjs` derives from the history.
 | `probation-state.json`, `probation-report.json` | `crawl.mjs` | per probation board: relevant and irrelevant roles seen, promoted or disabled, and why |
 | `job-meta.json` | `crawl.mjs` | provider metadata per posting (department, employment type, remote, country, contacts where a posting publishes them) |
 | `detail-backfill.json`, `detail-backfill.lock` | `detail-backfill.mjs` | per URL tried: ok, text length, tries, next retry; the lock of the active run |
+| `sitemap-cache-<hash>.json` | `sitemap`, `jsonld_direct` providers | the parsed posting pages of one board (by sitemap lastmod, or by URL with a TTL); a fill that ran out of page budget continues from here |
+| `robots-audit.jsonl` | crawl policy (`policy.mjs`) | advisory mode: one line per request that robots.txt disallows and that was made anyway (time, host, URL, caller); at most 50 per host and run, the cycle's notes count all; rotated at 20 MB |
+| `robots-cache.json` | crawl policy | the parsed robots.txt group (rules, Crawl-delay) per origin, kept 24 hours |
+| `auth-walls.json` | crawl policy | URLs that answered 401/407 or redirected to a login page; never requested again (delete an entry to retry it) |
+| `optout-flags.json` | crawl policy | hosts that sent an explicit opt-out signal (`tdm-reservation: 1`); not crawled until the owner lists them in `crawl.opt_out_cleared` |
 
 The `status` of a history row:
 

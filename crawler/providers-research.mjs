@@ -114,7 +114,7 @@ export const researchProviders = {
       const origin = new URL(board).origin;
       const page = await getText(board);
       const more = page.match(/href="(\/jobboard\/\d+\/more_items)"/)?.[1];
-      const limit = 20, maxPages = Number(entry.max_pages) > 0 ? Number(entry.max_pages) : 40;
+      const limit = 20, maxPages = Number(entry.max_pages) > 0 ? Number(entry.max_pages) : 200;
       const out = new Map();
       for (const j of parseMpgList(page, origin)) out.set(j.url, j);
       if (!more) return [...out.values()];

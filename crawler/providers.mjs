@@ -2,7 +2,7 @@
 // and returns [{ title, url, location, department, postedAt }]. No auth, no scraping of
 // logged-in pages; only the public JSON/XML/RSS feeds the ATS vendors expose.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -12,15 +12,18 @@ import { genericProviders } from './providers-generic.mjs';
 import { usajobsDetect, usajobsFetch } from './providers-usajobs.mjs';
 import { eures } from './providers-eures.mjs';
 import { UA } from './useragent.mjs';
+import { PolicyError, retryAfterSeconds, MAX_COOLDOWN_WAIT_MS } from './policy.mjs';
+import { entryTimeoutMs } from './profile.mjs';
 
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * fetch with a timeout and up to two retries on 429, 5xx and network errors (backoff 1 s, 2 s plus jitter; a Retry-After header
- * wins, capped at 20 s). Other 4xx fail at once. Pattern from career-ops-hq/career-ops providers/_http.mjs (MIT), reduced to what a
- * fixed list of public feeds needs.
+ * fetch with a timeout and up to two retries on 429, 5xx and network errors (backoff 1 s, 2 s plus jitter). A Retry-After header (seconds
+ * or a date) is honoured: the retry waits that long, and when it asks for more than 20 s the request fails at once instead of retrying
+ * early (the crawl policy's guard keeps the host on a cooldown for every later request). Other 4xx fail at once, and so do refusals of
+ * the crawl policy (policy.mjs). Pattern from career-ops-hq/career-ops providers/_http.mjs (MIT), reduced to what public feeds need.
  */
 async function request(url, init = {}, { timeoutMs = 20000, retries = 2 } = {}) {
   for (let attempt = 0; ; attempt++) {
@@ -29,12 +32,13 @@ async function request(url, init = {}, { timeoutMs = 20000, retries = 2 } = {}) 
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
       if (res.ok) return res;
     } catch (err) {
-      if (attempt >= retries) throw err;
+      if (err instanceof PolicyError || attempt >= retries) throw err;
     }
     const transient = !res || res.status === 429 || res.status >= 500;
     if (!transient || attempt >= retries) throw new Error(`HTTP ${res?.status} ${url}`);
-    const retryAfter = Number(res?.headers.get('retry-after'));   // res is undefined after a network error (retried, not a TypeError)
-    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 20000) : 1000 * 2 ** attempt + Math.random() * 500);
+    const retryAfter = retryAfterSeconds(res?.headers.get('retry-after'));   // res is undefined after a network error (retried, not a TypeError)
+    if (retryAfter != null && retryAfter * 1000 > MAX_COOLDOWN_WAIT_MS) throw new Error(`HTTP ${res.status} ${url} (Retry-After ${retryAfter} s: not retried before then)`);
+    await sleep(retryAfter != null ? Math.max(500, retryAfter * 1000) : 1000 * 2 ** attempt + Math.random() * 500);
   }
 }
 
@@ -169,6 +173,33 @@ export function pageDescriptionOf(html, job = {}) {
 }
 
 
+// ---- page budgets (owner 2026-11-07: be generous with pages, within the cycle) ----
+export const SITEMAP_MAX_JOBS = 10000;      // sitemap provider default max_jobs (was 3000)
+export const SITEMAP_CHILDREN_CAP = 500;    // child sitemaps read from one sitemap index (was 10)
+// Pagination is followed to the end: every paging loop stops at an empty page, a page without new postings or the stated total;
+// PAGE_CAP is only a safety stop against a server that never ends (the loops had fixed caps of 10 to 150 pages before).
+export const PAGE_CAP = 500;
+const posIntOr = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+/**
+ * The page budget of one board fetch: page requests stop starting once it is spent, so the fetch returns (and saves its cache) inside
+ * the crawl's per-board budget. entry.page_budget_ms when set, else the board's timeout (entry.timeout_ms, default 35 s) minus 10 s.
+ * pageTimeout(ms): a page request's timeout, shortened so it cannot outlast the board's budget.
+ */
+export function pageBudget(entry = {}, started = Date.now()) {
+  const hard = entryTimeoutMs(entry);
+  const ms = Number(entry.page_budget_ms) > 0 ? Math.min(Number(entry.page_budget_ms), hard - 3000) : Math.max(5000, hard - 10000);
+  return {
+    ms,
+    spent: () => Date.now() - started > ms,
+    pageTimeout: (want) => Math.max(3000, Math.min(want, started + hard - 3000 - Date.now())),
+  };
+}
+/** Marks a provider result as an incomplete fill (pages left for the next cycle); crawl.mjs makes the board due again. */
+export function markIncomplete(jobs, left, note = '') {
+  if (left > 0 || note) Object.defineProperty(jobs, 'incomplete', { value: { left, note }, enumerable: false });
+  return jobs;
+}
+
 // ---- sitemap provider helpers ----
 let cacheDir = null;
 /** Where providers may keep small caches (the crawl's data folder). Without it the sitemap provider re-fetches pages. */
@@ -179,21 +210,8 @@ export function loadSitemapCache(slug) {
 }
 export function saveSitemapCache(slug, c) {
   const f = cacheFile(slug);
-  if (f) { mkdirSync(cacheDir, { recursive: true }); writeFileSync(f, JSON.stringify(c)); }
-}
-export async function robotsDisallow(origin) {
-  try {
-    const txt = await get(`${origin}/robots.txt`, { json: false, timeoutMs: 10000 });
-    const out = [];
-    let applies = false;
-    for (const line of txt.split(/\r?\n/)) {
-      const m = line.match(/^\s*(user-agent|disallow)\s*:\s*(.*?)\s*$/i);
-      if (!m) continue;
-      if (m[1].toLowerCase() === 'user-agent') applies = m[2] === '*';
-      else if (applies && m[2]) out.push(m[2]);
-    }
-    return out;
-  } catch { return []; }
+  // written to a temporary file and renamed, so a reader (another process filling the same cache) never sees half a file
+  if (f) { mkdirSync(cacheDir, { recursive: true }); writeFileSync(`${f}.${process.pid}.tmp`, JSON.stringify(c)); renameSync(`${f}.${process.pid}.tmp`, f); }
 }
 const attr = (html, prop) => html.match(new RegExp(`<meta[^>]+itemprop="${prop}"[^>]+content="([^"]*)"`, 'i'))?.[1] ?? '';
 const dateOnly = (raw) => { const d = isoDate(decode(raw || '')); return /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : ''; };
@@ -539,37 +557,43 @@ export const providers = {
   // Generic fallback for career sites without a job-board API (SAP SuccessFactors, custom sites): read the public
   // sitemap, then each job page's schema.org JobPosting markup (JSON-LD or microdata), which employers publish for
   // Google for Jobs and which carries the original datePosted. Entry: { provider: 'sitemap', slug: <sitemap url>,
-  // url_pattern: <regex a job URL must match>, max_jobs }. Pages already fetched are cached by sitemap lastmod, so
-  // a cycle only downloads new or changed jobs. Be gentle: 4 parallel requests, robots.txt Disallow honoured.
+  // url_pattern: <regex a job URL must match>, max_jobs (default 10000) }. A sitemap index is followed into all its child sitemaps
+  // (up to 500). Pages already fetched are cached by sitemap lastmod, so a cycle only downloads new or changed jobs. At most 4
+  // page requests at a time (page_concurrency lowers it), 150 ms apart per worker; robots.txt and Crawl-delay are the crawl
+  // policy's (policy.mjs).
   sitemap: {
     detect: () => null,
     async fetch(slug, entry = {}) {
-      const origin = new URL(slug).origin;
-      const disallow = await robotsDisallow(origin);
+      const started = Date.now();
       let xml = await get(slug, { json: false, timeoutMs: 30000 });
-      if (/<sitemapindex/i.test(xml)) {   // an index: read its child sitemaps (at most 10)
-        const kids = [...xml.matchAll(/<sitemap>\s*<loc>([^<]+)<\/loc>/g)].map((m) => decode(m[1])).slice(0, 10);
-        xml = (await Promise.all(kids.map((k) => get(k, { json: false, timeoutMs: 30000 }).catch(() => '')))).join(' ');
+      let capped = 0;
+      if (/<sitemapindex/i.test(xml)) {   // an index: read its child sitemaps (all of them, at most SITEMAP_CHILDREN_CAP)
+        const all = [...xml.matchAll(/<sitemap>\s*<loc>([^<]+)<\/loc>/g)].map((m) => decode(m[1]));
+        const kids = all.slice(0, SITEMAP_CHILDREN_CAP);
+        capped = all.length - kids.length;
+        const parts = [];
+        for (let k = 0; k < kids.length; k += 4) parts.push(...await Promise.all(kids.slice(k, k + 4).map((u) => get(u, { json: false, timeoutMs: 30000 }).catch(() => ''))));
+        xml = parts.join(' ');
       }
       const pat = entry.url_pattern ? new RegExp(entry.url_pattern) : /./;
       const urls = [...xml.matchAll(/<url>\s*<loc>([^<]+)<\/loc>(?:\s*<lastmod>([^<]*)<\/lastmod>)?/g)]
         .map((m) => ({ url: decode(m[1]), lastmod: m[2] || '' }))
-        .filter((u) => pat.test(u.url) && !disallow.some((d) => new URL(u.url).pathname.startsWith(d)))
-        .slice(0, entry.max_jobs ?? 3000);
+        .filter((u) => pat.test(u.url))
+        .slice(0, posIntOr(entry.max_jobs, SITEMAP_MAX_JOBS));
       const cache = loadSitemapCache(slug);
       const todo = urls.filter((u) => cache[u.url]?.lastmod !== u.lastmod || !cache[u.url]?.job);
-      // Optional per-entry pacing for big boards (entry.page_budget_ms, entry.page_concurrency): stop starting page fetches once the
-      // budget is spent and return what the cache holds, so a first fill of thousands of pages spreads over several cycles instead of
-      // one burst, and the fetch ends well inside the crawl's per-board timeout (entry.timeout_ms, default 35 s) (a timed-out fetch would not save its cache).
-      const budget = Number(entry.page_budget_ms) > 0 ? Number(entry.page_budget_ms) : 0, started = Date.now();
+      // Page budget (pageBudget): page fetches stop starting before the board's fetch budget (entry.timeout_ms, default 35 s) runs
+      // out, and the cache keeps what was read, so a first fill of thousands of pages spreads over several cycles (the crawl makes an
+      // incomplete board due again in the next cycle) instead of timing out and losing its work. entry.page_budget_ms sets it explicitly.
+      const budget = pageBudget(entry, started);
       const workers = Math.min(4, Math.max(1, Number(entry.page_concurrency) || 4));
       let i = 0;
       await Promise.all(Array.from({ length: workers }, async () => {
         while (i < todo.length) {
-          if (budget && Date.now() - started > budget) break;
+          if (budget.spent()) break;
           const u = todo[i++];
           try {
-            cache[u.url] = { lastmod: u.lastmod, job: parseJobPage(await get(u.url, { json: false, timeoutMs: 25000 }), u.url) };
+            cache[u.url] = { lastmod: u.lastmod, job: parseJobPage(await get(u.url, { json: false, timeoutMs: budget.pageTimeout(25000) }), u.url) };
           } catch (e) { if (!cache[u.url]) cache[u.url] = { lastmod: u.lastmod, job: null }; }
           await new Promise((r) => setTimeout(r, 150));
         }
@@ -580,7 +604,8 @@ export const providers = {
       // entry.org_filter (regex, case-insensitive): on a sitemap shared by many employers (jobs.b-ite.com lists every BITE tenant's
       // postings under /jobposting/<hash>, no tenant in the URL) keep only the postings whose JSON-LD hiringOrganization matches.
       const orgPat = entry.org_filter ? new RegExp(entry.org_filter, 'i') : null;
-      return urls.map((u) => cache[u.url]?.job).filter((j) => j?.title && (!orgPat || orgPat.test(j.organization ?? '')));
+      const out = urls.map((u) => cache[u.url]?.job).filter((j) => j?.title && (!orgPat || orgPat.test(j.organization ?? '')));
+      return markIncomplete(out, Math.max(0, todo.length - i), capped ? `${capped} child sitemaps past the ${SITEMAP_CHILDREN_CAP} cap` : '');
     },
   },
 
@@ -599,7 +624,7 @@ export const providers = {
       const cookie = (home.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
       const crawlCulture = async (cultureId, cultureName) => {
       const out = [], seen = new Set();
-      for (let page = 1; page <= 40; page++) {
+      for (let page = 1; page <= PAGE_CAP; page++) {
         if (page > 1) await new Promise((r) => setTimeout(r, 120));
         const res = await fetch(`${u.origin}/services/x/career-site/v1/search`, {
           method: 'POST', redirect: 'error', signal: AbortSignal.timeout(20000),
@@ -713,7 +738,7 @@ export const providers = {
     detect: (u) => (/^https:\/\/(?:www\.)?rheinmetall\.com\//i.test(u) ? 'vacancies' : null),
     async fetch() {
       const out = [], seen = new Set();
-      for (let page = 1; page <= 150; page++) {
+      for (let page = 1; page <= PAGE_CAP; page++) {
         if (page > 1) await new Promise((r) => setTimeout(r, 150));
         const html = await get(`https://www.rheinmetall.com/en/career/vacancies?page=${page}`, { json: false });
         let fresh = 0;
@@ -1219,7 +1244,7 @@ export const providers = {
         ? (p) => `${base}/Jobs/1?lang=ger&page=${p + 1}`
         : (p) => `${base}/Jobs/All?tc1152481=p${p}`;
 
-      for (let page = 0; page < 10; page++) {
+      for (let page = 0; page < PAGE_CAP; page++) {
         const url = pageUrls(page);
         let r;
         try {
@@ -1357,10 +1382,12 @@ export const providers = {
       // strategy: jobs.bmwgroup.com answers with a bare "<!DOCTYPE html>" (16 bytes, 2026-11-01), which is no listing.
       try {
         let startrow = 0;
-        for (let p = 0; p < 25; p++) {
+        for (let p = 0; p < PAGE_CAP; p++) {
           const page = successfactorsTileJobs(await get(`${origin}/tile-search-results/?startrow=${startrow}`, { json: false, timeoutMs: 15000 }), origin);
           if (!page.length) break;
+          const before = seen.size;
           for (const j of page) if (j && !seen.has(j.url)) { seen.add(j.url); jobs.push(j); }
+          if (seen.size === before) break;   // a page without new tiles: past the end
           startrow += page.length;
           await new Promise((r) => setTimeout(r, 200));
         }
@@ -1372,7 +1399,7 @@ export const providers = {
         const locales = ['de_DE', 'en_US', 'en_GB'];
         const locQuery = entry.location_query ?? entry.location ?? '';
         for (const loc of locales) {
-          for (let pageNumber = 0; pageNumber < 30; pageNumber++) {
+          for (let pageNumber = 0; pageNumber < PAGE_CAP; pageNumber++) {
             const res = await fetch(`${origin}/services/recruiting/v1/jobs`, {
               method: 'POST',
               headers: {
@@ -1387,6 +1414,7 @@ export const providers = {
             const data = await res.json();
             const list = data.jobSearchResult ?? [];
             if (!list.length) break;
+            const before = seen.size;
             for (const item of list) {
               const resp = item.response ?? {};
               if (!resp.id) continue;
@@ -1406,6 +1434,7 @@ export const providers = {
               });
             }
             if (data.totalJobs && seen.size >= data.totalJobs) break;
+            if (seen.size === before) break;   // a page without new postings: past the end
             await new Promise((r) => setTimeout(r, 150));
           }
           if (jobs.length) break;
@@ -1417,7 +1446,7 @@ export const providers = {
       // sitemap provider reads those pages' JobPosting markup (JSON-LD or microdata), cached by lastmod, so after the first cycle this
       // costs one page fetch per new or changed posting.
       try {
-        const fromSitemap = await providers.sitemap.fetch(`${origin}/sitemap.xml`, { url_pattern: '/job/', max_jobs: entry.max_jobs ?? 3000 });
+        const fromSitemap = await providers.sitemap.fetch(`${origin}/sitemap.xml`, { url_pattern: '/job/', max_jobs: entry.max_jobs, timeout_ms: entry.timeout_ms });
         if (fromSitemap.length) return fromSitemap;
       } catch {}
 
@@ -1432,7 +1461,8 @@ export const providers = {
     detect: (u) => (/jobs\.tkmsgroup\.com/i.test(u) ? 'tkms' : null),
     async fetch() {
       const out = [], seen = new Set();
-      for (let page = 0; page < 30; page++) {
+      for (let page = 0; page < PAGE_CAP; page++) {
+        const before = seen.size;
         const res = await fetch('https://jobs.tkmsgroup.com/api/filter/query', {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'user-agent': UA },
@@ -1457,7 +1487,7 @@ export const providers = {
             postedAt: isoDate(d.postingDate),
           });
         }
-        if (data.nextPage === null || data.nextPage === undefined) break;
+        if (data.nextPage === null || data.nextPage === undefined || seen.size === before) break;
         await new Promise((r) => setTimeout(r, 200));
       }
       return out;
@@ -1663,7 +1693,7 @@ export const providers = {
     async fetch(_slug, entry = {}) {
       const ajaxUrl = 'https://www.mbda-careers.de/wp/wp-admin/admin-ajax.php';
       const out = [], seen = new Set();
-      for (let page = 1; page <= 25; page++) {
+      for (let page = 1; page <= PAGE_CAP; page++) {
         const body = new URLSearchParams({ action: 'load_job_results', page: String(page) });
         const res = await fetch(ajaxUrl, {
           method: 'POST',
@@ -1743,7 +1773,7 @@ export const providers = {
     async fetch(slug, entry = {}) {
       const tenant = slug || entry.slug;
       const out = [], seen = new Set();
-      for (let page = 1; page <= 25; page++) {
+      for (let page = 1; page <= PAGE_CAP; page++) {
         const url = `https://${tenant}.onlyfy.jobs/en?page=${page}`;
         const html = await get(url, { json: false, timeoutMs: 15000 });
         const m = html.match(/\\"jobsData\\":(\{(?:(?!\\"meta\\":).)*\\"meta\\":\{.*?\}\})/);
@@ -1816,7 +1846,7 @@ export const providers = {
       const key = def.match(/\bkey\s*:\s*["']([A-Za-z0-9_-]{16,})["']/)?.[1];
       if (!key) throw new Error(`bite: no API key in the listing definition of ${slug}`);
       const out = [];
-      for (let offset = 0, total = Infinity, page = 0; offset < total && page < 40; page++) {
+      for (let offset = 0, total = Infinity, page = 0; offset < total && page < PAGE_CAP; page++) {
         const res = await request('https://jobs.b-ite.com/api/v1/postings/search', {
           method: 'POST',
           headers: { 'user-agent': UA, accept: 'application/json', 'content-type': 'application/json;charset=utf-8', 'Bite-JobsApi-Client': 'v5-20230925-9df79de' },
@@ -1947,7 +1977,7 @@ export const providers = {
       const tenant = slug || entry.slug;
       const base = `https://${tenant}.prospective.ch`;
       const out = [], seen = new Set();
-      for (let page = 1; page <= 25; page++) {
+      for (let page = 1; page <= PAGE_CAP; page++) {
         const url = `${base}/index.cfm?sprCd=en&wlgo=1&seq=${page}`;
         let html;
         try {
@@ -2463,7 +2493,7 @@ export const providers = {
       // captured company pages, 2026-11-07). pagination.total is not used: it is one higher than the listed items on most boards.
       const items = [], seen = new Set();
       let pages = 1;
-      for (let page = 1; page <= Math.min(pages, 50); page++) {
+      for (let page = 1; page <= Math.min(pages, PAGE_CAP); page++) {
         if (page > 1) await new Promise((r) => setTimeout(r, 200));
         const url = `https://join.com/companies/${slug}${page > 1 ? `?page=${page}` : ''}`;
         const html = await get(url, { json: false });
@@ -2703,7 +2733,7 @@ export const providers = {
     detect: (u) => u.match(/^https?:\/\/([\w.-]+)\/(?:[\w-]+\/)?jobs\/[\w-]+\?lang=[a-z-]+/i)?.[1],
     async fetch(slug) {
       const out = [];
-      for (let page = 1; page <= 60; page++) {
+      for (let page = 1; page <= PAGE_CAP; page++) {
         const d = await get(`https://${slug}/api/jobs?limit=100&page=${page}`);
         const rows = d.jobs ?? [];
         for (const r of rows) {

@@ -17,6 +17,7 @@ import { providers, resolve as resolveEntry } from './providers.mjs';
 import { harvestTable } from './providers-extra.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
 import { UA, setUserAgent } from './useragent.mjs';
+import { configurePolicy, policyFromProfile, installGuard } from './policy.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : undefined);
@@ -25,6 +26,8 @@ try { PROFILE = loadProfile(profileDirFromArgs(args)); } catch (e) { console.err
 if (!PROFILE) { console.error('discover: no profile. Pass --profile <dir> (or set JOBCRAWL_PROFILE).'); process.exit(2); }
 const DATA = resolveDataDir(opt('data'), PROFILE);
 setUserAgent(PROFILE.userAgent);
+configurePolicy(policyFromProfile(PROFILE, DATA));   // the crawl policy (policy.mjs) around every request
+installGuard();
 const MIN_JOBS = Number(opt('min-jobs') ?? 1);
 const cfg = applyProfileFilters(JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8')), PROFILE);
 

@@ -6,6 +6,7 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { providers, setCacheDir } from '../providers.mjs';
+import { configurePolicy, installGuard, resetPolicy, policyStats } from '../policy.mjs';
 import { jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd } from '../providers-generic.mjs';
 
 const text = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -109,7 +110,7 @@ test('jobsFromJsonLd: a JobPosting node with a url; a page without one gives []'
   assert.deepEqual(jobsFromJsonLd('<html></html>', 'x'), []);
 });
 
-test('jsonld_direct: list page links -> posting pages parsed once and cached; robots respected', async () => {
+test('jsonld_direct: list page links -> posting pages parsed once and cached; robots.txt per the crawl policy (strict refuses, advisory logs)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'jc-generic-'));
   setCacheDir(dir);
   try {
@@ -118,26 +119,35 @@ test('jsonld_direct: list page links -> posting pages parsed once and cached; ro
     let jobs;
     const calls = await withFetch((u) => (u.endsWith('/robots.txt') ? 'User-agent: *\nDisallow: /intern/\n' : u.endsWith('/jobboard') ? list : job),
       async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); });
-    assert.equal(calls[0], 'https://www.mpg.de/robots.txt');
-    assert.equal(calls[1], 'https://www.mpg.de/jobboard');
-    assert.equal(calls.length, 4, 'two posting links on the trimmed list page');
+    assert.equal(calls[0], 'https://www.mpg.de/jobboard', 'the provider reads no robots.txt itself (the crawl policy guard does)');
+    assert.equal(calls.length, 3, 'two posting links on the trimmed list page');
     assert.equal(jobs.length, 2);
     assert.equal(jobs[0].url, 'https://www.mpg.de/27072047/data-analyst-bioinformatician-for-proteomics-and-metabolomics');
     assert.equal(jobs[0].title, 'Scientist/Engineer (m/f/d) in Automated Biology', 'the stub serves the same posting page for every link');
     assert.equal(jobs[0].location, 'Dresden, DE');
     assert.ok(jobs[0].description.length > 2000);
-    // second run: the posting pages come from the cache (TTL), only robots and the list page are fetched
+    // second run: the posting pages come from the cache (TTL), only the list page is fetched
     const calls2 = await withFetch((u) => (u.endsWith('/robots.txt') ? '' : u.endsWith('/jobboard') ? list : null),
       async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); });
-    assert.equal(calls2.length, 2);
+    assert.equal(calls2.length, 1);
     assert.equal(jobs.length, 2);
-    // a robots-disallowed list page is an error, not an empty board
-    await assert.rejects(withFetch((u) => (u.endsWith('/robots.txt') ? 'User-agent: *\nDisallow: /jobboard\n' : list),
-      async () => { await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); }), /disallowed by robots/);
+    // behind the crawl's guard (policy.mjs), a robots-disallowed list page: strict refuses it (an error, not an empty board) ...
+    const disallowing = (u) => (u.endsWith('/robots.txt') ? 'User-agent: *\nDisallow: /jobboard\n' : list);
+    const guarded = async () => { const un = installGuard(); try { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); } finally { un(); } };
+    try {
+      configurePolicy({ robots: 'strict' });
+      await assert.rejects(withFetch(disallowing, guarded), /robots\.txt disallows https:\/\/www\.mpg\.de\/jobboard/);
+      // ... advisory (the default) fetches it and logs it
+      configurePolicy({ robots: 'advisory' });
+      const calls4 = await withFetch(disallowing, guarded);
+      assert.deepEqual(calls4.slice(0, 2), ['https://www.mpg.de/robots.txt', 'https://www.mpg.de/jobboard']);
+      assert.equal(jobs.length, 2);
+      assert.equal(policyStats().robots_disallowed_fetched, 1);
+    } finally { resetPolicy(); }
     // no links and a sitemap: the sitemap's matching URLs are the postings
     const calls3 = await withFetch((u) => (u.endsWith('/robots.txt') ? '' : u.endsWith('/empty') ? '<html>no links</html>' : u.endsWith('sitemap.xml') ? '<urlset><url><loc>https://www.mpg.de/1/a</loc></url><url><loc>https://www.mpg.de/about</loc></url></urlset>' : job),
       async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/empty', { ...entry, sitemap: 'https://www.mpg.de/sitemap.xml' }); });
-    assert.deepEqual(calls3.slice(2), ['https://www.mpg.de/sitemap.xml', 'https://www.mpg.de/1/a']);
+    assert.deepEqual(calls3.slice(1), ['https://www.mpg.de/sitemap.xml', 'https://www.mpg.de/1/a']);
     assert.equal(jobs.length, 1);
   } finally { setCacheDir(null); rmSync(dir, { recursive: true, force: true }); }
 });

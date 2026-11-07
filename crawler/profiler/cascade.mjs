@@ -158,7 +158,7 @@ export async function profileSite(site, env) {
       const jl = jobsFromJsonLd(p.html, p.url);
       // one JobPosting on a page is a posting page (a dataset's posting URL), not the list; a list carries several (an ItemList)
       if (jl.length >= 2) {
-        const entry = { name: site.name, careers_url: p.url, provider: 'jsonld_direct', slug: p.url, max_jobs: 200 };
+        const entry = { name: site.name, careers_url: p.url, provider: 'jsonld_direct', slug: p.url, max_jobs: 1000 };
         const v = await verifyEntry(entry, { minJobLike: 0, minItems: 1 });
         steps.jsonld_list = v.ok ? `ok:${v.n}` : `fail:${v.error ?? `${v.n} items`}`;
         if (v.ok) return finish('jsonld', entry, v, jl.length);
@@ -172,7 +172,7 @@ export async function profileSite(site, env) {
         const detail = await fetchPage(best.urls[0], 'posting');
         const jp = detail && !detail.robots ? (jobsFromJsonLd(detail.html, detail.url)[0] ?? (JOBPOSTING.test(detail.html) ? parseJobPage(detail.html, detail.url) : null)) : null;
         if (jp?.title) {
-          const entry = { name: site.name, careers_url: best.page.url, provider: 'jsonld_direct', slug: best.page.url, job_url_pattern: best.hp.query ? `[?&]${reEscape(best.hp.query)}=` : `^${reEscape(best.hp.prefix)}`, max_jobs: 200 };
+          const entry = { name: site.name, careers_url: best.page.url, provider: 'jsonld_direct', slug: best.page.url, job_url_pattern: best.hp.query ? `[?&]${reEscape(best.hp.query)}=` : `^${reEscape(best.hp.prefix)}`, max_jobs: 1000 };
           if (!best.hp.sameHost) entry.link_hosts = [best.hp.host];
           const v = await verifyEntry(entry, { minJobLike: 0, minItems: 1 });
           steps.jsonld_detail = v.ok ? `ok:${v.n}/3 parsed, ${best.n} links` : `fail:${v.error ?? `${v.n} parsed`}`;
@@ -188,7 +188,7 @@ export async function profileSite(site, env) {
         const detail = await fetchPage(few[0].url, 'posting');
         const jp = detail && !detail.robots ? jobsFromJsonLd(detail.html, detail.url)[0] : null;
         if (jp?.title) {
-          const entry = { name: site.name, careers_url: few[0].page.url, provider: 'jsonld_direct', slug: few[0].page.url, job_url_pattern: `^${reEscape(dir)}`, max_jobs: 100 };
+          const entry = { name: site.name, careers_url: few[0].page.url, provider: 'jsonld_direct', slug: few[0].page.url, job_url_pattern: `^${reEscape(dir)}`, max_jobs: 500 };
           const v = await verifyEntry(entry, { minJobLike: 0, minItems: 1 });
           steps.jsonld_detail = v.ok ? `ok:${v.n} parsed, ${few.length} posting links (no group)` : `fail:${v.error ?? `${v.n} parsed`}`;
           if (v.ok) return finish('jsonld', entry, v, new Set(few.map((a) => a.url)).size);
@@ -216,7 +216,7 @@ export async function profileSite(site, env) {
         const first = g ? await fetchPage(g.urls[0], 'posting') : null;
         if (g && !(first && !first.robots && JOBPOSTING.test(first.html))) steps.sitemap = `fail:no_jobposting (${g.urls.length} urls under ${g.prefix})`;
         else if (g) {
-          const entry = { name: site.name, careers_url: main.url, provider: 'sitemap', slug, url_pattern: reEscape(g.prefix), max_jobs: 300, page_budget_ms: 20000, page_concurrency: 2 };
+          const entry = { name: site.name, careers_url: main.url, provider: 'sitemap', slug, url_pattern: reEscape(g.prefix), max_jobs: 3000, page_budget_ms: 20000, page_concurrency: 2 };
           const v = await verifyEntry(entry, { minJobLike: 0, minItems: 2 });
           steps.sitemap = v.ok ? `ok:${g.urls.length} urls` : `fail:${v.error ?? `${v.n} of 3 parsed (${g.urls.length} urls)`}`;
           if (v.ok) return finish('sitemap', entry, v, g.urls.length);
@@ -320,6 +320,8 @@ export async function profileSite(site, env) {
     if (env.savePages) for (const [i, p] of pages.entries()) env.savePages(site, i, p);
     rec.requests = ctx.requests;
     rec.robots_blocked = ctx.robotsBlocked.length;
+    rec.robots_ignored = ctx.robotsIgnored?.length ?? 0;   // advisory mode: robots.txt disallowed these requests, made anyway (logged)
+    if (ctx.optout) { rec.optout = ctx.optout; if (rec.verified) { rec.verified = false; rec.reason = 'optout_flagged'; } }   // explicit opt-out: for the owner, never spliced
     rec.trace = ctx.trace.slice(0, 30);
     rec.ms = Date.now() - Date.parse(rec.started);
   }

@@ -8,8 +8,13 @@
 // so rawcapture.mjs keeps every response byte for byte (JOBCRAWL_RAW_DIR is required; without it the fetch would be wasted).
 // Nothing is written to jd/*.md: the declared layer is parsed from the raw store.
 //
-//   node crawler/detail-backfill.mjs --profile <dir> --data <dir> [--budget 400] [--host-delay 1500] [--concurrency 4]
-//                                    [--statuses extra,filtered,open] [--vendors workday,smartrecruiters] [--dry-run]
+//   node crawler/detail-backfill.mjs --profile <dir> --data <dir> [--budget 400] [--minutes 0] [--host-delay 1500] [--concurrency 4]
+//                                    [--host-fail-limit 5] [--statuses extra,filtered,open] [--vendors workday,smartrecruiters] [--dry-run]
+//
+// --minutes N stops starting requests after N minutes (0 = no time limit), so a large --budget fits a cycle or a lane. A host whose
+// last --host-fail-limit requests in this run all failed is left for the next run (its remaining URLs are not tried and not counted
+// as tries), so a vendor that fails slowly (timeouts) does not eat the run. Every request passes the crawl policy (policy.mjs:
+// robots.txt advisory or strict per crawl.robots, Crawl-delay floor on top of --host-delay, 429/503 cooldowns, no login pages).
 //
 // Resumable: <data>/detail-backfill.json records every URL tried (ok, text length, tries, next retry). A run stops at --budget
 // requests, so it rides the 20-minute crawl cycle; the queue order is open roles without a saved text first, then extra and
@@ -30,6 +35,7 @@ import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } 
 import { setUserAgent } from './useragent.mjs';
 import { jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
+import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy } from './policy.mjs';
 
 /** Vendors whose board response already carries every description: the raw capture of the crawl has them, no detail fetch needed. */
 export const LIST_HAS_DESCRIPTION = new Set(['greenhouse', 'ashby', 'lever', 'personio', 'recruitee', 'pinpoint', 'breezy', 'workable']);
@@ -91,26 +97,34 @@ export function planBackfill({ history, boards, state = {}, now = Date.now(), st
 
 /**
  * Fetches up to budget items: one request at a time per host with hostDelay ms between them, concurrency hosts in parallel.
- * fetchOne(item) -> result; onDone(item, result, i) after each. Returns the items actually attempted.
+ * maxMs (0 = none): no request starts after that many ms. hostFailLimit (0 = none): a host whose last hostFailLimit results all
+ * failed gets no more requests in this run. fetchOne(item) -> result; onDone(item, result, i) after each.
+ * Returns the items actually attempted; .skipped counts the items left for the next run ({ time, host_failing, hosts }).
  */
-export async function runQueue(queue, fetchOne, { budget = 400, hostDelay = 1500, concurrency = 4, onDone = () => {} } = {}) {
+export async function runQueue(queue, fetchOne, { budget = 400, hostDelay = 1500, concurrency = 4, maxMs = 0, hostFailLimit = 0, onDone = () => {} } = {}) {
   const items = queue.slice(0, budget);
   const byHost = new Map();
   for (const it of items) { if (!byHost.has(it.host)) byHost.set(it.host, []); byHost.get(it.host).push(it); }
   const hosts = [...byHost.values()].sort((a, b) => b.length - a.length);   // the longest host queues start first
+  const t0 = Date.now(), attempted = [], skipped = { time: 0, host_failing: 0, hosts: [] };
   let n = 0, next = 0;
   await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, async () => {
     while (next < hosts.length) {
       const list = hosts[next++];
+      let failStreak = 0;
       for (let k = 0; k < list.length; k++) {
+        if (maxMs && Date.now() - t0 > maxMs) { skipped.time += list.length - k; break; }
+        if (hostFailLimit && failStreak >= hostFailLimit) { skipped.host_failing += list.length - k; skipped.hosts.push(list[k].host); break; }
         if (k) await sleep(hostDelay);
         let res;
         try { res = await fetchOne(list[k]); } catch (e) { res = { ok: false, error: e.message }; }
+        failStreak = res?.ok ? 0 : failStreak + 1;
+        attempted.push(list[k]);
         onDone(list[k], res, ++n);
       }
     }
   }));
-  return items;
+  return Object.assign(attempted, { skipped });
 }
 
 export function nextRetry(tries, now = Date.now()) {
@@ -159,6 +173,9 @@ async function main() {
   }
   writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
   const releaseLock = () => { try { unlinkSync(lockFile); } catch { /* already gone */ } };
+  // The crawl policy around every request (the same as the crawl's), after the raw capture so refused requests are not captured.
+  configurePolicy(policyFromProfile(PROFILE, dataDir));
+  installGuard();
   process.on('exit', releaseLock);
   try { await backfill({ flag, opt, t0, say, PROFILE, dataDir }); } finally { releaseLock(); }
 }
@@ -180,12 +197,13 @@ async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
   const jdInfo = (url) => { try { return statSync(pathResolve(jdDir, jdFileName(url))).size; } catch { return -1; } };   // file size: close enough to the text length
 
   const budget = Number(opt('budget', 400)), hostDelay = Number(opt('host-delay', 1500)), concurrency = Number(opt('concurrency', 4));
+  const maxMs = Number(opt('minutes', 0)) * 60000, hostFailLimit = Number(opt('host-fail-limit', 5));
   const statuses = opt('statuses', 'extra,filtered,open').split(',');
   const vendors = opt('vendors') ? opt('vendors').split(',') : null;
   const plan = planBackfill({ history, boards, state, statuses, vendors, jdInfo });
   const prio = [0, 1, 2, 3].map((p) => plan.queue.filter((q) => q.priority === p).length);
   say(`start: ${history.size} history rows, ${boards.size} boards; candidates ${plan.queue.length} (open without text ${prio[0]}, extra/filtered ${prio[1]}, `
-    + `clipped open ${prio[2]}, complete open ${prio[3]}); skipped ${JSON.stringify(plan.skipped)}; budget ${budget}, host delay ${hostDelay} ms, ${concurrency} hosts at a time`);
+    + `clipped open ${prio[2]}, complete open ${prio[3]}); skipped ${JSON.stringify(plan.skipped)}; budget ${budget}${maxMs ? ` or ${maxMs / 60000} min` : ''}, host delay ${hostDelay} ms, ${concurrency} hosts at a time, a host stops after ${hostFailLimit || 'unlimited'} failures in a row`);
   say(`candidates by vendor: ${Object.entries(plan.byVendor).sort((a, b) => b[1] - a[1]).map(([v, n]) => `${v} ${n}`).join(', ')}`);
   if (flag('dry-run') || !plan.queue.length) { say(`result: dry run, nothing fetched${plan.queue.length ? '' : ' (queue empty)'}`); return; }
 
@@ -211,11 +229,15 @@ async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
       say(`progress: ${i}/${Math.min(budget, plan.queue.length)} fetched, ${ok} ok, ${fail} failed, ${dt.toFixed(0)} s, ${(i / dt).toFixed(2)} req/s`);
     }
   };
-  await runQueue(plan.queue, fetchOne, { budget, hostDelay, concurrency, onDone });
+  const done = await runQueue(plan.queue, fetchOne, { budget, hostDelay, concurrency, maxMs, hostFailLimit, onDone });
   saveState();
-  const left = plan.queue.length - Math.min(budget, plan.queue.length);
+  flushPolicy();
+  const left = plan.queue.length - done.length;
+  const sk = done.skipped;
   say(`result: ${ok} ok, ${fail} failed in ${((Date.now() - t0) / 1000).toFixed(0)} s; per vendor ${Object.entries(counts).map(([v, c]) => `${v} ${c.ok}/${c.ok + c.fail}`).join(', ')}; `
-    + `${left} left in the queue (about ${Math.ceil(left / budget)} more runs at this budget); ${rawCaptureSummary()}`);
+    + `${left} left in the queue (about ${Math.ceil(left / Math.max(1, done.length))} more runs like this one)`
+    + `${sk.time ? `; ${sk.time} not started (time limit)` : ''}${sk.host_failing ? `; ${sk.host_failing} left on ${sk.hosts.length} failing hosts (${sk.hosts.slice(0, 5).join(', ')})` : ''}; ${rawCaptureSummary()}`);
+  for (const line of policySummary()) say(`policy: ${line}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

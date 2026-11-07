@@ -269,23 +269,65 @@ for another field; [profiles/schema.md](profiles/schema.md) lists every key, its
 
 ## Responsible crawling
 
-* **Public data only.** The crawler reads the public feeds and pages that employers publish for applicants, never anything behind a
-  login. LinkedIn is not crawled; Indeed, Glassdoor and XING are skipped as well.
+The rules below are code, not intentions: `crawler/policy.mjs` applies them to every request of the commands that fetch from employer
+sites (`crawl.mjs`, `detail-backfill.mjs`, `cc-harvest.mjs`, `ats-resolve.mjs`, `discover.mjs`; it wraps `fetch`, so the providers' own
+requests pass through it), the career-site profiler applies the same rules in its network layer (`crawler/profiler/net.mjs`), and the
+SuccessFactors tenant probe (`crawler/rmk.mjs`) follows the robots mode. `crawler/tests/policy.test.mjs` checks each rule against a
+local server.
+
+**Hard limits (no setting turns them off)**
+
+* **Never logs in.** The crawler reads what employers publish for applicants without an account. It never requests a login, sign-in or
+  authentication page (a path segment such as `login`, `signin`, `sso`, `oauth`, `auth`, `wp-login.php`, `my-account`) or a URL with
+  credentials in it. Redirects of GET requests are followed hop by hop, so a redirect into a login page stops before that page is
+  requested. A URL that answers 401 or 407, or that redirects into a login page, is recorded in `<data>/auth-walls.json` and never
+  requested again. It does not bypass paywalls or CAPTCHAs and adds no credentials of its own to a request, with one exception: the
+  USAJOBS provider sends the API key the operator was issued (see USAJOBS below). A few career sites hand every anonymous visitor a
+  session token in the page itself (Cornerstone, Comeet, the BITE listing definition); those providers use it the way the page does.
+* **deeplist.tech**: its `/api` and its login and account pages are never requested.
+* **Explicit opt-outs are respected.** Hosts listed in `crawl.opt_out_hosts` (for example a site whose terms forbid automated access to
+  its job data) are never requested; terms pages are not parsed automatically, so such a host is added by hand. A response carrying the
+  TDM reservation header (`tdm-reservation: 1`, W3C TDMRep) flags its host in `<data>/optout-flags.json`, the cycle's notes name it,
+  and the host is not requested again until the owner lists it in `crawl.opt_out_cleared`. The profiler also reads the TDMRep meta tag
+  and never adds a flagged site (`profiler.mjs splice` lists it for the owner instead).
+* **Rate limits and backoff.** HTTP 429 and 503 put the host on a cooldown: Retry-After (seconds or a date), else 30 s after a 429 and
+  10 s after a 503. Every later request to that host waits the cooldown out, or fails at once when more than 20 s are left. The shared
+  HTTP helper retries 429, 5xx and network errors at most twice, never before Retry-After; when Retry-After asks for more than 20 s the
+  board fails for this cycle instead of retrying early.
+* **Crawl-delay** (the robots.txt group naming the crawler's user-agent token, else `*`) is a floor between two request starts to that
+  host, in both robots modes. A request that would wait more than 60 s for its slot fails instead of queueing; the profiler does not
+  probe a site whose Crawl-delay is over 60 s.
+* **Concurrency stays where it was**: at most 8 boards at a time; on one board, at most 4 posting pages in parallel for the `sitemap`
+  provider (150 ms pause per worker) and 2 (at most 3) for `jsonld_direct` (300 ms pause); paging providers fetch one page at a time,
+  most with a pause between pages (120 to 700 ms); the detail backfill sends one request at a time per host with 1.5 s between them, 4 hosts in parallel;
+  the profiler one request per second per host; EURES at most one request per second across all processes.
+
+**robots.txt is advisory by default** (`crawl.robots`, owner's decision of 2026-11-07). Every request through the policy reads the
+robots.txt of its origin (once a day; `<data>/robots-cache.json`). In `advisory` mode a request that robots.txt disallows for the
+crawler's token is made anyway and logged: one line in `<data>/robots-audit.jsonl` (time, host, URL, caller; at most 50 per host and
+run) and a count per host in the cycle's notes. This covers employers' own career sites, ATS job boards and their posting pages, and
+the SuccessFactors Career Site Builder search (`/services/recruiting/v1/jobs`) that many RMK sites disallow. In `strict` mode such a
+request is refused (`robots.txt disallows ...`). `crawl.robots_hosts` sets the mode per host, e.g. `{ "example.com": "strict" }`. A
+robots.txt that answers 5xx counts as "disallow everything" (RFC 9309): refused in strict mode, logged in advisory mode.
+
+**Generous with pages, within the cycle.** Pagination is followed to the end: every paging loop stops at an empty page, a page without
+new postings or the stated total, with a safety stop at 500 pages (entry key `max_pages` caps it per board). A sitemap index is read
+in full (up to 500 child sitemaps; it was 10). The providers that read one page per posting have higher defaults (`sitemap` 10000,
+`jsonld_direct` 1000 postings) and a page budget: they stop starting page fetches 10 s before the board's fetch budget (`timeout_ms`,
+default 35 s) runs out and keep what they read in the page cache, and the crawl makes such a board due again in the next cycle, so a
+first fill of thousands of pages spreads over cycles instead of timing out. The notes of each cycle list the boards still filling and
+the board fetch time (total and the slowest boards).
+
 * **It says who it is.** Requests carry the profile's user agent (`crawl.user_agent`, default
   `Mozilla/5.0 (compatible; jobcrawl; +https://github.com/egidinas/jobcrawl)`), which names the project and where to read about it.
-  Two exceptions, kept from the providers' origins and under review: the Workday search API and the SuccessFactors Career Site Builder
-  search are called with a browser user agent.
-* **robots.txt.** It is read and honoured, `Disallow` rules for the crawler's own token and for `*`, by the `sitemap` and
-  `jsonld_direct` providers, by the career-site profiler (which also keeps `Crawl-delay`) and by the SuccessFactors tenant probe. The
-  ATS providers read the JSON or XML feeds the vendors publish for embedding job lists on career pages and do not fetch robots.txt.
-  Open point: the SuccessFactors provider's Career Site Builder fallback calls `/services/recruiting/v1/jobs`, which many RMK sites
-  disallow; the robots-allowed sitemap route exists for those sites and is what the tenant enumeration adds.
-* **Gentle by design.** At most 8 boards at a time, each board is fetched only when due (`interval_hours`, capped at 48 hours so a live role is
-  confirmed before it would be marked gone; the reference profile polls most boards every 12 to 48 hours), paging providers pause between pages, the detail backfill sends one request at a time per host with a
-  delay, and EURES gets at most one request per second across all processes, with backoff on HTTP 429.
+  Two exceptions, kept from the providers' origins: the Workday search API and the SuccessFactors Career Site Builder search are called
+  with a browser user agent. robots.txt groups are matched against the profile's token in either case.
+* **Each board only when due** (`interval_hours`, capped at 48 hours so a live role is confirmed before it would be marked gone; the
+  reference profile polls most boards every 12 to 48 hours). LinkedIn is not crawled; Indeed, Glassdoor and XING are skipped as well.
 * **Attribution.** Aggregator copies carry their source (`meta.source`, the company suffix `(via EURES)`), and the employer's own posting
   always wins over a copy.
-* **Before you add a site**, read its terms of use, and poll it no more often than it needs.
+* **Before you add a site**, read its terms of use; if they forbid automated access to job data, put the host in `crawl.opt_out_hosts`
+  instead. Poll a site no more often than it needs.
 
 ## Data model
 
@@ -359,15 +401,17 @@ every tracked posting, in or out of scope, through the same provider code, so th
 written to `jd/*.md`. `JOBCRAWL_RAW_DIR` is required (without it the fetches would be wasted).
 
 ```
-node crawler/detail-backfill.mjs --profile <dir> --data <dir> [--budget 400] [--host-delay 1500] [--concurrency 4]
-                                 [--statuses extra,filtered,open] [--vendors a,b] [--dry-run]
+node crawler/detail-backfill.mjs --profile <dir> --data <dir> [--budget 400] [--minutes 0] [--host-delay 1500] [--concurrency 4]
+                                 [--host-fail-limit 5] [--statuses extra,filtered,open] [--vendors a,b] [--dry-run]
 ```
 
 A run stops after `--budget` requests and is resumable: `<data>/detail-backfill.json` records every URL tried (ok, text length,
 tries, next retry). The queue order is open roles without a saved text, then extra and filtered roles, then open roles whose
 saved text is the clipped copy; newest first within each class. Vendors whose board response already carries every description
 (Greenhouse, Ashby, Lever, Personio, Recruitee, Pinpoint, Breezy, Workable) are skipped unless named in `--vendors`. Hosts are
-fetched one request at a time with `--host-delay` ms between requests, `--concurrency` hosts in parallel. A failed URL is retried
+fetched one request at a time with `--host-delay` ms between requests (or the host's Crawl-delay when longer), `--concurrency` hosts in
+parallel. `--minutes N` stops starting requests after N minutes, so a large `--budget` fits a cycle; a host whose last `--host-fail-limit`
+requests of the run all failed (a vendor that times out) is left for the next run without counting those URLs as tries. A failed URL is retried
 after 1, 7 and 30 days, then every 90 days. Only one run works a data directory at a time (`<data>/detail-backfill.lock`).
 
 ### USAJOBS
@@ -401,7 +445,7 @@ probation).
 |---|---|
 | `crawler/discover.mjs` | finds boards not tracked yet from URLs you have (the history's apply links, careers pages, names), probes each live feed and prints a ready-to-paste entry |
 | `crawler/ats-resolve.mjs` | finds a named employer's board by probing the slug conventions of the common ATS vendors |
-| `crawler/profiler.mjs` | for sites without a known ATS: tries JSON-LD, sitemaps, RSS, repeated link groups, the page's own XHR (headless browser, optional) and a local model; honours robots.txt and Crawl-delay; verifies with the provider's own fetch before it writes an entry |
+| `crawler/profiler.mjs` | for sites without a known ATS: tries JSON-LD, sitemaps, RSS, repeated link groups, the page's own XHR (headless browser, optional) and a local model; follows the crawl policy (robots.txt advisory or strict, Crawl-delay, no login pages, opt-outs flagged); verifies with the provider's own fetch before it writes an entry |
 | `crawler/cc-harvest.mjs` | enumerates ATS tenants from the Common Crawl index (Greenhouse, Lever, Ashby, Workday, Personio, Recruitee, Teamtailor, JOIN, BambooHR, SmartRecruiters, Workable, d.vinci, umantis, rexx, onlyfy, BITE, and SAP SuccessFactors tenants via `crawler/rmk.mjs`), probes each board once and scores it against the profile |
 | `crawler/aggregator-employers.mjs` | groups the history's aggregator rows by employer and lists the ones without a direct board |
 

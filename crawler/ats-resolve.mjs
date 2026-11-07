@@ -24,6 +24,7 @@ import { providers, resolve as resolveEntry } from './providers.mjs';
 import { harvestTable } from './providers-extra.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
 import { UA, setUserAgent } from './useragent.mjs';
+import { configurePolicy, policyFromProfile, installGuard } from './policy.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : undefined);
@@ -33,6 +34,8 @@ try { PROFILE = loadProfile(profileDirFromArgs(args)); } catch (e) { console.err
 if (!PROFILE) { console.error('ats-resolve: no profile. Pass --profile <dir> (or set JOBCRAWL_PROFILE).'); process.exit(2); }
 const DATA = resolveDataDir(opt('data'), PROFILE);
 setUserAgent(PROFILE.userAgent);
+configurePolicy(policyFromProfile(PROFILE, DATA));   // the crawl policy (policy.mjs) around every request
+installGuard();
 const REVIEW = PROFILE.reviewDir ?? DATA;   // where the review CSV/JSON go (profile key crawl.review_dir)
 const LABEL = opt('label') ?? 'space_boards';
 const MAX_TIER = Number(opt('tiers') ?? 2);

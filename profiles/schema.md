@@ -62,6 +62,10 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `crawl.relevance.ssic_deeptech` | list of strings | `[]` | Singapore-style strict gate | SSIC industry code prefixes (Singapore Standard Industrial Classification) that count as the profile's sector. Only used by the MyCareersFuture provider |
 | `crawl.min_free_mb` | number >= 0 | `0` (off) | crawler | refuse to start when the disk holding the data folder has less than this many MB free: the crawl exits with code 3 before fetching or writing anything. `--dry-run` skips the check |
 | `crawl.jd_keep_days` | number >= 0 | `90` | crawler | a role's saved description (`<data>/jd/`) is removed once the role has not been seen for more than this many days (its history row is not `open`). Open roles are never touched and the history rows are kept. `0` keeps every description. `node crawler/crawl.mjs --profile <dir> --jd-cleanup-only` runs just this step |
+| `crawl.robots` | `"advisory"` or `"strict"` | `"advisory"` | crawler, backfill, profiler, harvest | robots.txt `Disallow`: advisory fetches the URL anyway and logs it (`<data>/robots-audit.jsonl`, a count per host in the notes); strict refuses it. `Crawl-delay` is honoured in both modes. See README, Responsible crawling |
+| `crawl.robots_hosts` | object host -> mode | `{}` | same | the robots mode for single hosts (and their subdomains), e.g. `{ "example.com": "strict" }` |
+| `crawl.opt_out_hosts` | list of host names or `{ host, reason }` | `[]` | same | hosts that are never requested: explicit opt-outs such as terms that forbid automated access to job data |
+| `crawl.opt_out_cleared` | list of host names | `[]` | same | hosts the owner reviewed after an automatic opt-out flag (`optout-flags.json`) and allows again |
 | `crawl.title_filter` | object | none | crawler | when set, replaces `title_filter` in the companies file (same shape, see below) |
 | `crawl.location_filter` | object | none | crawler | when set, replaces `location_filter` in the companies file |
 
@@ -112,7 +116,9 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `timeout_ms` | number | fetch budget of this board per cycle (default 35000, at most 600000), for large tenants that page slowly |
 | `employer_mismatch` | string | the board's own company name does not match the tracked employer: the entry stays on probation (never promoted) and every cycle's notes name it |
 | `collect_only` | bool | collect but never publish: every role of the board is kept in the history (and the raw store) as status `extra`, never `open` or NEW, even when its title passes the filters. For feeds whose scope is decided downstream (aggregators such as EURES, USAJOBS). The summary line counts them as `N collect-only` |
-| `max_jobs` | number | cap on the number of postings read, for providers that page |
+| `max_jobs` | number | cap on the number of postings read, for the providers that read one page per posting (`sitemap`: default 10000, `jsonld_direct`: default 1000, Radancy 10000, EURES 2000, Amazon 500); the other ATS feeds ignore it |
+| `max_pages` | number | cap on the pages a paging provider walks. Without it, pagination is followed to the end: the walk stops at an empty page, a page without new postings or the stated total, with a safety stop at 500 pages (200 for `paginated_list` and the walked listings) |
+| `page_budget_ms`, `page_concurrency` | number | `sitemap` and `jsonld_direct`: stop starting posting-page fetches after this many ms (default: `timeout_ms` minus 10 s) and fetch at most this many pages at a time (default 4 and 2, never more). What was read is cached; an incomplete fill makes the board due again in the next cycle |
 | `extra_positive` | list | extra title keywords for this employer only |
 | `location_only`, `location_allow` | list | per-employer location lists |
 

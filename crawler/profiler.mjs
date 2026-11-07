@@ -19,6 +19,7 @@ import { setCacheDir } from './providers.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
 import { UA, setUserAgent } from './useragent.mjs';
 import { makeNet } from './profiler/net.mjs';
+import { configurePolicy, policyFromProfile, policySummary, flushPolicy } from './policy.mjs';
 import { profileSite } from './profiler/cascade.mjs';
 import { hostOf, regDomain, decode } from './profiler/detect.mjs';
 
@@ -57,6 +58,8 @@ async function run() {
   const steps = opt('steps') ? new Set(opt('steps').split(',')) : null;   // ats,jsonld,sitemap,rss,dom,xhr,llm (default: all)
   const token = UA.match(/compatible;\s*([^;)]+)/)?.[1]?.trim() ?? 'jobcrawl';
   setCacheDir(mkdtempSync(join(tmpdir(), 'profiler-cache-')));   // verification runs keep no crawl state
+  // the crawl policy (robots mode, opt-outs, login rules); its audit and flags go next to the report
+  configurePolicy(policyFromProfile(PROFILE, resolve(out, '..')));
   const net = makeNet({ token, budget, log: (m) => say(m) });
   net.install();
   let sniffer = null, llm = null;
@@ -80,7 +83,7 @@ async function run() {
     if (!force && n % 10 && Date.now() - lastProgress < 60000) return;
     lastProgress = Date.now();
     const el = (Date.now() - t0) / 1000;
-    say(`progress ${n}/${sites.length}: ${Object.entries(tally).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')} | requests ${net.stats.requests}, robots-blocked ${net.stats.robots_blocked}, ${(n / el * 60).toFixed(1)} sites/min`, force);
+    say(`progress ${n}/${sites.length}: ${Object.entries(tally).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')} | requests ${net.stats.requests}, robots-blocked ${net.stats.robots_blocked}, robots-ignored (advisory) ${net.stats.robots_ignored}, policy-refused ${net.stats.policy_refused}, ${(n / el * 60).toFixed(1)} sites/min`, force);
   };
   await Promise.all(Array.from({ length: conc }, async () => {
     while (i < sites.length) {
@@ -100,6 +103,8 @@ async function run() {
   if (sniffer) await Promise.race([sniffer.close(), new Promise((r) => setTimeout(r, 15000))]);
   net.uninstall();
   progress(true);
+  flushPolicy();
+  for (const line of policySummary()) say(`policy: ${line}`, true);
   say(`=== profiler run done: ${n} sites in ${Math.round((Date.now() - t0) / 1000)}s; verified ${Object.entries(tally).filter(([k]) => k.startsWith('ok:')).reduce((a, [, v]) => a + v, 0)}; report ${out}`, true);
 }
 
@@ -132,7 +137,7 @@ function splice() {
   for (const r of all) {
     if (r.verified || latest.has(r.key) || !r.careers_page || !watchable(r)) continue;
     latest.set(r.key, { ...r, watch: true, items: 0, samples: [],
-      entry: { name: r.name, careers_url: r.careers_page, provider: 'jsonld_direct', slug: r.careers_page, max_jobs: 30, profile: { method: 'watch', at: DATE, items: 0, expected_min: 0, expected_max: 20 } } });
+      entry: { name: r.name, careers_url: r.careers_page, provider: 'jsonld_direct', slug: r.careers_page, max_jobs: 300, profile: { method: 'watch', at: DATE, items: 0, expected_min: 0, expected_max: 20 } } });
   }
   for (const r of latest.values()) {
     if (max && added.length >= max) break;
@@ -190,6 +195,9 @@ function splice() {
   }
   say(`splice: ${added.length} entries to add (${added.filter((x) => x.interval_hours === 168).length} watch/empty) from ${latest.size} verified or watch records; skipped ${Object.entries(skipped).map(([k, v]) => `${k} ${v.length}`).join(', ') || 'none'}`, true);
   for (const [k, v] of Object.entries(skipped)) say(`splice: skipped ${k}: ${v.slice(0, 40).join('; ')}`, true);
+  // explicit opt-outs (TDM reservation header or meta tag) are never spliced: listed for the owner
+  const flagged = all.filter((r) => r.optout);
+  if (flagged.length) say(`splice: FLAGGED FOR THE OWNER (opt-out signal, not added): ${flagged.map((r) => `${r.name} (${r.optout})`).join('; ')}`, true);
   if (replaced.length) say(`splice: replaced the board of ${replaced.length} tracked entries: ${replaced.join('; ')}`, true);
   if (flag('dry-run') || (!added.length && !replaced.length)) { if (flag('dry-run')) console.log(JSON.stringify(added.slice(0, 3), null, 2)); return; }
   if (replaced.length) {

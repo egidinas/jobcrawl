@@ -19,6 +19,7 @@ import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile } from './providers-eures.mjs';
+import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy } from './policy.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -69,6 +70,10 @@ setEuresRateFile(pathResolve(OUT_DIR, 'eures-rate.json'));
 // every feed response byte for byte under JOBCRAWL_RAW_DIR (rawcapture.mjs), before the first request
 const RAW_ON = !flag('jd-cleanup-only') && installRawCapture();
 if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`);
+// The crawl policy (policy.mjs) around every request: robots.txt advisory or strict (crawl.robots), Crawl-delay floor, 429/503
+// cooldowns, never a login page or an opted-out host. Installed after the raw capture, so a refused request is never captured.
+configurePolicy(policyFromProfile(PROFILE, OUT_DIR));
+if (!flag('jd-cleanup-only')) { installGuard(); console.log(`crawl: policy robots=${PROFILE.robots}${Object.keys(PROFILE.robotsHosts).length ? ` (${Object.keys(PROFILE.robotsHosts).length} host overrides)` : ''}, ${PROFILE.optOutHosts.length} opted-out hosts`); }
 if (!flag('dry-run') && !flag('jd-cleanup-only')) {   // the cleanup frees space, so it runs even on a full disk
   const full = checkDisk(OUT_DIR, PROFILE.minFreeMb);
   if (full) { console.error(`crawl: ${full}`); process.exit(3); }
@@ -312,6 +317,7 @@ async function scan() {
   const date = today();
   const fresh = [];
   const problems = [];
+  const boardMs = [];   // [name, provider, ms] per board fetch, for the board-time note (cycle length is measured, owner 2026-11-07)
   const needLazyJd = [];
   const dropReasons = {};   // verdict -> roles dropped this cycle (all of them get a 'filtered' row); printed in the notes
   // Board -> roles that pass the title filter but were dropped for their location this cycle (still recorded as 'filtered'). These are
@@ -400,12 +406,14 @@ async function scan() {
     const timeoutPromise = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(`Timed out after ${Math.round(ms / 1000)}s (${entry.name})`)), ms);
     });
+    const t0 = Date.now();
     try {
       const fetchPromise = providers[r.provider].fetch(r.slug, entry);
       const jobs = await Promise.race([fetchPromise, timeoutPromise]);
       return { entry, r, jobs };
     } finally {
       clearTimeout(timer);
+      boardMs.push([entry.name, r.provider, Date.now() - t0]);
     }
   }
 
@@ -414,6 +422,7 @@ async function scan() {
     if (res && !res.error && INDUSTRY_AGGREGATOR_PROVIDERS.has(res.r.provider)) for (const j of res.jobs) if (j.company) protectedIdx.add(j.company);
   }
   const trustedSg = protectedIdx;   // strict Singapore gate keeps jobs of protected employers
+  const filling = [];   // boards whose page fill continues next cycle
   let gatedSg = 0, gatedProbation = 0;
 
   // Per-provider health line (owner 2026-11-06: silent degradation must show): boards fetched this cycle per provider, how many
@@ -455,6 +464,11 @@ async function scan() {
     const collectOnly = companies[i].collect_only === true;
     const live = new Set();
     if (companies[i].interval_hours) crawlState[name] = new Date(nowMs + Math.min(48, companies[i].interval_hours) * 36e5 * stagger(companies[i])).toISOString();   // capped at 48 h: a role not confirmed for 3 days is marked gone
+    // An incomplete page fill (sitemap, jsonld_direct: the page budget ran out, the cache keeps what was read) is due again next cycle.
+    if (res.jobs.incomplete) {
+      if (res.jobs.incomplete.left > 0 && companies[i].interval_hours) crawlState[name] = new Date(nowMs).toISOString();
+      filling.push(`${name}${res.jobs.incomplete.left ? ` ${res.jobs.incomplete.left} pages left` : ''}${res.jobs.incomplete.note ? ` (${res.jobs.incomplete.note})` : ''}`);
+    }
     // Optional per-site whitelist (entry.only_locations): for big employers whose boards list the whole world, keep
     // only the places this audience cares about. Roles elsewhere are treated as filtered.
     const siteOnly = companies[i].only_locations?.map(norm);
@@ -704,6 +718,14 @@ async function scan() {
   const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
+  if (filling.length) problems.unshift(`page fill continues next cycle (page budget spent): ${filling.length} boards: ${filling.slice(0, 15).join(', ')}${filling.length > 15 ? ', ...' : ''}`);
+  {
+    const slow = [...boardMs].sort((a, b) => b[2] - a[2]);
+    const total = boardMs.reduce((t, b) => t + b[2], 0);
+    if (slow.length) problems.unshift(`board fetch time: ${(total / 60000).toFixed(1)} board-minutes over ${slow.length} boards (${CONCURRENCY} in parallel); slowest ${slow.slice(0, 8).map(([n, p, ms]) => `${n} (${p}) ${(ms / 1000).toFixed(0)} s`).join(', ')}`);
+  }
+  for (const line of policySummary().reverse()) problems.unshift(line);
+  flushPolicy();
   if (problems.length) console.log('\nNotes:\n' + problems.map((p) => '  - ' + p).join('\n'));
 
   if (flag('dry-run')) return console.log('\n(dry run: nothing written)');

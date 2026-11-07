@@ -30,14 +30,19 @@
 //                        ever-jobs (MIT); dvinci also jobfeed (MIT, https://github.com/mcs0002/jobfeed)
 //   intervieweb          jobseek (MIT, https://github.com/colophon-group/jobseek), jobfeed (MIT)
 //   attrax               jobfeed (MIT)
-// Deliberately not added although other scrapers have them: webcruiter (robots.txt disallows every non-whitelisted agent). ReachMee
-// was added later in providers.mjs (2026-11-07): the webNNN.reachmee.com embed hosts it reads serve no robots.txt (HTTP 404).
+// Not added yet although other scrapers have them: webcruiter (its robots.txt disallows every non-whitelisted agent, which kept it out
+// while robots.txt was enforced; under the advisory policy of 2026-11-07 it is a candidate, not yet ported). ReachMee was added later in
+// providers.mjs (2026-11-07).
 // Exports: extraProviders (merged into the registry by providers.mjs) and harvestTable (for the Common Crawl harvester).
 // Not ported: peoplesoft (career-ops version replays PeopleSoft form postbacks with a cookie jar; ~460 lines even without comments).
 
 import { UA } from './useragent.mjs';
+import { entryTimeoutMs } from './profile.mjs';
 // crawl.mjs gives one entry 35 s; paging providers stop after this budget and keep what they have.
 const BUDGET_MS = 28000;
+// The paging time budget of one board: 28 s, or the board's own fetch budget (entry.timeout_ms) minus 7 s when that is longer, so a
+// board given minutes (big tenants) pages for minutes instead of stopping at 28 s.
+const budgetMs = (entry) => Math.max(BUDGET_MS, entryTimeoutMs(entry) - 7000);
 const PAGE_DELAY_MS = 150;
 
 async function req(url, { method = 'GET', headers = {}, body, redirect = 'follow', timeoutMs = 20000 } = {}) {
@@ -351,9 +356,9 @@ export const extraProviders = {
       const head = shell.match(/<table\b[^>]*id=["']jobs["'][^>]*>[\s\S]*?<thead\b[^>]*>([\s\S]*?)<\/thead>/i)?.[1] ?? shell;
       const heads = [...head.matchAll(/<(?:th|label)[^>]*>([\s\S]*?)<\/(?:th|label)>/gi)].map((m) => strip(m[1])).filter((h) => h && !/^(?:icons?|actions?)$/i.test(h));
       const api = `https://${board.hostname}/careersection/rest/jobboard/searchjobs?lang=${encodeURIComponent(board.searchParams.get('lang') || 'en')}&portal=${portal}`;
-      const maxPages = posInt(entry.max_pages, 100, 1000), t0 = Date.now(), out = [];
+      const maxPages = posInt(entry.max_pages, 500, 1000), t0 = Date.now(), out = [];
       for (let page = 1; page <= maxPages; page++) {
-        if (page > 1) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(PAGE_DELAY_MS); }
+        if (page > 1) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(PAGE_DELAY_MS); }
         const data = await json(api, {
           method: 'POST',
           headers: { ...browser, accept: 'application/json, text/javascript, */*; q=0.01', 'content-type': 'application/json', 'x-requested-with': 'XMLHttpRequest', tz: 'America/Toronto', tzname: 'America/Toronto' },
@@ -379,10 +384,10 @@ export const extraProviders = {
       const cfg = entry.phenom && typeof entry.phenom === 'object' ? entry.phenom : {};
       const urlPrefix = String(cfg.urlPrefix || 'global/en').replace(/^\/+|\/+$/g, '');
       const country = typeof cfg.country === 'string' ? cfg.country : 'global';
-      const maxPages = posInt(entry.max_pages, 20, 300), t0 = Date.now(), out = [], seen = new Set();
+      const maxPages = posInt(entry.max_pages, 500, 1000), t0 = Date.now(), out = [], seen = new Set();
       let total = null;
       for (let page = 0; page < maxPages; page++) {
-        if (page > 0) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(PAGE_DELAY_MS); }
+        if (page > 0) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(PAGE_DELAY_MS); }
         const data = await json(`${origin}/widgets`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -405,11 +410,11 @@ export const extraProviders = {
     async fetch(slug, entry = {}) {
       const u = new URL(slug || entry.careers_url);
       const listUrl = /\/search-jobs\/?$/.test(u.pathname) ? `${u.origin}${u.pathname.replace(/\/$/, '')}` : `${u.origin}/${u.pathname.match(/^\/([a-z]{2})(?:\/|$)/)?.[1] ?? 'en'}/search-jobs`;
-      const maxPages = posInt(entry.max_pages, 200, 200), maxJobs = posInt(entry.max_jobs, 2000, 20000), t0 = Date.now();
+      const maxPages = posInt(entry.max_pages, 500, 1000), maxJobs = posInt(entry.max_jobs, 10000, 20000), t0 = Date.now();
       const out = [], seen = new Set();
       let fragment = true, lastPage = maxPages;
       for (let page = 1; page <= lastPage; page++) {
-        if (page > 1) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(PAGE_DELAY_MS); }
+        if (page > 1) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(PAGE_DELAY_MS); }
         let html = '', rows = [];
         if (fragment) {
           try {
@@ -436,9 +441,9 @@ export const extraProviders = {
       const host = String(slug).replace(/^https?:\/\//, '').replace(/\/.*$/, '');
       if (!/^(?:[\w-]+\.)*beesite\.de$/i.test(host)) throw new Error(`beesite: ${host} is not a beesite.de host`);
       const cfg = entry.beesite && typeof entry.beesite === 'object' ? entry.beesite : {};
-      const maxPages = posInt(entry.max_pages, 40, 40), t0 = Date.now(), out = [], seen = new Set();
+      const maxPages = posInt(entry.max_pages, 500, 1000), t0 = Date.now(), out = [], seen = new Set();
       for (let page = 0; page < maxPages; page++) {
-        if (page > 0) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(PAGE_DELAY_MS); }
+        if (page > 0) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(PAGE_DELAY_MS); }
         const sr = (await json(beesiteUrl(host, page * 100 + 1, cfg)))?.SearchResult;
         const items = Array.isArray(sr?.SearchResultItems) ? sr.SearchResultItems : [];
         let fresh = 0;
@@ -464,9 +469,9 @@ export const extraProviders = {
     async fetch(slug, entry = {}) {
       const [tenant, site, lang] = String(slug).split('/');
       if (!/^\d+$/.test(tenant ?? '') || !site || !lang) throw new Error(`pageup: slug must be "<tenant>/<site>/<lang>", got "${slug}"`);
-      const maxPages = posInt(entry.max_pages, 20, 200), t0 = Date.now(), out = [], seen = new Set();
+      const maxPages = posInt(entry.max_pages, 200, 1000), t0 = Date.now(), out = [], seen = new Set();
       for (let page = 1; page <= maxPages; page++) {
-        if (page > 1) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(250); }
+        if (page > 1) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(250); }
         const p = parsePageup(await text(`${PAGEUP}/${tenant}/${site}/${lang}/listing/?page=${page}&page-items=100`), tenant, site, lang);
         if (!p) { if (page === 1) throw new Error(`pageup: ${slug} returned no results table (login/error page, or the tenant moved off the vendor host)`); break; }
         if (!p.jobs.length && p.links) { if (page === 1) throw new Error(`pageup: ${slug} has job links that could not be read (markup changed)`); break; }
@@ -532,9 +537,9 @@ export const extraProviders = {
       const [site, agency, folder] = String(slug).split('/');
       if (!['schooljobs', 'governmentjobs'].includes(site) || !agency) throw new Error(`neogov: slug must be "schooljobs|governmentjobs/<agency>[/<folder>]", got "${slug}"`);
       const origin = `https://www.${site}.com`;
-      const maxPages = posInt(entry.max_pages, 30, 200), t0 = Date.now(), out = [], seen = new Set();
+      const maxPages = posInt(entry.max_pages, 200, 1000), t0 = Date.now(), out = [], seen = new Set();
       for (let page = 1; page <= maxPages; page++) {
-        if (page > 1) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(200); }
+        if (page > 1) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(200); }
         const q = new URLSearchParams({ agency });
         if (folder) q.set('departmentFolder', folder);
         q.set('sort', 'PostingDate'); q.set('isDescendingSort', 'true'); q.set('page', String(page));
@@ -607,7 +612,7 @@ export const extraProviders = {
       if (!spec) throw new Error(`amazon: refusing an unfiltered board; set slug to e.g. "team_category=team-project-kuiper" (got "${slug}")`);
       const cap = posInt(entry.max_jobs, 500, 2000), t0 = Date.now(), out = [], seen = new Set();
       for (let offset = 0; out.length < cap; offset += 100) {
-        if (offset) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(700); }
+        if (offset) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(700); }
         const q = new URLSearchParams(spec);
         if (!q.has('base_query')) q.set('base_query', '');
         if (!q.has('loc_query')) q.set('loc_query', '');
@@ -668,7 +673,7 @@ function amazonSpec(params) {
 // and page(board, n, state) -> { jobs: [{ id, title, url, location, postedAt }], more, name? }; the registry entry and the
 // harvest probe are both built from it. The second batch (hireclick ... gupy) is defined further down and pushed onto the same list.
 
-const FH_MAX = 30;                       // page cap for walked listings
+const FH_MAX = 200;                      // page cap for walked listings (was 30; each walk also stops at a page without new postings)
 /** All <a href> in a page as { href (absolute), text }. */
 function pageLinks(html, base) {
   const out = [];
@@ -1275,7 +1280,7 @@ fhDefs.push(
   { // Attrax (UK/EU corporate career sites): server-rendered vacancy tiles at <search page>?page=N. board = the search page URL (custom domains, so never auto-detected).
     id: 'attrax',
     hosts: [],
-    defaultPages: 12,
+    defaultPages: 200,
     boardId: () => null,
     async page(b, n, st) {
       const base = new URL(b);
@@ -1314,9 +1319,9 @@ for (const d of fhDefs) {
   freehireProviders[d.id] = {
     detect: (u) => { try { return d.boardId(String(u)) || null; } catch { return null; } },
     async fetch(slug, entry = {}) {
-      const maxPages = posInt(entry.max_pages, d.defaultPages ?? FH_MAX, 200), t0 = Date.now(), st = {}, out = [], seen = new Set();
+      const maxPages = posInt(entry.max_pages, d.defaultPages ?? FH_MAX, 1000), t0 = Date.now(), st = {}, out = [], seen = new Set();
       for (let n = 1; n <= maxPages; n++) {
-        if (n > 1) { if (Date.now() - t0 > BUDGET_MS) break; await sleep(d.delayMs ?? 300); }
+        if (n > 1) { if (Date.now() - t0 > budgetMs(entry)) break; await sleep(d.delayMs ?? 300); }
         const r = await d.page(String(slug), n, st);
         let fresh = 0;
         for (const j of r.jobs) if (!seen.has(j.id)) { seen.add(j.id); fresh++; const { id, ...job } = j; out.push({ department: '', ...job }); }

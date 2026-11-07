@@ -32,7 +32,8 @@ const obj = (v, key) => {
 
 /**
  * Loads <dir>/profile.json. Returns null when no folder is given. Throws ProfileError naming the key that is wrong.
- * Result: { dir, file, name, companiesFile, catalogueFile, userAgent, reviewDir, relevance: {keywords, negative, ssic_deeptech}, titleFilter, locationFilter, minFreeMb, jdKeepDays, dataDir, raw }
+ * Result: { dir, file, name, companiesFile, catalogueFile, userAgent, reviewDir, relevance: {keywords, negative, ssic_deeptech}, titleFilter, locationFilter, minFreeMb, jdKeepDays,
+ *   historyPruneDays, robots, robotsHosts, optOutHosts, optOutCleared, dataDir, raw }
  *   titleFilter / locationFilter are null unless the profile sets them (then they replace the filters in companies.json).
  */
 export function loadProfile(dirArg) {
@@ -54,6 +55,13 @@ export function loadProfile(dirArg) {
   if (crawl.min_free_mb !== undefined && (typeof crawl.min_free_mb !== 'number' || !(crawl.min_free_mb >= 0))) throw new ProfileError('crawl.min_free_mb must be a number >= 0');
   if (crawl.jd_keep_days !== undefined && (typeof crawl.jd_keep_days !== 'number' || !Number.isFinite(crawl.jd_keep_days) || crawl.jd_keep_days < 0)) throw new ProfileError('crawl.jd_keep_days must be a number >= 0');
   if (crawl.history_prune_days !== undefined && (typeof crawl.history_prune_days !== 'number' || !Number.isFinite(crawl.history_prune_days) || crawl.history_prune_days < 0)) throw new ProfileError('crawl.history_prune_days must be a number >= 0');
+  // The crawl policy (policy.mjs): robots.txt mode, per-host overrides, explicit opt-outs.
+  if (crawl.robots !== undefined && crawl.robots !== 'advisory' && crawl.robots !== 'strict') throw new ProfileError('crawl.robots must be "advisory" or "strict"');
+  const robotsHosts = obj(crawl.robots_hosts, 'crawl.robots_hosts');
+  for (const [h, m] of Object.entries(robotsHosts)) if (m !== 'advisory' && m !== 'strict') throw new ProfileError(`crawl.robots_hosts.${h} must be "advisory" or "strict"`);
+  if (crawl.opt_out_hosts !== undefined && (!Array.isArray(crawl.opt_out_hosts) || crawl.opt_out_hosts.some((o) => typeof o !== 'string' && !(o && typeof o === 'object' && typeof o.host === 'string')))) {
+    throw new ProfileError('crawl.opt_out_hosts must be a list of host names or { host, reason } objects');
+  }
   return {
     dir,
     file,
@@ -72,6 +80,10 @@ export function loadProfile(dirArg) {
     minFreeMb: crawl.min_free_mb ?? 0,
     jdKeepDays: crawl.jd_keep_days ?? 90,
     historyPruneDays: crawl.history_prune_days ?? 0,   // 0 = never prune (hoard first, reduce later)
+    robots: crawl.robots ?? 'advisory',
+    robotsHosts,
+    optOutHosts: crawl.opt_out_hosts ?? [],
+    optOutCleared: strList(crawl.opt_out_cleared, 'crawl.opt_out_cleared'),
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,
   };

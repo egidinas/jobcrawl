@@ -6,7 +6,7 @@
 //                    search page. Config in entry.list, documented at `paginatedListConfig` below.
 //   jsonld_direct    A company careers page: collect the posting links of the list page(s) (or of a job sitemap), fetch each posting
 //                    once (cached by URL with a TTL) and read its schema.org JobPosting JSON-LD (title, location, date, description,
-//                    hiring organisation). Config in the entry: slug = the list URL, optional pages, job_url_pattern, sitemap, max_jobs,
+//                    hiring organisation). Config in the entry: slug = the list URL, optional pages, job_url_pattern, sitemap, max_jobs (default 1000),
 //                    jsonld_only (a posting page without JobPosting markup is skipped instead of read by the generic page parser).
 //
 // The pure pieces (jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd) are exported so the tests run them on captured documents.
@@ -142,7 +142,7 @@ export const paginatedListConfig = `entry.list for provider "paginated_list":
   items        json: dot path to the item array (default: the first array in the document); html: a regular expression (flags gs), each match one item
   fields       { title, url, location, department, postedAt, description, company }: json dot paths ("*" joins arrays), html regexes with one capture group
   url_base     base for relative item URLs (default: the list URL)
-  page_size    items per page (default 20): a shorter page ends the walk;  max_pages (default 30);  delay_ms between pages (default 500)
+  page_size    items per page (default 20): a shorter page ends the walk;  max_pages (default 200);  delay_ms between pages (default 500)
   total        json: dot path to the total count (optional, ends the walk early)
   method, headers, body   request options; {page}/{offset} are substituted in url and body
   company_suffix          appended to the company field, e.g. "(via Board)" for a multi-employer board`;
@@ -153,7 +153,7 @@ export const genericProviders = {
     async fetch(_slug, entry = {}) {
       const list = entry.list;
       if (!list?.url || !/^(json|html)$/.test(list.kind ?? '')) throw new Error(`paginated_list: entry.list needs url and kind.\n${paginatedListConfig}`);
-      const first = num(list.first_page, 1), size = num(list.page_size, 20), maxPages = num(list.max_pages, 30), delay = num(list.delay_ms, 500);
+      const first = num(list.first_page, 1), size = num(list.page_size, 20), maxPages = num(list.max_pages, 200), delay = num(list.delay_ms, 500);
       const sub = (s, page) => String(s).replace(/\{page\}/g, page).replace(/\{offset\}/g, (page - first) * size);
       const out = new Map();
       let lastKeys = '';
@@ -182,16 +182,14 @@ export const genericProviders = {
   jsonld_direct: {
     detect: () => null,
     async fetch(slug, entry = {}) {
+      const started = Date.now();
       const pages = [slug, ...(entry.pages ?? [])].filter((u) => /^https?:/.test(u ?? ''));
       if (!pages.length) throw new Error('jsonld_direct: slug must be the careers list URL');
       const pattern = entry.job_url_pattern ? new RegExp(entry.job_url_pattern, 'i') : DEFAULT_JOB_PATTERN;
-      const origin = new URL(pages[0]).origin;
-      const { parseJobPage, loadSitemapCache, saveSitemapCache, robotsDisallow } = await core();
-      const disallow = await robotsDisallow(origin);
-      const allowed = (u) => { try { const p = new URL(u).pathname; return !disallow.some((d) => p.startsWith(d)); } catch { return false; } };
+      // robots.txt, Crawl-delay, logins and opt-outs are the crawl policy's (policy.mjs, installed over fetch by the crawl)
+      const { parseJobPage, loadSitemapCache, saveSitemapCache, pageBudget, markIncomplete } = await core();
       const found = new Map();   // url -> job (from the list page's JSON-LD) or null (to fetch)
       for (const p of pages) {
-        if (!allowed(p)) throw new Error(`jsonld_direct: ${p} is disallowed by robots.txt`);
         const html = await fetchText(p);
         for (const j of jobsFromJsonLd(html, p)) found.set(j.url, j);
         for (const u of jobLinks(html, p, pattern, entry.link_hosts)) if (!found.has(u)) found.set(u, null);
@@ -201,18 +199,22 @@ export const genericProviders = {
         const xml = await fetchText(entry.sitemap, { timeoutMs: 30000 });
         for (const m of xml.matchAll(/<loc>([^<]+)<\/loc>/g)) { const u = decode(m[1]).trim(); try { const p = new URL(u); if (pattern.test(p.pathname + p.search)) found.set(u, null); } catch {} }
       }
-      const urls = [...found.keys()].filter(allowed).slice(0, num(entry.max_jobs, 300));
+      const urls = [...found.keys()].slice(0, num(entry.max_jobs, 1000));
       // Posting pages are read once and kept for detail_ttl_hours (default 72), keyed by URL; the list decides what is live.
       const cacheKey = `jsonld_direct:${slug}`;
       const cache = loadSitemapCache(cacheKey), ttl = num(entry.detail_ttl_hours, 72) * 36e5, now = Date.now();
       const todo = urls.filter((u) => !found.get(u) && !(cache[u] && now - cache[u].t < ttl));
+      // Page budget (providers.mjs pageBudget): posting fetches stop starting before the board's fetch budget runs out and the cache keeps
+      // what was read; the crawl makes an incomplete board due again in the next cycle.
+      const budget = pageBudget(entry, started);
       const workers = Math.min(3, Math.max(1, num(entry.page_concurrency, 2)));
       let i = 0;
       await Promise.all(Array.from({ length: workers }, async () => {
         while (i < todo.length) {
+          if (budget.spent()) break;
           const u = todo[i++];
           try {
-            const html = await fetchText(u, { timeoutMs: 25000 });
+            const html = await fetchText(u, { timeoutMs: budget.pageTimeout(25000) });
             const job = jobsFromJsonLd(html, u)[0] ?? (entry.jsonld_only ? null : parseJobPage(html, u));   // jsonld_only: pages without JobPosting markup are not postings
             cache[u] = { t: now, job: job?.title ? { ...job, url: u } : null };
           } catch { if (!cache[u]) cache[u] = { t: now, job: null }; }
@@ -222,7 +224,8 @@ export const genericProviders = {
       for (const k of Object.keys(cache)) if (!found.has(k)) delete cache[k];
       saveSitemapCache(cacheKey, cache);
       const orgPat = entry.org_filter ? new RegExp(entry.org_filter, 'i') : null;
-      return urls.map((u) => found.get(u) ?? cache[u]?.job).filter((j) => j?.title && (!orgPat || orgPat.test(j.organization ?? '')));
+      const out = urls.map((u) => found.get(u) ?? cache[u]?.job).filter((j) => j?.title && (!orgPat || orgPat.test(j.organization ?? '')));
+      return markIncomplete(out, Math.max(0, todo.length - i));
     },
   },
 };

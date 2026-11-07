@@ -8,7 +8,7 @@
 // below resolves each to its RMK host and counts the job pages in that host's sitemap, so one tenant costs three requests (redirect,
 // robots.txt, sitemap; a sitemap index adds its children) and no job page is fetched. A tenant becomes a `sitemap` entry
 // (sitemap.xml + url_pattern /job/), the route the robots.txt files of RMK sites allow; their /services/ search API is often disallowed.
-import { parseRobots, robotsAllows } from './profiler/net.mjs';
+import { parseRobots, robotsAllows, robotsModeFor, auditRobots } from './policy.mjs';
 import { UA } from './useragent.mjs';
 
 const DC_HOST = /^career\d*\.successfactors\.(?:eu|com)$/i;
@@ -48,7 +48,8 @@ const locs = (xml) => [...String(xml).matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)]
 /**
  * Resolve a tenant to its RMK host and list the job pages of that host's sitemap.
  * Returns { host, jobs: [{ title, location, url }], total }. Throws "HTTP 404 ..." when the tenant has no RMK site (an absence for
- * cc-harvest), and an error naming robots.txt when the site disallows its sitemap or job pages for our user agent.
+ * cc-harvest). robots.txt follows the crawl policy (policy.mjs): in strict mode a disallowed sitemap is an error naming robots.txt and
+ * disallowed job pages are left out; in advisory mode (the default) both are read and the disallowed URLs are logged.
  */
 export async function rmkProbe(slug, { fetchImpl = globalThis.fetch, ua = UA, token = 'jobcrawl', maxSitemaps = 20, timeoutMs = 20000 } = {}) {
   const get = async (url) => {
@@ -63,7 +64,14 @@ export async function rmkProbe(slug, { fetchImpl = globalThis.fetch, ua = UA, to
 
   const robotsRes = await get(`${origin}/robots.txt`);
   const robots = robotsRes.ok ? parseRobots(await robotsRes.text(), token) : { rules: [] };
-  if (!robotsAllows(robots, '/sitemap.xml')) throw new Error(`robots.txt of ${host} disallows /sitemap.xml`);
+  const strict = robotsModeFor(host) === 'strict';
+  const allowed = (path, url) => {
+    if (robotsAllows(robots, path)) return true;
+    if (strict) return false;
+    auditRobots(url, 'rmk');
+    return true;
+  };
+  if (!allowed('/sitemap.xml', `${origin}/sitemap.xml`)) throw new Error(`robots.txt of ${host} disallows /sitemap.xml`);
 
   const jobs = [], seen = new Set();
   const queue = [`${origin}/sitemap.xml`];
@@ -81,7 +89,7 @@ export async function rmkProbe(slug, { fetchImpl = globalThis.fetch, ua = UA, to
     for (const loc of locs(xml)) {
       const j = rmkJobFromUrl(loc);
       if (!j || seen.has(j.url) || new URL(j.url).hostname.toLowerCase() !== host) continue;
-      if (!robotsAllows(robots, new URL(j.url).pathname)) continue;
+      if (!allowed(new URL(j.url).pathname, j.url)) continue;
       seen.add(j.url);
       jobs.push(j);
     }

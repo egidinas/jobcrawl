@@ -66,13 +66,14 @@ job-board URL. The minimal profile polls three boards:
   `crawler/providers-generic.mjs`). `provider: "jsonld_direct"` reads a company careers page: `slug` = the list URL (plus `pages`), the
   posting links matching `job_url_pattern` (default: job/stellen/career-like paths) are fetched once per `detail_ttl_hours` (72) and their
   schema.org JobPosting JSON-LD gives title, location, date and description; `sitemap` is the fallback when the list page links nothing;
-  `max_jobs` caps the postings read (300).
+  `max_jobs` caps the postings read (default 1000); a first fill that runs out of the page budget continues in the next cycle.
 * `node crawler/profiler.mjs run --profile <dir> --input sites.jsonl --out report.jsonl` writes these entries for you: for each careers
   URL or website it tries a known ATS, JobPosting JSON-LD / a job sitemap / an RSS feed, the page's repeated link group, and optionally
   (`--browser`, `--llm <local llama-server>`) the page's JSON API and a local model, and keeps a configuration only when the provider's
   own fetch() then returns the postings over plain HTTP. `splice` appends the verified entries with `probation: true` and a `profile`
   baseline (`expected_min`/`expected_max`); the crawl flags `reprofile_due` in `source-health.json` when a board falls under it for 3
-  cycles, and `reprofile-queue` turns the flags into profiler input. Robots.txt, one request per second per host and ~10 requests per site.
+  cycles, and `reprofile-queue` turns the flags into profiler input. The crawl policy applies (README, Responsible crawling: robots.txt
+  advisory or strict, Crawl-delay, no login pages, opt-outs flagged), plus one request per second per host and ~10 requests per site.
 * `timeout_ms` is the fetch budget of one entry (default 35000, at most 600000): raise it for a huge board that pages slowly, e.g. a
   Workday tenant with thousands of rows (`"timeout_ms": 180000`).
 * `enabled: false` skips an employer without removing it.

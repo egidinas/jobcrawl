@@ -32,6 +32,7 @@ import { loadProfile } from './profile.mjs';
 import { useRelevance } from './relevance.mjs';
 import { setUserAgent } from './useragent.mjs';
 import { successfactorsTenant, rmkProbe, rmkEntryFields } from './rmk.mjs';
+import { configurePolicy, policyFromProfile, installGuard } from './policy.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -48,6 +49,9 @@ const DATA = pathResolve(opt('data') ?? PROFILE?.dataDir ?? join(HERE, 'data'));
 const STATE_DIR = pathResolve(opt('state-dir', process.env.CC_HARVEST_DIR ?? join(DATA, 'cc-harvest')));
 const SLUGS_DIR = pathResolve(opt('slugs-dir', join(STATE_DIR, 'slugs')));
 const IDX_DIR = pathResolve(opt('idx-dir', join(STATE_DIR, 'idx')));
+// the crawl policy (policy.mjs) around every probe request: no login pages, opt-outs, 429/503 cooldowns, robots advisory or strict
+configurePolicy(policyFromProfile(PROFILE, DATA));
+installGuard();
 const COMPANIES = pathResolve(opt('companies', PROFILE?.companiesFile ?? join(HERE, 'companies.json')));
 const OUT_FILE = pathResolve(opt('out', COMPANIES));
 const CATALOGUE = pathResolve(opt('catalogue', PROFILE?.companiesCatalogue ?? join(HERE, '..', 'site', 'content', 'companies.json')));
