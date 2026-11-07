@@ -576,7 +576,9 @@ async function scan() {
       fresh.push({ ...row, seniority: compiledFilters.seniorityMatcher(normTitle), posted: (j.postedAt ?? '').slice(0, 10) });
     }
     if (isProb && !flag('dry-run')) {
-      probationCycle(pst, { ok: true, total: res.jobs.length, relevant: pc.relevant, irrelevant: pc.irrelevant, samples: pc.samples, protectedNow, now: date });
+      const employerMismatch = companies[i].employer_mismatch ? String(companies[i].employer_mismatch) : '';
+      probationCycle(pst, { ok: true, total: res.jobs.length, relevant: pc.relevant, irrelevant: pc.irrelevant, samples: pc.samples, protectedNow, now: date, employerMismatch });
+      if (employerMismatch) problems.push(`EMPLOYER MISMATCH: ${name} stays on probation (${employerMismatch})`);
       probationDirty = true;
       if (pst.state === 'disabled') problems.push(`PROBATION: ${name} disabled - ${pst.reason}`);
       else if (probGated && pst.state === 'promoted') problems.push(`PROBATION: ${name} promoted (${pc.relevant} relevant roles)`);

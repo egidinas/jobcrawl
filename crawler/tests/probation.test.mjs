@@ -89,4 +89,14 @@ ok('Singapore strict gate', () => {
   assert.ok(strictVerdict(job('ACME PTE. LTD.', 'Accountant', { ssic: ['56101'] }), idx));                      // restaurant
   assert.equal(strictVerdict(job('ACME PTE. LTD.', 'Accountant'), idx, 'off'), null);                           // per-entry override
 });
+ok('an entry with employer_mismatch is never promoted, however many relevant roles it shows; a cleared mismatch promotes', () => {
+  const st = newProbation();
+  cyc(st, { total: 5, relevant: 3, irrelevant: 2, employerMismatch: 'board says "Stadtwerke Halle GmbH"' });
+  assert.equal(st.state, 'probation');
+  assert.equal(st.employer_mismatch, 'board says "Stadtwerke Halle GmbH"');
+  cyc(st, { total: 5, relevant: 3, irrelevant: 2 });
+  assert.equal(st.state, 'promoted');
+  assert.equal(st.employer_mismatch, undefined);
+});
+
 console.log(`${n} tests passed`);
