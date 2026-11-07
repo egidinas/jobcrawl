@@ -3,7 +3,7 @@
 // so the EURES boards are read here, one board at a time at that gap, and not in the crawl cycle. Each board's answer goes to
 // <data>/eures-lane/<hash>.json.gz; the crawl (profile key crawl.eures_lane: true) reads the newest answer instead of calling EURES.
 //
-//   node crawler/eures-lane.mjs --profile <dir> [--data <dir>] [--minutes 25] [--min-age-hours 12] [--log <file>]
+//   node crawler/eures-lane.mjs --profile <dir> [--data <dir>] [--minutes 25] [--min-age-hours 12] [--board-minutes 10] [--log <file>]
 //
 // Each run takes the enabled EURES boards of the companies file, oldest answer first (none = oldest), skips those answered within
 // --min-age-hours, and reads boards until --minutes is spent (0 = until every board is done), so a scheduled run every 30 minutes keeps
@@ -43,7 +43,7 @@ if (existsSync(lockFile) && lockIsActive(readFileSync(lockFile, 'utf8'), Date.no
 writeFileSync(lockFile, JSON.stringify({ pid: process.pid, started: new Date().toISOString() }));
 process.on('exit', () => { try { unlinkSync(lockFile); } catch { /* gone */ } });
 
-const minutes = Number(opt('minutes', 25)), minAgeH = Number(opt('min-age-hours', 12));
+const minutes = Number(opt('minutes', 25)), minAgeH = Number(opt('min-age-hours', 12)), boardMinutes = Math.min(10, Math.max(1, Number(opt('board-minutes', 10))));
 const cfg = JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8'));
 const boards = (cfg.tracked_companies ?? []).filter((c) => c.enabled !== false && c.provider === 'eures' && (c.slug || c.careers_url));
 const slugOf = (c) => c.slug ?? eures.detect(c.careers_url);
@@ -58,7 +58,7 @@ for (const { c, age } of queue) {
   if (!slug) { failed++; say(`FAIL ${c.name}: no EURES slug`); continue; }
   const b0 = Date.now();
   try {
-    const jobs = await eures.fetch(slug, { ...c, timeout_ms: Math.max(entryTimeoutMs(c), 600000) });
+    const jobs = await eures.fetch(slug, { ...c, timeout_ms: Math.max(entryTimeoutMs(c), boardMinutes * 60000) });
     const cut = !!jobs.incomplete;
     writeLaneAnswer(LANE, slug, { name: c.name, slug, at: new Date().toISOString(), n: jobs.length, incomplete: cut, jobs: [...jobs] });
     ok++; jobsTotal += jobs.length; if (cut) partial++;
