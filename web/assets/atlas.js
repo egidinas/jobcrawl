@@ -1392,8 +1392,9 @@ const nameShards = new Map();
 // a record's title and company, from its names shard (loaded when first needed; the card fills in when it arrives)
 function tlNamesOf(r) { const s = Math.floor(r / TL.shard), k = String(s).padStart(3, '0'); if (!nameShards.has(k)) nameShards.set(k, fetch(dataUrl('match/role-timeline-names-' + k + '.json')).then((x) => (x.ok ? x.json() : [])).catch(() => [])); return nameShards.get(k).then((a) => a[r - s * TL.shard] || ['', '']); }
 const isoWeek = (d) => { const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7) + 3); const y = new Date(Date.UTC(t.getUTCFullYear(), 0, 4)); return 1 + Math.round(((t - y) / 864e5 - 3 + ((y.getUTCDay() + 6) % 7)) / 7); };
-// a time (minutes after t0) as a date, with the time of day when asked; UTC, like the data
-const tlDate = (t, time = false) => new Intl.DateTimeFormat(isDe() ? 'de-DE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', ...(time ? { hour: '2-digit', minute: '2-digit' } : {}), timeZone: 'UTC' }).format(new Date(TL.t0 + t * 60000));
+// a time (minutes after t0) as a date, with the time of day when asked. A time of day is Berlin time (Europe/Berlin,
+// summer time included, zone shown: 'CET' / 'MEZ'); a date alone stays the UTC day, like the day/week/month steps
+const tlDate = (t, time = false) => new Intl.DateTimeFormat(isDe() ? 'de-DE' : 'en-GB', { day: 'numeric', month: 'short', year: 'numeric', ...(time ? { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short', timeZone: 'Europe/Berlin' } : { timeZone: 'UTC' }) }).format(new Date(TL.t0 + t * 60000));
 // the scrubber's label: "26 Oct 2026, 14:00" (rounds), "26 Oct 2026" (days), "Week 44, 2026", "October 2026"
 const tlLabel = (t) => { const d = new Date(TL.t0 + t * 60000), k = TL.kind; return k === 'week' ? `${pick('Week', 'KW')} ${isoWeek(d)}, ${d.getUTCFullYear()}` : k === 'month' ? new Intl.DateTimeFormat(isDe() ? 'de-DE' : 'en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(d) : tlDate(t, k === 'round'); };
 const tlDates = (e) => `${pick('first seen', 'erstmals gesehen')} ${tlDate(e.fa)} · ${e.la >= TL.end ? pick('still listed', 'noch ausgeschrieben') : `${pick('last seen', 'zuletzt gesehen')} ${tlDate(e.la)}`}`;
