@@ -161,7 +161,7 @@ export function noFetchReason(url) {
   try { u = new URL(url); } catch { return null; }
   const host = u.hostname.toLowerCase();
   if (u.username || u.password) return 'credentials in the URL';
-  if (hostMatch(host, 'deeplist.tech') && /^\/(?:api|login|log-in|signin|sign-in|signup|sign-up|auth|account|dashboard)(?:[/?#.]|$)/i.test(u.pathname)) {
+  if (hostMatch(host, 'deeplist.tech') && /^\/(?:api|login|log-in|signin|sign-in|signup|sign-up|auth|account|dashboard|my|admin|submit)(?:[/?#.]|$)/i.test(u.pathname)) {
     return 'deeplist.tech /api and login are never used';
   }
   let segs = [];

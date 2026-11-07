@@ -183,6 +183,8 @@ test('never log in: login URLs are never requested, a redirect into a login page
   } finally { await s.close(); }
   assert.match(noFetchReason('https://deeplist.tech/api/companies?page=2'), /deeplist\.tech \/api and login are never used/);
   assert.match(noFetchReason('https://www.deeplist.tech/login'), /deeplist/);
+  assert.match(noFetchReason('https://deeplist.tech/my/saved'), /deeplist/, 'members area');
+  assert.match(noFetchReason('https://deeplist.tech/sign-in?next=/companies/x'), /deeplist|login/);
   assert.equal(noFetchReason('https://deeplist.tech/companies/acme'), null, 'public pages of deeplist.tech are not covered by the rule');
   assert.match(noFetchReason('https://user:pw@jobs.example.com/x'), /credentials in the URL/);
   assert.equal(noFetchReason('https://jobs.example.com/job/Login-Specialist-123'), null, 'a job titled Login is not a login page');

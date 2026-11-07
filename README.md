@@ -284,7 +284,8 @@ local server.
   requested again. It does not bypass paywalls or CAPTCHAs and adds no credentials of its own to a request, with one exception: the
   USAJOBS provider sends the API key the operator was issued (see USAJOBS below). A few career sites hand every anonymous visitor a
   session token in the page itself (Cornerstone, Comeet, the BITE listing definition); those providers use it the way the page does.
-* **deeplist.tech**: its `/api` and its login and account pages are never requested.
+* **deeplist.tech**: its `/api`, its sign-in and login pages and its members, admin and submit areas (`/my`, `/admin`, `/submit`) are never
+  requested (the owner's account there is not used for crawling).
 * **Explicit opt-outs are respected.** Hosts listed in `crawl.opt_out_hosts` (for example a site whose terms forbid automated access to
   its job data) are never requested; terms pages are not parsed automatically, so such a host is added by hand. A response carrying the
   TDM reservation header (`tdm-reservation: 1`, W3C TDMRep) flags its host in `<data>/optout-flags.json`, the cycle's notes name it,
