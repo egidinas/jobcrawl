@@ -678,58 +678,6 @@ export const providers = {
     },
   },
 
-  // Oracle Recruiting Cloud (Fusion HCM candidate experience): public REST finder. slug = the career-site URL
-  // https://<host>.fa.<region>.oraclecloud.com/hcmUI/CandidateExperience/<lang>/sites/<siteNumber>. Approach as in
-  // career-ops providers/oraclecloud.mjs.
-  oraclecloud: {
-    detect: (u) => (/^https:\/\/[\w-]+\.fa\.(?:[\w-]+\.)?(?:ocs\.)?oraclecloud\d*\.com\//i.test(u) ? u.split('#')[0] : null),
-    async fetch(slug) {
-      const u = new URL(slug);
-      const segs = u.pathname.split('/').filter(Boolean);
-      const lang = segs[segs.indexOf('CandidateExperience') + 1] || 'en';
-      const site = segs[segs.indexOf('sites') + 1] || 'CX_1';
-      const out = [];
-      for (let offset = 0; offset < 5000; offset += 200) {
-        if (offset) await new Promise((r) => setTimeout(r, 250));
-        const finder = `findReqs;siteNumber=${site},limit=200,sortBy=POSTING_DATES_DESC,offset=${offset}`;
-        const d = await get(`${u.origin}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=${encodeURIComponent('requisitionList.workLocation,requisitionList.secondaryLocations')}&finder=${encodeURIComponent(finder)}&limit=200&offset=${offset}`);
-        const item = d.items?.[0] ?? {};
-        const list = item.requisitionList ?? [];
-        for (const r of list) {
-          out.push({
-            title: r.Title ?? '',
-            url: r.ExternalURL || `${u.origin}/hcmUI/CandidateExperience/${lang}/sites/${site}/job/${r.Id}`,
-            location: r.PrimaryLocation || '',
-            postedAt: /^\d{4}-\d{2}-\d{2}/.test(r.PostedDate ?? '') ? r.PostedDate.slice(0, 10) : '',
-            description: plain(r.ShortDescriptionStr ?? ''),
-          });
-        }
-        if (!list.length || offset + 200 >= (item.TotalJobsCount ?? 0)) break;
-      }
-      return out.filter((j) => j.title);
-    },
-  },
-
-  // join.com: the company page embeds its job list as __NEXT_DATA__ JSON. No publish date on the list.
-  // Approach as in career-ops providers/join.mjs.
-  join: {
-    detect: (u) => u.match(/join\.com\/companies\/([\w-]+)/)?.[1],
-    async fetch(slug) {
-      const out = [];
-      let pages = 1;
-      for (let page = 1; page <= Math.min(pages, 50); page++) {
-        const html = await get(`https://join.com/companies/${slug}${page > 1 ? `?page=${page}` : ''}`, { json: false });
-        const raw = html.match(/<script[^>]+__NEXT_DATA__[^>]*>([\s\S]*?)<\/script>/)?.[1];
-        const st = raw ? JSON.parse(raw)?.props?.pageProps?.initialState : null;
-        if (!st?.jobs?.items) throw new Error('join: unexpected page structure');
-        pages = st.jobs.pagination?.pageCount || 1;
-        for (const j of st.jobs.items) out.push({ title: j.title ?? '', url: `https://join.com/companies/${st.company?.domain || slug}/jobs/${j.idParam}`, location: j.city?.cityName ?? '', postedAt: '' });
-        if (page > 1) await new Promise((r) => setTimeout(r, 200));
-      }
-      return out;
-    },
-  },
-
   // softgarden: server-rendered widget listing every posting with its date (M/D/Y or D.M.Y). Approach as in
   // career-ops providers/softgarden.mjs. slug = the tenant host, e.g. acme.softgarden.io.
   // Not on the Frontend API v3 (api.softgarden.io/api/rest/v3/frontend/jobslist/{channelId}, one job with its HTML jobAdText at
@@ -1248,102 +1196,6 @@ export const providers = {
         }
       }
       return '';
-    },
-  },
-
-  concludis: {
-    detect: (u) => {
-      const m = u.match(/(?:careers\.toptica\.com|[\w-]+\.concludis\.de)/i);
-      return m ? u : null;
-    },
-    async fetch(slug) {
-      const rootUrl = slug.startsWith('http') ? slug : `https://${slug}`;
-      const rootRes = await fetch(rootUrl, {
-        headers: { 'user-agent': UA },
-        redirect: 'follow',
-        signal: AbortSignal.timeout(20000),
-      });
-      if (!rootRes.ok) throw new Error(`HTTP ${rootRes.status} ${slug}`);
-      const html = await rootRes.text();
-      const matches = [...html.matchAll(/cJobboard\.openJob\(['"]([^'"]+)['"]\)/g)].map((m) => m[1]);
-      const urls = [...new Set(matches)];
-      const out = [];
-      for (let i = 0; i < urls.length; i += 4) {
-        const batch = urls.slice(i, i + 4);
-        const results = await Promise.all(
-          batch.map(async (u) => {
-            try {
-              const res = await fetch(u, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
-              if (!res.ok) return null;
-              const jobHtml = await res.text();
-              return parseJobPage(jobHtml, u);
-            } catch { return null; }
-          })
-        );
-        for (const r of results) if (r && r.title) out.push(r);
-      }
-      return out;
-    },
-    async fetchDescription(job) {
-      return job.description ?? '';
-    },
-  },
-
-  factorial: {
-    detect: (u) => {
-      const m = u.match(/https?:\/\/([\w-]+)\.factorial\.(?:it|es|de|com|io)/i);
-      return m ? m[1] : null;
-    },
-    async fetch(slug) {
-      const host = slug.includes('.') ? slug : `${slug}.factorial.it`;
-      let urls = [];
-      try {
-        const smRes = await fetch(`https://${host}/sitemap.xml`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(10000) });
-        if (smRes.ok) {
-          const smText = await smRes.text();
-          urls = [...new Set([...smText.matchAll(/<loc>([^<]*job_posting\/[^<]+)<\/loc>/gi)].map((m) => m[1]))];
-        }
-      } catch {}
-      if (!urls.length) {
-        const res = await fetch(`https://${host}/`, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
-        if (res.ok) {
-          const html = await res.text();
-          const regex = /<a[^>]+href=['"]([^'"]*job_posting\/[^'"]+)['"][^>]*>/gi;
-          let m;
-          const set = new Set();
-          while ((m = regex.exec(html)) !== null) {
-            set.add(m[1].startsWith('http') ? m[1] : `https://${host}${m[1]}`);
-          }
-          urls = [...set];
-        }
-      }
-      const out = [];
-      for (let i = 0; i < urls.length; i += 4) {
-        const batch = urls.slice(i, i + 4);
-        const results = await Promise.all(
-          batch.map(async (u) => {
-            try {
-              const r = await fetch(u, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(15000) });
-              if (!r.ok) return null;
-              const t = await r.text();
-              const title = t.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]+>/g, '').trim() ||
-                            t.match(/<title>([^<]*?)<\/title>/i)?.[1]?.trim() || '';
-              const locMatch = t.match(/(?:Fino Mornasco|Lisboa|Lomazzo|Milan|Rome|Boulder|London|Munich|Madrid|Paris)/i);
-              let loc = locMatch ? locMatch[0] : '';
-              if (/Fino Mornasco|Lomazzo/i.test(loc)) loc = `${loc}, Italy`;
-              else if (/Lisboa/i.test(loc)) loc = 'Lisbon, Portugal';
-              const descIdx = t.indexOf('<h1');
-              const desc = descIdx !== -1 ? t.slice(descIdx, descIdx + 1500) : '';
-              return { title, url: u, location: loc, postedAt: '', description: plain(desc) };
-            } catch { return null; }
-          })
-        );
-        for (const r of results) if (r && r.title) out.push(r);
-      }
-      return out;
-    },
-    async fetchDescription(job) {
-      return job.description ?? '';
     },
   },
 
@@ -2606,19 +2458,29 @@ export const providers = {
       // A page with neither is a fetch failure (counted by source health and retried next cycle), never "0 jobs": the old code
       // returned [] and 15 of 38 live boards were reported empty for weeks (audit 2026-11-06). Pages beyond the first follow
       // pagination.pageCount (?page=N).
-      const items = [];
+      // A board that says it has postings but lists none is a failure too: pageCount > 0, or a facet (category, place) counting
+      // postings, with no item is a parser that no longer fits. An empty board says pageCount 0 and has no facet counts (7 of 36
+      // captured company pages, 2026-11-07). pagination.total is not used: it is one higher than the listed items on most boards.
+      const items = [], seen = new Set();
       let pages = 1;
       for (let page = 1; page <= Math.min(pages, 50); page++) {
+        if (page > 1) await new Promise((r) => setTimeout(r, 200));
         const url = `https://join.com/companies/${slug}${page > 1 ? `?page=${page}` : ''}`;
         const html = await get(url, { json: false });
         const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
         if (!nextMatch) throw new Error('join: no __NEXT_DATA__ on the company page (page structure changed?)');
         const pp = JSON.parse(nextMatch[1]).props?.pageProps;
         const jobs = pp?.pageData?.jobs ?? pp?.initialState?.jobs;
-        if (!jobs?.items) throw new Error('join: unexpected page structure (no jobs.items in pageData or initialState)');
-        pages = jobs.pagination?.pageCount || 1;
-        items.push(...jobs.items);
-        if (page > 1) await new Promise((r) => setTimeout(r, 200));
+        if (!Array.isArray(jobs?.items)) throw new Error('join: unexpected page structure (no jobs.items in pageData or initialState)');
+        const pageCount = Number(jobs.pagination?.pageCount) || 0;
+        if (page === 1 && !jobs.items.length) {
+          const facetCount = (jobs.aggregations ?? []).reduce((t, a) => t + (a?.values ?? []).reduce((s, v) => s + (Number(v?.count) || 0), 0), 0);
+          if (pageCount > 0 || facetCount > 0) throw new Error(`join: the page reports postings (pageCount ${pageCount}, facet count ${facetCount}) but lists none`);
+        }
+        pages = pageCount || 1;
+        let fresh = 0;
+        for (const j of jobs.items) { const k = j.idParam || j.id; if (k != null && seen.has(k)) continue; if (k != null) seen.add(k); items.push(j); fresh++; }
+        if (page > 1 && !fresh) break;   // a page that repeats the previous one ends the walk
       }
       return items.map((j) => {
         const idParam = j.idParam || j.id;
