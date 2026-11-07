@@ -336,6 +336,34 @@ export function successfactorsTileJobs(html, origin) {
   });
 }
 
+/** ReachMee list page -> rows. The header ids name the columns (col-1 title, col-9 place, col-6 deadline); a missing header falls
+ * back to the first column for the title and to a header text that reads like a place (Ort, Sted, Place, Plats, Paikka, Location). */
+export function reachmeeRows(html, origin) {
+  const table = html.match(/<table[^>]*id=['"]jobsTable['"][\s\S]*?<\/table>/i)?.[0] ?? '';
+  if (!table) return [];
+  const heads = [...(table.match(/<thead[\s\S]*?<\/thead>/i)?.[0] ?? '').matchAll(/<th([^>]*)>([\s\S]*?)<\/th>/gi)].map((m) => ({ id: m[1].match(/id=['"]([^'"]+)/)?.[1] ?? '', text: plain(m[2]) }));
+  const col = (id, rx) => { const i = heads.findIndex((h) => h.id === id); return i >= 0 ? i : heads.findIndex((h) => rx.test(h.text)); };
+  const iTitle = Math.max(0, col('col-1', /^(stilling|tjänst|position|job|titel|title|befattning)/i));
+  const iPlace = col('col-9', /^(ort|sted|place|plats|paikka|location|arbetsort|kommune)/i);
+  const iDue = col('col-6', /(frist|sista|deadline|hakuaika|ansök)/i);
+  const out = [];
+  for (const row of (table.match(/<tbody[\s\S]*?<\/tbody>/i)?.[0] ?? '').split(/<tr[^>]*>/i).slice(1)) {
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1]);
+    const a = (cells[iTitle] ?? '').match(/<a[^>]+href=['"]([^'"]+job_id=\d+[^'"]*)['"][^>]*>([\s\S]*?)<\/a>/i);
+    if (!a) continue;
+    const href = decode(a[1]);
+    const due = (cells[iDue] ?? '').match(/(\d{4}-\d{2}-\d{2})/)?.[1] ?? '';
+    out.push({
+      title: plain(a[2]).trim(),
+      url: /^https?:/i.test(href) ? href : new URL(href, origin).href,
+      location: iPlace >= 0 ? plain(cells[iPlace] ?? '').replace(/\s+/g, ' ').trim() : '',
+      postedAt: '',
+      ...(due ? { validThrough: due } : {}),
+    });
+  }
+  return out;
+}
+
 export const providers = {
   greenhouse: {
     detect: (u) => u.match(/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([\w-]+)/)?.[1],
@@ -1892,6 +1920,31 @@ export const providers = {
         await new Promise((r) => setTimeout(r, 200));
       }
       return out;
+    },
+  },
+
+  // ReachMee (Nordic ATS, 159 of the profiler's unreadable holdouts on 2026-11-06): a career page embeds
+  // https://webNNN.reachmee.com/ext/<installation>/<customer>/main?site=<n>&validator=<v>&lang=<xx>; the validator is a public embed
+  // parameter (the same for every visitor) without which the page answers 404. The list page is server-rendered: a table whose header
+  // ids name the columns (col-1 title, col-9 place, col-6 application deadline, others department / business area) and whose rows
+  // link /ext/<inst>/<cust>/job?...&job_id=<n>. The job page holds the ad in .jobad-body (lazy description). Measured on Andøya
+  // Space (I010/2575) on 2026-11-07. slug = the main URL as embedded (rmpage/rmjob parameters are dropped).
+  reachmee: {
+    detect: (u) => {
+      const m = String(u).match(/https?:\/\/web\d+\.reachmee\.com\/ext\/I\d+\/\d+\/main\?[^"'<>\s]*validator=[^"'<>\s&]+[^"'<>\s]*/i);
+      return m ? m[0].replace(/&amp;|&#0?38;/g, '&').replace(/&rm(page|job)=[^&]*/g, '') : null;
+    },
+    async fetch(slug) {
+      const u = new URL(String(slug).replace(/&amp;/g, '&'));
+      if (!/^web\d+\.reachmee\.com$/i.test(u.hostname) || !/\/ext\/I\d+\/\d+\/main$/i.test(u.pathname) || !u.searchParams.get('validator')) throw new Error(`reachmee: bad slug "${slug}"`);
+      u.searchParams.delete('rmpage'); u.searchParams.delete('rmjob');
+      const html = await get(u.href, { json: false, timeoutMs: 25000 });
+      return reachmeeRows(html, u.origin);
+    },
+    async fetchDescription(job) {
+      const html = await get(job.url, { json: false, timeoutMs: 25000 });
+      const body = html.match(/<div[^>]+class="[^"]*jobad-body[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/i)?.[1] ?? html.match(/class="[^"]*jobad-body[^"]*"[^>]*>([\s\S]*)/i)?.[1] ?? '';
+      return plain(body);
     },
   },
 

@@ -1,0 +1,238 @@
+
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta content="width=device-width,initial-scale=1" name="viewport">
+    <meta property="og:title" content="">
+    <meta property="og:url" content="https://web103.reachmee.com/ext/I010/2575/main?site=6&validator=FIXTUREVALIDATOR&lang=NO">
+    <meta property="og:description" content="">
+    <meta property="og:image" content="">
+    <meta property="og:type" content="website">
+    <link rel="stylesheet" type="text/css" href="/styles/app.css?v=master-20261103.1-">
+    <script>document.documentElement.className += (window.self == window.top ? "" : " in-iframe");</script>
+                <link rel="stylesheet" href="/styles/V2-2575_6.css?v=4">
+    
+    <title>Andøya Space | Ledige stillinger hos Andøya Space</title>
+    <script src="/js/jquery-1.7.2.min.js"></script>
+<link rel="stylesheet" type="text/css" media="all" href="/styles/fontv2/css/font-awesome.min.css?ver=3.0">
+<script>!function(b,c,f,g,h,i,j){b[h]||(b[h]=function(){(b[h].q=b[h].q||[]).push(arguments)},b[h].q=b[h].q||[],i=c.createElement(f),j=c.getElementsByTagName(f)[0],i.async=1,i.src=g,j.parentNode.insertBefore(i,j))}(window,document,"script","https://cdn.ontame.io/661120.js ", "ontame");</script>        <script src="/js/rm.utils.js?v=0.05"></script>
+<script src="/js/bootstrap.min.js"></script>
+<script src="/js/jquery.dataTables.min.js?ver=1.0"></script><script src="/js/jquery.tagFilterWidget.v2.min.js?ver=0.1"></script>
+
+<script src="/js/js.cookie.min.js?v=1.0"></script>
+<script src="/js/jquery.form.min.js?ver=1.0"></script>
+    <script src="/js/validate/jquery.validate.min.js?ver=1.1"></script>
+    <script src="/js/validate/additional-methods.min.js?ver=1.1"></script>
+    <script>
+jQuery.validator.addMethod("isSsnDate", function(value, element) {
+    if(value === ''){
+        return true;
+    }
+    var year = value.substring(0, 4);
+    var month = value.substring(4, 6);
+    var day = value.substring(6, 8);
+
+    year = parseInt(year);
+    month = parseInt(month);
+    day = parseInt(day);
+
+    var date = new Date(year, (month-1), day);
+    var now = new Date();
+
+    if ((date.getFullYear() === year) &&
+        (date.getMonth() + 1 === month) &&
+        (date.getDate() === day) &&
+        (date < now) &&
+        (year>1899))
+    {
+        return true;
+    }
+    return false;
+});
+
+$.extend(jQuery.validator.messages, {
+    required: " Oppgaven er obligatorisk.",
+    email: "E-posten må inneholde @ og et domene (for eksempel: min@epost.no).",
+    digits: " Bare sifre er tillatt.",
+    equalTo: "Passordet matcher ikke",
+    pattern: "Passordet er ikke sterkt nok",
+    accept: "Feil filtype",
+    remote: "Den oppgitte e-postadressen er allerede i bruk. Vennligst skriv en annen e-post eller logg inn hvis du allerede er registrert.",
+    minlength: "Vennligst skriv inn en gyldig personnummer ({0} tegn)",
+    maxlength: "Vennligst skriv inn en gyldig personnummer ({0} tegn)",
+    isSsnDate: "Please enter SSN with valid date numbers"
+});
+</script>        <script>
+            function iframeResize() {
+                var maxMargin = 100;
+
+                var bodyHeight = document.body.scrollHeight;
+                var bodyHeightWithMargin = document.documentElement.scrollHeight;
+                var height = bodyHeight;
+
+                if (bodyHeightWithMargin <= bodyHeight + maxMargin) {
+                    height = bodyHeightWithMargin;
+                }
+
+                if (height > 0) {
+                    parent.postMessage('resize::'+height,'*');
+                }
+            }
+            $(document).ready(function() {
+                if (window.location !== window.parent.location) {
+                    setInterval(iframeResize, 300);
+                }
+                
+            });
+        </script>
+                    </head>
+<body class="main_page">
+
+    <div class="wrap">
+        <noscript>
+        <div aria-live="assertive" class="notice notice--error">
+            For full funksjonalitet på denne siden er det nødvendig å tillate/slå på JavaScript.        </div>
+        </noscript>
+
+        
+        <header id="logo-image">
+
+        </header>
+
+
+<script>
+	$(document).ready(function(){
+	$(".jobsTableClass").dataTable({"bPaginate":false,"bProcessing":false,"aaSorting":[],"bInfo":false,"sDom":"W, <\"top\"i>rt<\"bottom\"flp><\"clear\">","oLanguage":{"sZeroRecords":"Det finnes ingen ledige stillinger for \u00f8yeblikket","sSearch":"S\u00f8k","sInfo":"total: _TOTAL_","sInfoFiltered":"","oAria":{"sSortAscending":", aktiver for \u00e5 sortere kolonnen i stigende rekkef\u00f8lge","sSortDescending":", aktiver for \u00e5 sortere kolonnen i synkende rekkef\u00f8lge"}},"aoColumns":[null,null,null,null,null]});
+	
+	}); 
+</script>
+
+<main role="main" aria-labelledby="joblist-heading">
+
+    
+    <h1 id="joblist-heading" class="heading h1">Ledige stillinger hos Andøya Space</h1>
+<div class="jobs">
+    
+    <div class="table-header">
+        <span>
+            <a  href='https://web103.reachmee.com/ext/I010/2575/subscribe?site=6&lang=NO&validator=FIXTUREVALIDATOR' class='button' tabindex='0' >Abonner på stillinger</a>
+        </span>
+        <div class="pull-right-buttons">
+            <a  href='https://web103.reachmee.com/ext/I010/2575/auth?site=6&lang=NO&validator=FIXTUREVALIDATOR' class='button' tabindex='0' >Administrer din profil</a>
+        </div>
+    </div>
+
+    <div class="table-meta">
+        <div class="table-filters" id="filtersPlace">
+        </div>
+    </div>
+
+    <div id="mainjoblist">
+        <table class='table table-hover jobsTableClass' id='jobsTable' ><caption class='sub-heading'>Liste over ledige stillinger. Overskriftene kan sorteres ved å klikke på dem.  </caption>
+<thead><tr><th id='col-1'>Stilling <i class='table-sort-column-icon'></i></th><th id='col-9'>Sted <i class='table-sort-column-icon'></i></th><th id='col-6'>Søknadsfrist <i class='table-sort-column-icon'></i></th><th id='col-12'>Avdeling <i class='table-sort-column-icon'></i></th><th id='col-11'>Virksomhetsområde <i class='table-sort-column-icon'></i></th></tr></thead>
+<tbody>
+<tr>
+<td><a href='https://web103.reachmee.com/ext/I010/2575/job?site=6&lang=NO&validator=FIXTUREVALIDATOR&job_id=102' class='btn btn-link'>Administrative Coordinator</a>
+</td>
+<td>Andøy</td>
+<td><span class='show-mobile'>Søknadsfrist:</span><span data-order="1" style="display:none">2026-11-15</span> 15.11.2026</td>
+<td></td>
+<td>Andøya Space</td>
+</tr><tr>
+<td><a href='https://web103.reachmee.com/ext/I010/2575/job?site=6&lang=NO&validator=FIXTUREVALIDATOR&job_id=98' class='btn btn-link'>Tekniker</a>
+</td>
+<td>Andøy</td>
+<td><span class='show-mobile'>Søknadsfrist:</span><span data-order="1" style="display:none">2026-11-08</span> 08.11.2026</td>
+<td></td>
+<td>Andøya Space</td>
+</tr><tr>
+<td><a href='https://web103.reachmee.com/ext/I010/2575/job?site=6&lang=NO&validator=FIXTUREVALIDATOR&job_id=99' class='btn btn-link'>Talent Acquisition Specialist/Rekrutteringsspesialist</a>
+</td>
+<td>Andøy</td>
+<td><span class='show-mobile'>Søknadsfrist:</span><span data-order="1" style="display:none">2026-11-10</span> 10.11.2026</td>
+<td></td>
+<td>Andøya Space</td>
+</tr><tr>
+<td><a href='https://web103.reachmee.com/ext/I010/2575/job?site=6&lang=NO&validator=FIXTUREVALIDATOR&job_id=7' class='btn btn-link'>Åpen søknad</a>
+</td>
+<td>Andøy</td>
+<td><span class='show-mobile'>Søknadsfrist:</span><span data-order="1" style="display:none">2026-12-31</span> 31.12.2026</td>
+<td></td>
+<td>Andøya Space</td>
+</tr></tbody>
+</table>    </div>
+</div>
+
+<script> 
+    $(document).ready(function(){
+        $("#filterForm").append($("#jobsTable_filter"));
+        $("#jobsTable_filter").append($("#jobsTable_filter input"));
+
+        $("#jobsTable_filter").addClass("filterItemsSelect  form-group");
+        $("#jobsTable_filter label").addClass("input-label");
+        $("#jobsTable_filter input").addClass("form-control input-field");
+
+        $(window).on('resize', function() {
+            var win = $(this); //this = window
+
+            rm.debounce(function() {
+                if (win.width() < 576) {
+                    if (!$('#jobsTable thead').length) {
+                        return;
+                    }
+
+                    $('#jobsTable thead').remove();
+                } else {
+                    if ($('#jobsTable thead').length) {
+                        return;
+                    }
+
+                    $('#jobsTable').prepend("<thead><tr><th id='col-1'>Stilling <i class='table-sort-column-icon'></i></th><th id='col-9'>Sted <i class='table-sort-column-icon'></i></th><th id='col-6'>Søknadsfrist <i class='table-sort-column-icon'></i></th><th id='col-12'>Avdeling <i class='table-sort-column-icon'></i></th><th id='col-11'>Virksomhetsområde <i class='table-sort-column-icon'></i></th></tr></thead>");
+                    $('#jobsTable').dataTable();
+                }
+            }, 500, "some unique string");
+        });
+        $(window).trigger('resize');
+    });
+</script>
+
+
+</main>
+
+</div>
+
+<script>
+    $(document).ready(function() {
+        if (window.self == window.top) {
+            var logoImage = document.createElement('img');
+            logoImage.setAttribute('src', '');
+            logoImage.setAttribute('alt', '');
+            document.getElementById('logo-image').appendChild(logoImage);
+        }
+    });
+
+    if (window.location !== window.parent.location) {
+        let searchParams = new URLSearchParams(window.location.search);
+
+        // for Zmash
+        window.parent.postMessage(
+            JSON.stringify({
+                talentech_jobId: searchParams.has('job_id') ? searchParams.get('job_id') : 'none',
+                talentech_publishingPlaceId: searchParams.get('site'),
+                talentech_target: window.location.href
+            }),
+            '*'
+        );
+
+        // for General
+        window.parent.postMessage(
+            JSON.stringify({
+                talentech_pageName: window.location.href,
+            }),
+            '*'
+        );
+    }
+</script>
+</body>
+</html>
