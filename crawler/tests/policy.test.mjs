@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configurePolicy, installGuard, resetPolicy, policyStats, policySummary, noFetchReason, retryAfterSeconds, flushPolicy, parseRobots, robotsAllows, policySettled } from '../policy.mjs';
+import { configurePolicy, installGuard, resetPolicy, policyStats, policySummary, noFetchReason, retryAfterSeconds, flushPolicy, parseRobots, robotsAllows, policySettled, interleaveByProvider } from '../policy.mjs';
 import { providers, setCacheDir, pageBudget } from '../providers.mjs';
 import { runQueue } from '../detail-backfill.mjs';
 
@@ -256,6 +256,13 @@ test('pagination is followed past the old caps (paginated_list: 40 pages, old de
     const jobs = await providers.paginated_list.fetch('', entry);
     assert.equal(jobs.length, pages * 2);
   } finally { await s2.close(); }
+});
+
+test('scheduling: each provider\'s boards are spread over the cycle, registry order kept within a provider', () => {
+  const list = [...['e1', 'e2', 'e3'].map((name) => ({ name, provider: 'eures' })), ...['g1', 'g2', 'g3', 'g4', 'g5', 'g6'].map((name) => ({ name, provider: 'greenhouse' }))];
+  const order = interleaveByProvider(list).map((c) => c.name);
+  assert.deepEqual(order, ['g1', 'e1', 'g2', 'g3', 'e2', 'g4', 'g5', 'e3', 'g6']);
+  assert.equal(interleaveByProvider([]).length, 0);
 });
 
 test('backfill: --minutes stops starting requests, a host that keeps failing is left for the next run', async () => {

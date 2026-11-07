@@ -19,7 +19,7 @@ import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile } from './providers-eures.mjs';
-import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled } from './policy.mjs';
+import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -311,7 +311,9 @@ async function scan() {
   // A probation company the pruning rule disabled is skipped (and listed in probation-report.json) unless it has become protected.
   const enabled = enabledAll.filter((c) => !(c.probation === true && probation[c.name]?.state === 'disabled' && !probation[c.name]?.reenable && !isProtected(c.name)));
   const probationSkipped = enabledAll.length - enabled.length;
-  const companies = enabled.filter(due);
+  // the due boards, each provider's spread over the cycle (policy.mjs interleaveByProvider): boards that share a host (an ATS API,
+  // EURES) do not run side by side, so a host's Crawl-delay or rate limit meets one board at a time
+  const companies = interleaveByProvider(enabled.filter(due));
   const skipped = enabled.length - companies.length;
   const compiledFilters = prepareFilters(cfg);
   const date = today();

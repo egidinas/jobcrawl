@@ -385,6 +385,21 @@ export function installGuard() {
   return installed;
 }
 
+// ---------- scheduling ----------
+
+// Boards that share a host (an ATS API, EURES) are spread over a cycle instead of running side by side, so a host's Crawl-delay or
+// rate limit meets one board at a time (crawl.mjs orders the due boards with this).
+/** Each provider's boards spread evenly over the list (registry order within a provider): the k-th of n boards sits at (k + 0.5) / n. */
+export function interleaveByProvider(list) {
+  const size = new Map(), seen = new Map();
+  for (const c of list) size.set(c.provider ?? '?', (size.get(c.provider ?? '?') ?? 0) + 1);
+  return list.map((c, i) => {
+    const k = c.provider ?? '?', n = seen.get(k) ?? 0;
+    seen.set(k, n + 1);
+    return { c, i, at: (n + 0.5) / size.get(k) };
+  }).sort((a, b) => a.at - b.at || a.i - b.i).map((x) => x.c);
+}
+
 // ---------- reporting ----------
 
 export const policyStats = () => ({ ...st.stats, mode: st.mode });
