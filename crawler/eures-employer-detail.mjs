@@ -10,7 +10,7 @@
 // raw capture on, so the response lands in the raw store byte for byte like every other.
 //
 //   node crawler/eures-employer-detail.mjs --data <dir> [--profile <dir>] [--budget 500] [--gap 1000] [--dry-run]
-//                                          [--raw <dir>] [--log H:\AtlasLogs\eures-employer-detail.log]
+//                                          [--raw <dir>] [--log <file>]   (default $JOBCRAWL_LOG_DIR/eures-employer-detail.log, else <data>/)
 //
 // Politeness across processes: the EURES host gets at most one request start per --gap ms (default 1000) from this tool and the
 // crawl TOGETHER. Both set the shared rate file <data>/eures-rate.json (providers-eures.mjs setEuresRateFile / claimSharedSlot): each
@@ -191,7 +191,7 @@ async function main() {
   const flag = (n) => args.includes(`--${n}`);
   const opt = (n, d) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d);
   const t0 = Date.now();
-  const logFile = opt('log', 'H:\\AtlasLogs\\eures-employer-detail.log');
+  const logFile = opt('log', join(process.env.JOBCRAWL_LOG_DIR || pathResolve(opt('data', '.')), 'eures-employer-detail.log'));
   try { mkdirSync(dirname(logFile), { recursive: true }); } catch { /* reported by the first write */ }
   const log = (m) => { const l = `${new Date().toISOString()} eures-detail: ${m}`; try { appendFileSync(logFile, l + '\n'); } catch (e) { console.error(`eures-detail: cannot write log ${logFile}: ${e.message}`); } return l; };
   const say = (m) => console.log(log(m));   // start, result, errors: log and console

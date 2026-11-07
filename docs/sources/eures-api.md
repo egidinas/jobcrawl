@@ -180,7 +180,7 @@ carries the employer's NACE Rev. 2 class and `organisationSizeCode`. The sweep r
 vacancy per employer (normalised name + web site host; 13,070 employers on 2026-11-01), fetches its detail document through the
 provider (`euresDetail`, the shared limiter, the raw capture) and writes `<data>/eures-employer-nace.tsv` (employer, website,
 vacancy_id, sector_codes, organisation_size_code, fetched_at; no contact data). State `<data>/eures-employer-detail.json`, lock
-`<data>/eures-employer-detail.lock`, log `H:\AtlasLogs\eures-employer-detail.log`; `--budget N`, `--gap ms`, `--dry-run`.
+`<data>/eures-employer-detail.lock`, log `$JOBCRAWL_LOG_DIR/eures-employer-detail.log` (else in `<data>`, or `--log <file>`); `--budget N`, `--gap ms`, `--dry-run`.
 
 Cross-process pacing: `setEuresRateFile(<data>/eures-rate.json)` (crawl.mjs and the sweep) makes every request start claim a slot in
 that file, one gap after the previous claim of any process (`claimSharedSlot`, a millisecond mutex `<file>.lock` created exclusively,

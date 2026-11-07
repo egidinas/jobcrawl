@@ -1,7 +1,7 @@
 // Step 3 of the profiler: load a careers page once in headless Chromium and keep the JSON responses of its XHR/fetch requests.
 // Optional dependency: playwright-core (with a Chromium build) is imported only when the profiler runs with --browser, never by the crawl.
 // Images, media, fonts, stylesheets and well-known trackers are not loaded (they are most of a page's requests); the profile's user
-// agent is the browser's. One browser per run, pages one at a time (the NUC is shared with training jobs).
+// agent is the browser's. One browser per run, pages one at a time (the host may be running other jobs).
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
@@ -11,7 +11,7 @@ const TRACKERS = /google-analytics|googletagmanager|doubleclick|facebook\.(?:net
 export async function makeSniffer({ ua, log = () => {}, timeoutMs = 25000, maxRequests = 60, maxJsonBytes = 3e6 } = {}) {
   let chromium;
   try { ({ chromium } = await import('playwright-core')); } catch (e) {
-    // ESM ignores NODE_PATH; a playwright-core installed outside the repo (the NUC keeps it in ~/atlas/profiler/deps) is found through it
+    // ESM ignores NODE_PATH; a playwright-core installed outside the repo (a separate deps folder named in NODE_PATH) is found through it
     for (const dir of String(process.env.NODE_PATH ?? '').split(/[:;]/).filter(Boolean)) {
       try { ({ chromium } = createRequire(join(dir, 'noop.js'))('playwright-core')); break; } catch {}
     }
