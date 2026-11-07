@@ -610,7 +610,10 @@ async function scan() {
       if (pst.state === 'disabled') problems.push(`PROBATION: ${name} disabled - ${pst.reason}`);
       else if (probGated && pst.state === 'promoted') problems.push(`PROBATION: ${name} promoted (${pc.relevant} relevant roles)`);
     }
-    // Liveness: previously tracked roles that vanished from a feed that loaded fine.
+    // Liveness: previously tracked roles that vanished from a feed that loaded fine. A partial answer (the provider's time or page
+    // budget ended the walk: res.jobs.incomplete) proves nothing about the roles it did not reach: they keep their status, and the
+    // 3-day sweep below still retires a role that no answer confirms.
+    if (res.jobs.incomplete) return;
     for (const row of history.values()) {
       if ((row.company === name || row.company?.endsWith(`(via ${name})`)) && row.status === 'open' && !live.has(row.url)) {
         row.status = 'gone';
@@ -720,7 +723,7 @@ async function scan() {
   const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-  if (filling.length) problems.unshift(`page fill continues next cycle (page budget spent): ${filling.length} boards: ${filling.slice(0, 15).join(', ')}${filling.length > 15 ? ', ...' : ''}`);
+  if (filling.length) problems.unshift(`partial answers (page or time budget spent; nothing marked gone for them, a page fill continues next cycle): ${filling.length} boards: ${filling.slice(0, 15).join(', ')}${filling.length > 15 ? ', ...' : ''}`);
   {
     const slow = [...boardMs].sort((a, b) => b[2] - a[2]);
     const total = boardMs.reduce((t, b) => t + b[2], 0);

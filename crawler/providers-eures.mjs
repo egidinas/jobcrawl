@@ -463,8 +463,9 @@ export const eures = {
     const extra = entry.eures && typeof entry.eures === 'object' ? entry.eures : {};
     const keep = mode === 'EMPLOYER' ? (v) => euresEmployerMatches(keyword, v.employer?.name) : () => true;
     const out = [], seen = new Set(), t0 = Date.now();
+    let cut = false;   // the time budget ended the walk: a partial answer, of which crawl.mjs marks nothing gone
     for (let page = 1; out.length < cap; page++) {
-      if (page > 1 && Date.now() - t0 > tuning.budgetMs) break;   // the pacing between pages is the host-wide limiter's (api)
+      if (page > 1 && Date.now() - t0 > tuning.budgetMs) { cut = true; break; }   // the pacing between pages is the host-wide limiter's (api)
       const d = await api('/jv-searchengine/public/jv-search/search', searchBody({ keyword, codes, page, extra, mode }));
       if (!Array.isArray(d?.jvs)) throw new Error(`eures: unexpected search response (keys: ${d && typeof d === 'object' ? Object.keys(d).join(', ') : typeof d})`);
       const picked = [];
@@ -483,6 +484,7 @@ export const eures = {
       if (!fresh || d.jvs.length < EURES_PAGE_SIZE || out.length >= Math.min(cap, total)) break;
       if (mode === 'EMPLOYER' && !picked.length) break;   // past the exact matches: the rest of the fuzzy result is other employers
     }
+    if (cut) Object.defineProperty(out, 'incomplete', { value: { left: 0, note: 'time budget ended the walk' }, enumerable: false });
     return out;
   },
 };

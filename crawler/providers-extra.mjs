@@ -1333,6 +1333,17 @@ for (const d of fhDefs) {
   };
 }
 Object.assign(extraProviders, freehireProviders);
+// A walk that ran past its paging time budget (budgetMs) was cut short: the answer is partial, and crawl.mjs marks nothing of the board
+// gone for it (a role the walk did not reach is not a closed role).
+for (const p of Object.values(extraProviders)) {
+  const own = p.fetch;
+  p.fetch = async function fetchWithBudgetFlag(slug, entry = {}) {
+    const t0 = Date.now();
+    const jobs = await own.call(this, slug, entry);
+    if (Array.isArray(jobs) && Date.now() - t0 > budgetMs(entry)) Object.defineProperty(jobs, 'incomplete', { value: { left: 0, note: 'time budget ended the walk' }, enumerable: false });
+    return jobs;
+  };
+}
 
 // Machine-readable table for the Common Crawl harvester / ats-resolve. For each ATS: providerId, hostPatterns (regexes that identify
 // its hosts in a URL), boardIdFromUrl(url) -> board id (the slug for companies.json) or null, and probe(boardId) ->
