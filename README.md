@@ -305,8 +305,10 @@ local server.
   the profiler one request per second per host; EURES at most one request per second across all processes.
 
 **robots.txt is advisory by default** (`crawl.robots`, owner's decision of 2026-11-07). Every request through the policy reads the
-robots.txt of its origin (once a day; `<data>/robots-cache.json`). In `advisory` mode a request that robots.txt disallows for the
-crawler's token is made anyway and logged: one line in `<data>/robots-audit.jsonl` (time, host, URL, caller; at most 50 per host and
+robots.txt of its origin (once a day; `<data>/robots-cache.json`). Groups are combined as RFC 9309 says (every group naming the
+crawler's token, else every `*` group; the longest match wins, Allow on a tie). In `advisory` mode the first request to an origin does
+not wait for robots.txt (it is read alongside; its Crawl-delay counts from that first request), and a request that robots.txt
+disallows for the crawler's token is made anyway and logged: one line in `<data>/robots-audit.jsonl` (time, host, URL, caller; at most 50 per host and
 run) and a count per host in the cycle's notes. This covers employers' own career sites, ATS job boards and their posting pages, and
 the SuccessFactors Career Site Builder search (`/services/recruiting/v1/jobs`) that many RMK sites disallow. In `strict` mode such a
 request is refused (`robots.txt disallows ...`). `crawl.robots_hosts` sets the mode per host, e.g. `{ "example.com": "strict" }`. A

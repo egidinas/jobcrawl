@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { configurePolicy, installGuard, resetPolicy, policyStats, policySummary, noFetchReason, retryAfterSeconds, flushPolicy, parseRobots, robotsAllows } from '../policy.mjs';
+import { configurePolicy, installGuard, resetPolicy, policyStats, policySummary, noFetchReason, retryAfterSeconds, flushPolicy, parseRobots, robotsAllows, policySettled } from '../policy.mjs';
 import { providers, setCacheDir, pageBudget } from '../providers.mjs';
 import { runQueue } from '../detail-backfill.mjs';
 
@@ -33,7 +33,7 @@ async function withPolicy(opts, fn) {
   const dir = mkdtempSync(join(tmpdir(), 'jc-policy-'));
   configurePolicy({ dataDir: dir, ...opts });
   const un = installGuard();
-  try { return await fn(dir); } finally { un(); flushPolicy(); resetPolicy(); rmSync(dir, { recursive: true, force: true }); }
+  try { return await fn(dir); } finally { un(); await policySettled(); flushPolicy(); resetPolicy(); rmSync(dir, { recursive: true, force: true }); }
 }
 
 test('robots.txt advisory (default): a disallowed page is fetched and logged; strict refuses it; a per-host override wins', async () => {
@@ -42,6 +42,7 @@ test('robots.txt advisory (default): a disallowed page is fetched and logged; st
     await withPolicy({}, async (dir) => {
       const r = await fetch(`${s.base}/careers/jobs`);
       assert.equal(await r.text(), 'job list');
+      await policySettled();
       assert.equal(policyStats().robots_disallowed_fetched, 1);
       const audit = readFileSync(join(dir, 'robots-audit.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
       assert.equal(audit[0].url, `${s.base}/careers/jobs`);
@@ -78,9 +79,28 @@ test('Content-Signal ai-train=no is recorded for the owner (content-signals.json
   try {
     await withPolicy({}, async (dir) => {
       assert.equal(await (await fetch(`${s.base}/jobs`)).text(), 'jobs');
+      await policySettled();
       assert.match(policySummary().join('\n'), /Content-Signal ai-train=no: 1 hosts .*127\.0\.0\.1/);
       flushPolicy();
       assert.match(readFileSync(join(dir, 'content-signals.json'), 'utf8'), /ai-train=no/);
+    });
+  } finally { await s.close(); }
+});
+
+test('advisory mode does not hold the first request for a slow robots.txt; strict mode does', async () => {
+  const s = await site({ '/robots.txt': (req, res) => setTimeout(() => res.end('User-agent: *\nDisallow: /x\n'), 1200), '/x': 'x' });
+  try {
+    await withPolicy({}, async () => {
+      const t0 = Date.now();
+      assert.equal(await (await fetch(`${s.base}/x`)).text(), 'x');
+      assert.ok(Date.now() - t0 < 1000, `advisory: answered in ${Date.now() - t0} ms`);
+      await policySettled();
+      assert.equal(policyStats().robots_disallowed_fetched, 1, 'the verdict is logged when robots.txt arrives');
+    });
+    await withPolicy({ robots: 'strict' }, async () => {
+      const t0 = Date.now();
+      await assert.rejects(fetch(`${s.base}/x`), /robots\.txt disallows/);
+      assert.ok(Date.now() - t0 >= 1100, 'strict: waited for robots.txt');
     });
   } finally { await s.close(); }
 });

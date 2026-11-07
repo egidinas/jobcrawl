@@ -19,7 +19,7 @@ import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile } from './providers-eures.mjs';
-import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy } from './policy.mjs';
+import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled } from './policy.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -724,6 +724,7 @@ async function scan() {
     const total = boardMs.reduce((t, b) => t + b[2], 0);
     if (slow.length) problems.unshift(`board fetch time: ${(total / 60000).toFixed(1)} board-minutes over ${slow.length} boards (${CONCURRENCY} in parallel); slowest ${slow.slice(0, 8).map(([n, p, ms]) => `${n} (${p}) ${(ms / 1000).toFixed(0)} s`).join(', ')}`);
   }
+  await policySettled();
   for (const line of policySummary().reverse()) problems.unshift(line);
   flushPolicy();
   if (problems.length) console.log('\nNotes:\n' + problems.map((p) => '  - ' + p).join('\n'));

@@ -91,7 +91,7 @@ const fresh = () => ({
   robots: new Map(), robotsDisk: null, robotsDirty: false,
   nextSlot: new Map(), cooldown: new Map(),
   authWalls: {}, authDirty: false, optFlags: {}, optDirty: false, aiTrainNo: {}, aiDirty: false,
-  auditByHost: new Map(),
+  auditByHost: new Map(), pending: new Set(),
   stats: { robots_disallowed_fetched: 0, robots_refused: 0, no_fetch: 0, cooldown_waits: 0, cooldown_fails: 0, slot_waits: 0, slot_fails: 0, auth_walls: 0, optout_flags: 0 },
   noFetchByReason: {},
 });
@@ -291,18 +291,38 @@ export function auditRobots(url, who = '') {
 /**
  * The robots decision for one URL: { allowed, delayMs }. Disallowed in strict mode: throws RobotsError. Disallowed in advisory mode:
  * logged, and allowed. robots.txt itself is always allowed.
+ * Advisory mode does not make the first request to an origin wait for robots.txt (its verdict cannot stop the request): robots.txt is
+ * read alongside, the verdict is logged when it arrives, and its Crawl-delay counts from that first request, so every later request to
+ * the host waits for robots.txt and its slot. Strict mode reads robots.txt first. policySettled() waits for the pending verdicts.
  */
 export async function robotsCheck(url, who = '', fetchImpl) {
   const u = new URL(url);
   if (u.pathname === '/robots.txt') return { allowed: true, delayMs: 0 };
+  const strict = robotsModeFor(u.hostname) === 'strict';
+  const verdict = (rb) => {
+    noteSignals(u.hostname, rb.signals);
+    const allowed = robotsAllows(rb, u.pathname + u.search);
+    if (!allowed && !strict) auditRobots(url, who);
+    return allowed;
+  };
+  if (!strict && !st.robots.has(u.origin)) {
+    const firstAt = Date.now();
+    const p = robotsFor(u.origin, fetchImpl).then((rb) => {
+      verdict(rb);
+      if (rb.delay > 0) st.nextSlot.set(normHost(u.hostname), Math.max(st.nextSlot.get(normHost(u.hostname)) ?? 0, firstAt + rb.delay * 1000));
+    }, () => {});
+    st.pending.add(p);
+    p.finally(() => st.pending.delete(p));
+    return { allowed: true, delayMs: 0 };
+  }
   const rb = await robotsFor(u.origin, fetchImpl);
-  noteSignals(u.hostname, rb.signals);
   const delayMs = (rb.delay || 0) * 1000;
-  if (robotsAllows(rb, u.pathname + u.search)) return { allowed: true, delayMs };
-  if (robotsModeFor(u.hostname) === 'strict') { st.stats.robots_refused++; throw new RobotsError(`robots.txt disallows ${url}`); }
-  auditRobots(url, who);
-  return { allowed: true, disallowed: true, delayMs };
+  if (strict && !robotsAllows(rb, u.pathname + u.search)) { st.stats.robots_refused++; throw new RobotsError(`robots.txt disallows ${url}`); }
+  return { allowed: true, disallowed: !verdict(rb), delayMs };
 }
+
+/** Waits for the robots.txt verdicts still on their way (advisory mode), so the counts in the notes are complete. */
+export async function policySettled() { await Promise.allSettled([...st.pending]); }
 
 /** After a response: cooldown on 429/503, auth walls, the TDM opt-out flag. Returns a reason to refuse the response, or null. */
 export function checkResponse(url, res) {

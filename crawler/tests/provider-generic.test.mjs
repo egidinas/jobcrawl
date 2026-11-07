@@ -6,7 +6,7 @@ import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { providers, setCacheDir } from '../providers.mjs';
-import { configurePolicy, installGuard, resetPolicy, policyStats } from '../policy.mjs';
+import { configurePolicy, installGuard, resetPolicy, policyStats, policySettled } from '../policy.mjs';
 import { jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd } from '../providers-generic.mjs';
 
 const text = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
@@ -142,6 +142,7 @@ test('jsonld_direct: list page links -> posting pages parsed once and cached; ro
       const calls4 = await withFetch(disallowing, guarded);
       assert.deepEqual(calls4.slice(0, 2), ['https://www.mpg.de/robots.txt', 'https://www.mpg.de/jobboard']);
       assert.equal(jobs.length, 2);
+      await policySettled();
       assert.equal(policyStats().robots_disallowed_fetched, 1);
     } finally { resetPolicy(); }
     // no links and a sitemap: the sitemap's matching URLs are the postings

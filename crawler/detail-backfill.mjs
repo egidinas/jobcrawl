@@ -35,7 +35,7 @@ import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } 
 import { setUserAgent } from './useragent.mjs';
 import { jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
-import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy } from './policy.mjs';
+import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled } from './policy.mjs';
 
 /** Vendors whose board response already carries every description: the raw capture of the crawl has them, no detail fetch needed. */
 export const LIST_HAS_DESCRIPTION = new Set(['greenhouse', 'ashby', 'lever', 'personio', 'recruitee', 'pinpoint', 'breezy', 'workable']);
@@ -231,6 +231,7 @@ async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
   };
   const done = await runQueue(plan.queue, fetchOne, { budget, hostDelay, concurrency, maxMs, hostFailLimit, onDone });
   saveState();
+  await policySettled();
   flushPolicy();
   const left = plan.queue.length - done.length;
   const sk = done.skipped;
