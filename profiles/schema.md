@@ -81,6 +81,7 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 },
 "location_filter": {
   "allow": ["Germany", "Berlin"],
+  "allow_country_codes": ["DE", "AT", "CH"],
   "block_hard": ["India"],
   "allow_unknown": true
 }
@@ -88,6 +89,10 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 
 * `title_filter.positive` empty means every title passes the positive test. `negative` always drops.
 * `location_filter.allow` is a list of place names; `block_hard` drops; `allow_unknown` keeps roles whose location is empty.
+* `location_filter.allow_country_codes` (ISO codes): a location that names one of them as its own token passes without its town being
+  on the allow list ("Ulm, DE, 89077", "Graz (AT)"); a code inside a word ("Madeira") or a US ZIP code does not.
+* No role is dropped silently: every role a filter drops is kept in the history as `filtered`, each cycle's notes count the drops by
+  reason, and they name the boards whose title-passing roles were dropped for their location (largest first).
 * `seniority_boost` only marks roles in the output (`seniority` in last-new.json); it does not filter.
 
 ### Companies file entries (`tracked_companies`)
@@ -103,6 +108,9 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `probation` | bool | gate roles on `crawl.relevance` until one relevant role shows up; pruned after 5 cycles with only irrelevant roles |
 | `relevance` | `strict` / `broad` / `off` | per-entry relevance gate. Default: `strict` for MyCareersFuture, `off` for the rest |
 | `only_locations` | list | keep only roles whose location contains one of these (for boards that list the whole world) |
+| `any_location` | bool | keep a role that passes the title filter wherever it is (the allow list is skipped; `block_hard` and `location_only` still apply). For in-scope employers whose roles matter in any country |
+| `timeout_ms` | number | fetch budget of this board per cycle (default 35000, at most 600000), for large tenants that page slowly |
+| `employer_mismatch` | string | the board's own company name does not match the tracked employer: the entry stays on probation (never promoted) and every cycle's notes name it |
 | `collect_only` | bool | collect but never publish: every role of the board is kept in the history (and the raw store) as status `extra`, never `open` or NEW, even when its title passes the filters. For feeds whose scope is decided downstream (aggregators such as EURES, USAJOBS). The summary line counts them as `N collect-only` |
 | `max_jobs` | number | cap on the number of postings read, for providers that page |
 | `extra_positive` | list | extra title keywords for this employer only |

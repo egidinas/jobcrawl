@@ -3,11 +3,20 @@ name: test
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
-# no network in the tests: they use the fixtures under crawler/tests and tests/
+# read-only token; a newer push to the same branch cancels the older run
+permissions:
+  contents: read
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+# no network in the tests: they use the fixtures under crawler/tests and tests/, and local servers on 127.0.0.1
 jobs:
   crawler:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,6 +34,7 @@ jobs:
         # so each version runs in the official Python image
         python-version: ['3.9', '3.12']
     container: python:${{ matrix.python-version }}-slim
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - name: Pipeline tests (Python)

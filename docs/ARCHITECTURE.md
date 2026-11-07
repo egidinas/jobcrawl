@@ -46,6 +46,43 @@ and the neighbours), and once after `map` to copy the atlas layout into the matc
 Where the files go: the **site folder** (`data/site`, or `--site`) is everything the web app loads. The **vectors folder** defaults to
 the sibling `data/vectors`, so vectors and the atlas stay out of the published folder until `publish` copies the parts it needs.
 
+## The crawler's state (the data folder)
+
+The crawler keeps its state in the data folder (`--data`, or the profile's `data_dir`); nothing of it is published as is. The board is
+built from `catalog.json`, which `crawler/catalog.mjs` derives from the history.
+
+| file | written by | content |
+|---|---|---|
+| `scan-history.tsv` | `crawl.mjs` | one row per posting ever seen: `url, company, title, location, first_seen, last_seen, status, posted` |
+| `scan-history-archive.tsv` | `crawl.mjs` | rows moved out of the working history (only with `crawl.history_prune_days`; default never) |
+| `jd/<name>.md` | `crawl.mjs --jd` | the cleaned description of each tracked role; removed `crawl.jd_keep_days` (default 90) after the role was last seen |
+| `last-new.json` | `crawl.mjs` | the postings that were new in the last cycle |
+| `crawl-state.json` | `crawl.mjs` | per board, when it is next due (`interval_hours`, staggered, at most 48 h) |
+| `source-health.json` | `crawl.mjs` | per board: consecutive failures, consecutive empty answers, last job count, last success; 3 in a row raise an ALERT note |
+| `probation-state.json`, `probation-report.json` | `crawl.mjs` | per probation board: relevant and irrelevant roles seen, promoted or disabled, and why |
+| `job-meta.json` | `crawl.mjs` | provider metadata per posting (department, employment type, remote, country, contacts where a posting publishes them) |
+| `detail-backfill.json`, `detail-backfill.lock` | `detail-backfill.mjs` | per URL tried: ok, text length, tries, next retry; the lock of the active run |
+
+The `status` of a history row:
+
+| status | meaning | on the board |
+|---|---|---|
+| `open` | the role passed every filter and a feed confirmed it in the last 3 days | yes |
+| `extra` | the employer is in scope but the title is not (or the board is `collect_only`) | behind a "more roles" switch, if the site offers one |
+| `filtered` | a filter dropped it (title, location, probation, relevance gate, stale aggregator copy, an employer's own ATS shadowing an aggregator copy); the reason is counted in the cycle's notes | no |
+| `dup` | a copy of a role that is open under another URL (an aggregator copy, or a reposted requisition); it takes over if the original closes | no |
+| `gone` | no feed has confirmed it for 3 days | no |
+
+A row is never deleted by the crawl (pruning, when a profile turns it on, moves old rows to the archive): a role changes status as the feeds and the filters change, so a wider filter turns `filtered`
+rows `open` on the next fetch, and the history stays a complete record of what each board listed and when.
+
+**Raw capture** (`JOBCRAWL_RAW_DIR`, `crawler/rawcapture.mjs`): every response a crawl or a backfill receives, byte for byte.
+
+| path | content |
+|---|---|
+| `<raw>/objects/ab/<sha256>.gz` | a response body as received, stored once per content |
+| `<raw>/index/<yyyy-mm-dd>.jsonl` | one line per response: `{t, url, method, status, ct, bytes, sha256, new, req}` (`req`: the POST body, up to 16 KB) |
+
 ## The data contract
 
 Every file the stages pass on, with its keys. Standard JSON, UTF-8, written by the stage named.
