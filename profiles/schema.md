@@ -65,6 +65,7 @@ The data folder of the bundled pages is `?data=<folder>`, else `<meta name="jobc
 | `crawl.robots` | `"advisory"` or `"strict"` | `"advisory"` | crawler, backfill, profiler, harvest | robots.txt `Disallow`: advisory fetches the URL anyway and logs it (`<data>/robots-audit.jsonl`, a count per host in the notes); strict refuses it. `Crawl-delay` is honoured in both modes. See README, Responsible crawling |
 | `crawl.robots_hosts` | object host -> mode | `{}` | same | the robots mode for single hosts (and their subdomains), e.g. `{ "example.com": "strict" }` |
 | `crawl.opt_out_hosts` | list of host names or `{ host, reason }` | `[]` | same | hosts that are never requested: explicit opt-outs such as terms that forbid automated access to job data |
+| `crawl.eures_lane` | bool | `false` | crawler, backfill | the EURES boards are read by `crawler/eures-lane.mjs` (one board at a time at europa.eu's Crawl-delay of 10 s, scheduled every 30 min); the crawl reads the lane's newest answer (`<data>/eures-lane/`) and sends no request to europa.eu. An answer older than 96 h, or none, fails the board |
 | `crawl.opt_out_cleared` | list of host names | `[]` | same | hosts the owner reviewed after an automatic opt-out flag (`optout-flags.json`) and allows again |
 | `crawl.title_filter` | object | none | crawler | when set, replaces `title_filter` in the companies file (same shape, see below) |
 | `crawl.location_filter` | object | none | crawler | when set, replaces `location_filter` in the companies file |

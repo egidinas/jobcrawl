@@ -18,7 +18,7 @@ import { reprofileCycle } from './profiler/health.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
-import { setEuresRateFile } from './providers-eures.mjs';
+import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
 const args = process.argv.slice(2);
@@ -67,6 +67,8 @@ const OUT_DIR = resolveDataDir(opt('data'), PROFILE);
 setCacheDir(OUT_DIR);
 // EURES: one request start per gap across this crawl and any other process on the same data dir (eures-employer-detail.mjs)
 setEuresRateFile(pathResolve(OUT_DIR, 'eures-rate.json'));
+// crawl.eures_lane: the EURES boards are read by crawler/eures-lane.mjs at europa.eu's Crawl-delay; the crawl reads its answers
+if (PROFILE.euresLane) setEuresLane(pathResolve(OUT_DIR, 'eures-lane'));
 // every feed response byte for byte under JOBCRAWL_RAW_DIR (rawcapture.mjs), before the first request
 const RAW_ON = !flag('jd-cleanup-only') && installRawCapture();
 if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`);

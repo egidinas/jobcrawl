@@ -84,6 +84,7 @@ export function loadProfile(dirArg) {
     robotsHosts,
     optOutHosts: crawl.opt_out_hosts ?? [],
     optOutCleared: strList(crawl.opt_out_cleared, 'crawl.opt_out_cleared'),
+    euresLane: crawl.eures_lane === true,   // EURES boards come from the slow lane's answers (crawler/eures-lane.mjs)
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,
   };

@@ -315,6 +315,12 @@ the SuccessFactors Career Site Builder search (`/services/recruiting/v1/jobs`) t
 request is refused (`robots.txt disallows ...`). `crawl.robots_hosts` sets the mode per host, e.g. `{ "example.com": "strict" }`. A
 robots.txt that answers 5xx counts as "disallow everything" (RFC 9309): refused in strict mode, logged in advisory mode.
 
+**EURES slow lane.** europa.eu's robots.txt asks for `Crawl-delay: 10`. With `crawl.eures_lane: true` the EURES boards leave the
+crawl cycle: `node crawler/eures-lane.mjs --profile <dir> --minutes 25 --log <file>` (scheduled every 30 minutes, one run at a time)
+reads them one board at a time at that gap, oldest answer first, and stores each answer in `<data>/eures-lane/`; the crawl reads the
+newest answer and sends nothing to europa.eu. A board without an answer from the last 96 hours fails visibly; a partial answer marks
+nothing gone.
+
 **Generous with pages, within the cycle.** Pagination is followed to the end: every paging loop stops at an empty page, a page without
 new postings or the stated total, with a safety stop at 500 pages (entry key `max_pages` caps it per board). A sitemap index is read
 in full (up to 500 child sitemaps; it was 10). The providers that read one page per posting have higher defaults (`sitemap` 10000,

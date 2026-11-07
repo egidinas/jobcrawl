@@ -27,8 +27,12 @@
 // This module is imported by providers.mjs, so it must not import helpers back from there (an ESM cycle); it has its own
 // text and meta helpers with the same rules as providers.mjs's plain() and metaOf().
 
-import { openSync, closeSync, writeSync, readFileSync, writeFileSync, renameSync, unlinkSync, statSync } from 'node:fs';
+import { openSync, closeSync, writeSync, readFileSync, writeFileSync, renameSync, unlinkSync, statSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { UA } from './useragent.mjs';
+import { entryTimeoutMs } from './profile.mjs';
 
 export const EURES_API = 'https://europa.eu/eures/api';
 export const EURES_PORTAL = 'https://europa.eu/eures/portal/jv-se';
@@ -431,6 +435,35 @@ export function euresDetailSection(d) {
   return out.length ? `Application and contact\n${out.join('\n')}` : '';
 }
 
+// ---- the EURES slow lane (owner 2026-11-07) ----
+// europa.eu's robots.txt asks every crawler for Crawl-delay: 10, which the crawl policy honours. At one request per 10 s the EURES
+// boards cannot be read inside the crawl cycle, so they run in their own lane (crawler/eures-lane.mjs, one board at a time, around the
+// clock) that stores each board's answer in <data>/eures-lane/<hash>.json.gz. With the lane on (profile key crawl.eures_lane), the
+// crawl's EURES provider reads the latest answer from there and sends no request to europa.eu; an answer older than LANE_MAX_AGE_H (or
+// none yet) fails the board visibly instead of being served stale. fetchDescription then keeps the search answer's own full text.
+export const LANE_MAX_AGE_H = 96;
+let laneDir = null;        // set: the crawl reads the lane's answers
+export function setEuresLane(dir) { laneDir = dir || null; }
+export const laneFile = (dir, slug) => join(dir, `${createHash('sha1').update(String(slug)).digest('hex').slice(0, 16)}.json.gz`);
+export function readLaneAnswer(dir, slug) {
+  try { return JSON.parse(gunzipSync(readFileSync(laneFile(dir, slug))).toString('utf8')); } catch { return null; }
+}
+export function writeLaneAnswer(dir, slug, answer) {
+  mkdirSync(dir, { recursive: true });
+  const f = laneFile(dir, slug);
+  writeFileSync(`${f}.${process.pid}.tmp`, gzipSync(JSON.stringify(answer)));
+  renameSync(`${f}.${process.pid}.tmp`, f);
+}
+function fromLane(slug, entry) {
+  const a = readLaneAnswer(laneDir, slug);
+  if (!a) throw new Error(`eures lane: no answer for this board yet (crawler/eures-lane.mjs reads EURES at europa.eu's Crawl-delay)`);
+  const ageH = (Date.now() - Date.parse(a.at)) / 36e5;
+  if (!(ageH <= LANE_MAX_AGE_H)) throw new Error(`eures lane: the newest answer is ${Math.round(ageH)} h old (more than ${LANE_MAX_AGE_H} h: is the lane running?)`);
+  const jobs = a.jobs ?? [];
+  if (a.incomplete) Object.defineProperty(jobs, 'incomplete', { value: { left: 0, note: `lane answer of ${a.at} was partial` }, enumerable: false });
+  return jobs;
+}
+
 export const eures = {
   detect: detectEures,
   /**
@@ -443,7 +476,7 @@ export const eures = {
   async fetchDescription(job) {
     const own = String(job?.description ?? '');
     const id = euresIdOf(job);
-    if (!id) return own;
+    if (!id || laneDir) return own;   // lane on: the crawl sends nothing to europa.eu (the search answer carries the full text)
     let d;
     try { d = await euresDetail(id); } catch { return own; }
     const text = euresText(euresProfile(d)?.description ?? '') || own;
@@ -456,6 +489,7 @@ export const eures = {
    * first page that holds none: the BEST_MATCH order puts the exact employer first and the fuzzy rest (thousands for a short name) after it.
    */
   async fetch(slug, entry = {}) {
+    if (laneDir) return fromLane(slug, entry);
     const { keyword, codes, mode } = parseSlug(slug);
     if (mode !== 'EVERYWHERE' && !keyword) throw new Error(`eures: ${SLUG_PREFIX[mode]} mode needs a name; the slug is "${SLUG_PREFIX[mode]}<name>|<country codes>" (got "${slug}")`);
     if (!keyword && !codes.length) throw new Error(`eures: refusing an unfiltered search; the slug is "<keyword>|<country codes>" (got "${slug}")`);
@@ -465,7 +499,7 @@ export const eures = {
     const out = [], seen = new Set(), t0 = Date.now();
     let cut = false;   // the time budget ended the walk: a partial answer, of which crawl.mjs marks nothing gone
     for (let page = 1; out.length < cap; page++) {
-      if (page > 1 && Date.now() - t0 > tuning.budgetMs) { cut = true; break; }   // the pacing between pages is the host-wide limiter's (api)
+      if (page > 1 && Date.now() - t0 > (Number(entry.timeout_ms) > 0 ? Math.max(tuning.budgetMs, entryTimeoutMs(entry) - 7000) : tuning.budgetMs)) { cut = true; break; }   // the pacing between pages is the host-wide limiter's (api)
       const d = await api('/jv-searchengine/public/jv-search/search', searchBody({ keyword, codes, page, extra, mode }));
       if (!Array.isArray(d?.jvs)) throw new Error(`eures: unexpected search response (keys: ${d && typeof d === 'object' ? Object.keys(d).join(', ') : typeof d})`);
       const picked = [];

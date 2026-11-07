@@ -36,6 +36,7 @@ import { setUserAgent } from './useragent.mjs';
 import { jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled } from './policy.mjs';
+import { setEuresLane } from './providers-eures.mjs';
 
 /** Vendors whose board response already carries every description: the raw capture of the crawl has them, no detail fetch needed. */
 export const LIST_HAS_DESCRIPTION = new Set(['greenhouse', 'ashby', 'lever', 'personio', 'recruitee', 'pinpoint', 'breezy', 'workable']);
@@ -176,6 +177,7 @@ async function main() {
   // The crawl policy around every request (the same as the crawl's), after the raw capture so refused requests are not captured.
   configurePolicy(policyFromProfile(PROFILE, dataDir));
   installGuard();
+  if (PROFILE.euresLane) setEuresLane(pathResolve(dataDir, 'eures-lane'));   // EURES details: no request to europa.eu outside the lane
   process.on('exit', releaseLock);
   try { await backfill({ flag, opt, t0, say, PROFILE, dataDir }); } finally { releaseLock(); }
 }

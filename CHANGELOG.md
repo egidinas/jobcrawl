@@ -22,6 +22,9 @@ The commit log has the details of each change.
   caps. `sitemap` and `jsonld_direct` have a page budget (default `timeout_ms` minus 10 s) and keep what they read, and the crawl makes
   an incomplete fill due again next cycle instead of letting it time out and lose its work. Paging providers in `providers-extra.mjs`
   page for the board's own `timeout_ms` instead of a fixed 28 s.
+- **EURES slow lane** (`crawler/eures-lane.mjs`, `crawl.eures_lane`): europa.eu asks for Crawl-delay 10 s, so EURES boards are read
+  outside the cycle, one at a time at that gap, and the crawl reads the lane's answers.
+- A partial answer (page or time budget ended the walk) marks nothing gone; due boards are spread by provider over the cycle.
 - **Detail backfill**: `--minutes` (time limit) and `--host-fail-limit` (a host whose last 5 requests failed is left for the next run).
 - The crawl's notes name the board fetch time (total, slowest boards), the boards still filling, and the policy's counts.
 - Tests: `crawler/tests/policy.test.mjs` (advisory vs strict and overrides, Crawl-delay, 429 and Retry-After, the no-login rule,
