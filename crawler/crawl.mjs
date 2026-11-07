@@ -157,6 +157,9 @@ function titleVerdictCompiled(filters, normTitle, company) {
   return null;
 }
 
+// The verdicts that drop a role for its place (the per-entry site whitelist, block_hard, location_only and the allow list).
+const LOCATION_VERDICTS = new Set(['location (site whitelist)', 'blocked-location', 'location-not-allowed', 'unknown-location']);
+
 function locationVerdictCompiled(filters, normLocation, company) {
   if (!normLocation) return filters.allowUnknownLoc ? null : 'unknown-location';
   if (filters.blockHardLocMatcher(normLocation)) return 'blocked-location';
@@ -311,6 +314,14 @@ async function scan() {
   const problems = [];
   const needLazyJd = [];
   const dropReasons = {};   // verdict -> roles dropped this cycle (all of them get a 'filtered' row); printed in the notes
+  // Board -> roles that pass the title filter but were dropped for their location this cycle (still recorded as 'filtered'). These are
+  // the candidates for an in-scope loss (audit 2026-11-06: a too narrow allow list cost HENSOLDT 440 of 478 roles without a trace), so
+  // the notes name the boards, largest first: a board that should not lose them gets any_location or a wider allow list.
+  const locationDrops = {};
+  const noteDrop = (why, board, normTitle) => {
+    dropReasons[why] = (dropReasons[why] ?? 0) + 1;
+    if (LOCATION_VERDICTS.has(why) && !titleVerdictCompiled(compiledFilters, normTitle, board)) locationDrops[board] = (locationDrops[board] ?? 0) + 1;
+  };
   // Source health: a board that errors or silently returns 0 jobs for 3 cycles in a row is reported, so a broken decoder does not go unnoticed.
   const HEALTH_FILE = pathResolve(OUT_DIR, 'source-health.json');
   let health = {};
@@ -485,7 +496,7 @@ async function scan() {
           prior.status = 'filtered';
           prior.last_seen = date;
           stats.filtered++;
-          dropReasons[why] = (dropReasons[why] ?? 0) + 1;
+          noteDrop(why, name, normTitle);
           continue;
         }
         stats.seen++;
@@ -529,7 +540,7 @@ async function scan() {
         // row is never new again; if the filter or the company's state changes later the role turns 'open' by itself on the next
         // fetch. No description is saved for it. Consumers read 'open' rows only, so the board is unaffected.
         history.set(j.url, { url: j.url, company: j.company || name, title: j.title, location: j.location, first_seen: date, last_seen: date, status: 'filtered', posted: postedDate(j.postedAt) });
-        dropReasons[why] = (dropReasons[why] ?? 0) + 1;
+        noteDrop(why, name, normTitle);
         continue;
       }
       const companyName = j.company || name;
@@ -690,6 +701,8 @@ async function scan() {
 
   fresh.sort((a, b) => Number(b.seniority) - Number(a.seniority) || a.company.localeCompare(b.company));
   console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}`);
+  const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   if (problems.length) console.log('\nNotes:\n' + problems.map((p) => '  - ' + p).join('\n'));
 
