@@ -243,6 +243,7 @@ test('splice: verified entries appended with probation and profile, tracked name
     assert.equal(added.enabled, true);
     assert.equal(added.profile.expected_min, 1);
     assert.match(added.note, /^profiled dom 2026-11-06/);
+    assert.equal(added.any_location, true, 'an entry admitted by in-scope signal keeps roles in any country (the content gate trims)');
     assert.equal(cfg.tracked_companies.length, 3);
     // --replace: the verified board of a tracked name replaces that entry's board fields (re-resolved / re-profiled), nothing is added
     const out2 = execFileSync(process.execPath, [new URL('../profiler.mjs', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'), 'splice', '--profile', dir, '--report', report, '--date', '2026-11-07', '--replace'], { encoding: 'utf8' });

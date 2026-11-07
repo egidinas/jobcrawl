@@ -172,6 +172,9 @@ function splice() {
     for (const [k, v] of Object.entries(e)) if (!(k in entry) && k !== 'profile' && k !== 'name') entry[k] = v;
     const empty = !(r.items > 0);
     Object.assign(entry, { enabled: true, probation: true, interval_hours: empty ? 168 : 24 });
+    // admitted by in-scope signal (owner 2026-11-07: in-scope employers count beyond DACH): a role passing the title filter is kept in any
+    // country; the content gate (title x employer, probation relevance) trims, the location allow list is a region feature only
+    if (entry.any_location === undefined && !r.collect_only) entry.any_location = true;
     if (entry.provider === 'jsonld_direct') entry.jsonld_only = true;   // verified on JobPosting markup: never read other pages as postings
     // the first fill of a big jsonld_direct board reads one page per posting (2 at a time): more than the crawl's default 35 s
     if (entry.provider === 'jsonld_direct' && r.items > 40) entry.timeout_ms = 120000;
