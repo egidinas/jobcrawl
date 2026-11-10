@@ -219,7 +219,8 @@ class Store:
             # Global length sorting: group texts of similar lengths together to eliminate padding waste
             need_idx.sort(key=lambda i: len(texts[i]))
             if self.emb is None:
-                self.emb = Embedder(self.model_dir, self.threads)
+                from jobcrawl.embed import atlas_v3      # an http(s) model dir is the atlas_v3 query service (NUC), not a local ONNX model
+                self.emb = atlas_v3.ServiceEmbedder(self.model_dir) if atlas_v3.is_service(self.model_dir) else Embedder(self.model_dir, self.threads)
             import gc
             chunk_size = 100
             total_chunks = (len(need_idx) + chunk_size - 1) // chunk_size

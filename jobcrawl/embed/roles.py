@@ -399,7 +399,11 @@ def embed_missing(site, prompt, text_chars, max_tokens, model_dir, vectors, thre
 
 
 def embed_roles(site, profile, model_dir, vectors, only_missing=False, threads=4, log=print):
-    """profile: a loaded profile, or None for the schema defaults (embed.prompt "search-query", zero cutoff, dynamic maxlen)."""
+    """profile: a loaded profile, or None for the schema defaults (embed.prompt "search-query", zero cutoff, dynamic maxlen).
+    model_dir may be an atlas_v3 board package (jobcrawl/embed/atlas_v3.py): its precomputed v3 vectors are imported, nothing is encoded here."""
+    from jobcrawl.embed import atlas_v3
+    if atlas_v3.is_package(model_dir):
+        return atlas_v3.import_package(model_dir, site, vectors, only_missing=only_missing, log=log)
     e = (profile or {}).get('embed') or {}
     prompt = e.get('prompt', 'search-query')
     raw_chars = e.get('text_chars', 0)

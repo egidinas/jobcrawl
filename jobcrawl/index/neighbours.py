@@ -37,6 +37,12 @@ def build(site, vectors, out, log=print, use_jobonly=True):
 
     with open(json_file, encoding='utf-8') as fh:
         vj = json.load(fh)
+    # thresholds belong to the embedding space: a vectors file may carry its own (atlas_v3: "nb_params"); EmbeddingGemma keeps the constants
+    nbp = vj.get('nb_params') or {}
+    dup_cos, dup_title = float(nbp.get('dup_cos', DUP_COS)), float(nbp.get('dup_title', DUP_TITLE))
+    same_emp_cos, per_employer = float(nbp.get('same_employer_cos', SAME_EMPLOYER_COS)), int(nbp.get('per_employer', PER_EMPLOYER))
+    if nbp:
+        log(f'neighbours: space thresholds from {os.path.basename(json_file)}: dup_cos {dup_cos}, same_employer_cos {same_emp_cos}')
     ids = vj['ids']; n = len(ids)
     with open(bin_file, 'rb') as fh:
         V = np.frombuffer(fh.read(), np.int8).reshape(n, vj['dim']).astype(np.float32)
@@ -92,12 +98,12 @@ def build(site, vectors, out, log=print, use_jobonly=True):
                 cand.append([]); continue
             cand.append([(int(j), float(S[r, j])) for j in top[r] if on[j]])
             for j, c in cand[-1]:
-                if c < SAME_EMPLOYER_COS:
+                if c < same_emp_cos:
                     break
                 u = len(tw[i] & tw[j]) / max(1, len(tw[i] | tw[j]))
                 # the same job: nearly the same title, and nearly the same text (or, at the same employer, a similar text:
                 # the same posting for another city differs in its location paragraphs)
-                if u >= DUP_TITLE and (c >= DUP_COS or emp[i] == emp[j]):
+                if u >= dup_title and (c >= dup_cos or emp[i] == emp[j]):
                     parent[find(i)] = find(j)
     # the same title at the same employer is the same job listed again (other city, other shift), however its text differs
     same = collections.defaultdict(list)
@@ -114,7 +120,7 @@ def build(site, vectors, out, log=print, use_jobonly=True):
     for i in range(n):
         per = collections.Counter(); k = 0; seen = {find(i)}
         for j, c in cand[i]:
-            if find(j) in seen or per[emp[j]] >= PER_EMPLOYER:      # one per duplicate group, a few per employer
+            if find(j) in seen or per[emp[j]] >= per_employer:      # one per duplicate group, a few per employer
                 continue
             seen.add(find(j)); per[emp[j]] += 1; nb[i, k] = j; sim[i, k] = max(0, min(100, round(c * 100))); k += 1
             if k == K:
