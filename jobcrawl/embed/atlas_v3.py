@@ -60,6 +60,8 @@ def import_package(pkg, site, vectors, only_missing=False, log=print):
     meta = {'dim': pj['dim'], 'ids': list(pj['ids']), 'mean': [0.0] * pj['dim'], 'lang_dirs': [], 'model': model, 'label_set': man.get('label_set'),
             'pooling': 'cls', 'prompt': '', 'max_tokens': pj.get('max_tokens'), 'text': pj.get('text'), 'vector': pj.get('vector'),
             'package_created': man.get('created'), 'checkpoint': (man.get('checkpoint') or {}).get('model_weights_sha256')}
+    if pj.get('nb_params'):       # the space's own duplicate / employer thresholds for neighbours.build
+        meta['nb_params'] = pj['nb_params']
     jpath = os.path.join(vectors, 'match-vec.json')
     if only_missing and os.path.exists(jpath):
         with open(jpath, encoding='utf-8') as fh:
