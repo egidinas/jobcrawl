@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { planBackfill, runQueue, nextRetry, lockIsActive, LIST_HAS_DESCRIPTION } from '../detail-backfill.mjs';
+import { planBackfill, runQueue, nextRetry, lockIsActive, LIST_HAS_DESCRIPTION, jdAfterFetch } from '../detail-backfill.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const row = (url, company, status, first_seen = '2026-10-20') => [url, { url, company, title: 't', location: 'x', first_seen, last_seen: first_seen, status, posted: '' }];
@@ -36,6 +36,55 @@ test('planBackfill: skips vendors whose list carries descriptions, done and wait
   assert.ok(LIST_HAS_DESCRIPTION.has('greenhouse') && !LIST_HAS_DESCRIPTION.has('workday'));
   // --vendors names the vendors explicitly, even one whose list carries descriptions
   assert.equal(planBackfill({ history, boards, state, now, vendors: ['greenhouse'] }).queue.length, 1);
+});
+
+test('planBackfill: an open role fetched before texts were kept is fetched once more while its saved text is thin; --retry-failed lifts the wait', () => {
+  const now = Date.parse('2026-11-11T12:00:00Z');
+  const u = (n) => `https://a.wd5.myworkdayjobs.com/A/job/x/${n}`;
+  const history = new Map([row(u('thin-unkept'), 'Acme', 'open'), row(u('thin-kept'), 'Acme', 'open'), row(u('thin-written'), 'Acme', 'open'),
+    row(u('full-unkept'), 'Acme', 'open'), row(u('extra-done'), 'Acme', 'extra'), row(u('open-waiting'), 'Acme', 'open')]);
+  const boards = new Map([['Acme', { provider: 'workday', slug: 'a|wd5|A' }]]);
+  const state = { [u('thin-unkept')]: { ok: true, len: 4600 }, [u('thin-kept')]: { ok: true, len: 4600, jd: 'kept' }, [u('thin-written')]: { ok: true, len: 4600, jd: 'written' },
+    [u('full-unkept')]: { ok: true, len: 4600 }, [u('extra-done')]: { ok: true, len: 4600 }, [u('open-waiting')]: { ok: false, tries: 2, next: now + 5 * 864e5 } };
+  const len = { 'thin-unkept': 420, 'thin-kept': 420, 'thin-written': 420, 'full-unkept': 4000, 'open-waiting': -1 };
+  const jdInfo = (url) => len[url.split('/').pop()] ?? -1;
+  const plan = planBackfill({ history, boards, state, now, jdInfo });
+  assert.deepEqual(plan.queue.map((q) => q.row.url.split('/').pop()), ['thin-unkept'], 'only the open role whose fetched text was thrown away');
+  assert.equal(plan.queue[0].priority, 0);
+  assert.equal(plan.skipped.done, 4);
+  assert.equal(plan.skipped.waiting, 1);
+  const again = planBackfill({ history, boards, state, now, jdInfo, retryFailed: true });
+  assert.deepEqual(again.queue.map((q) => q.row.url.split('/').pop()).sort(), ['open-waiting', 'thin-unkept']);
+  assert.equal(again.skipped.waiting, 0);
+});
+
+test('jdAfterFetch: a missing description is written, a thin one replaced with its header kept, a normal one left alone; contacts stay out', () => {
+  const r = { url: 'https://acme.example/jobs/1', company: 'Acme GmbH', title: 'Systems Engineer (m/f/d)', location: 'Bremen', first_seen: '2026-11-02', posted: '2026-10-30T09:00:00Z' };
+  const role = 'You design, integrate and verify the payload data handling chain of a small satellite platform. '.repeat(6).trim();   // 580 characters
+  // no file yet: the saveJd layout
+  const fresh = jdAfterFetch(null, r, role);
+  assert.equal(fresh, `# Systems Engineer (m/f/d)\n\n- Company: Acme GmbH\n- Location: Bremen\n- URL: https://acme.example/jobs/1\n- First seen: 2026-11-02\n- Posted: 2026-10-30\n\n${role}\n`);
+  // too short to be a description: nothing is written
+  assert.equal(jdAfterFetch(null, r, 'See the attached PDF.'), null);
+  // a thin saved text is replaced, the header (with lines this module does not write) stays
+  const thin = '# Systems Engineer (m/f/d)\n\n- Company: Acme GmbH\n- Location: Bremen\n- URL: https://acme.example/jobs/1\n- First seen: 2026-11-02\n- Department: Avionics\n\nShort teaser of the role.\n';
+  const next = jdAfterFetch(thin, r, role);
+  assert.ok(next.startsWith('# Systems Engineer (m/f/d)\n\n- Company: Acme GmbH\n'));
+  assert.match(next, /- Department: Avionics\n\nYou design, integrate/);
+  assert.ok(next.endsWith('platform.\n') && !next.includes('Short teaser'));
+  // not clearly longer than what is saved: left alone
+  assert.equal(jdAfterFetch(thin.replace('Short teaser of the role.', role.slice(0, 450)), r, role), null);
+  // a description of normal length is never replaced, however long the fetched page text is
+  const normal = thin.replace('Short teaser of the role.', role + ' ' + role + ' ' + role);
+  assert.equal(jdAfterFetch(normal, r, (role + ' ').repeat(12)), null);
+  // the contact section of a detail document and a single "Contact:" line never reach the file (invented contact data)
+  const withContacts = `${role}\nContact: Erika Beispiel, erika.beispiel@example.org, +49 421 000000\n\nApplication and contact\nApply by e-mail.\nContact: Max Muster, max.muster@example.org`;
+  const kept = jdAfterFetch(null, r, withContacts);
+  assert.ok(kept.includes('payload data handling'));
+  assert.ok(!/Contact:|Application and contact|example\.org|Beispiel|Muster/.test(kept));
+  // a long text keeps its beginning and its end (the crawl's clip)
+  const long = jdAfterFetch(null, r, 'A'.repeat(6000) + 'B'.repeat(6000));
+  assert.ok(long.includes('\n[...]\n') && long.trimEnd().endsWith('B') && long.length < 9300);
 });
 
 test('runQueue: budget, one request at a time per host with the delay, hosts in parallel, failures reported not thrown', async () => {

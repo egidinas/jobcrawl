@@ -137,6 +137,43 @@ function jsonLdContact(jp) {
   return parts.length ? `Contact: ${parts.join('; ')}` : '';
 }
 
+/**
+ * Oracle Recruiting (ORC CE): the details call for a role. jobUrl is the page the provider lists
+ * (<origin>/hcmUI/CandidateExperience/<lang>/sites/<site>/requisitions/preview/<Id>/), slug "<origin>|<site>". '' when the URL has no id.
+ */
+export function oracleDetailUrl(jobUrl, slug = '') {
+  const m = String(jobUrl ?? '').match(/^(https?:\/\/[^/]+)\/.*\/sites\/([A-Za-z0-9_-]+)\/(?:requisitions\/preview|job)\/([A-Za-z0-9_-]+)/);
+  if (!m) return '';
+  const [origin, site] = String(slug).includes('|') ? String(slug).split('|') : [m[1], m[2]];
+  return `${(origin || m[1]).replace(/\/+$/, '')}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?expand=all&onlyData=true`
+    + `&finder=ById;Id=%22${encodeURIComponent(m[3])}%22,siteNumber=${encodeURIComponent(site || m[2])}`;
+}
+
+/** The description in the answer of that call: the posting text, then responsibilities and qualifications under their own headings. */
+export function oracleDescriptionOf(json) {
+  const it = json?.items?.[0];
+  if (!it) return '';
+  const part = (title, html) => { const t = plain(String(html ?? '')); return t ? (title ? `${title}\n${t}` : t) : ''; };
+  const text = [part('', it.ExternalDescriptionStr), part('Responsibilities', it.ExternalResponsibilitiesStr), part('Qualifications', it.ExternalQualificationsStr)]
+    .filter(Boolean).join('\n\n');
+  return text || part('', it.ShortDescriptionStr);
+}
+
+/**
+ * UKG Pro Recruiting (UltiPro) detail page: the posting is an object literal in a script
+ * (new US.Opportunity.CandidateOpportunityDetail({"Id":...,"Description":"<p>..."})), not in the markup, so pageDescriptionOf
+ * finds nothing. Returns the "Description" string as plain text, '' when the page has none.
+ */
+export function ultiproDescriptionOf(html) {
+  const at = String(html ?? '').indexOf('CandidateOpportunityDetail(');
+  if (at < 0) return '';
+  let best = '';   // nested objects (locations, categories) may have a "Description" of their own: the posting's is the longest
+  for (const m of String(html).slice(at).matchAll(/"Description"\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+    try { const t = plain(JSON.parse(`"${m[1]}"`)); if (t.length > best.length) best = t; } catch { /* not a JSON string: skip */ }
+  }
+  return best;
+}
+
 /** pageDescription on a page already fetched; pure, so the tests can run it on captured pages. */
 export function pageDescriptionOf(html, job = {}) {
   html = String(html);
@@ -1685,6 +1722,13 @@ export const providers = {
       }
       return out;
     },
+    // The requisition list carries no description and the job page is a JavaScript shell (pageDescription reads nothing from it):
+    // the text comes from the details resource of the same REST API, one request per role.
+    async fetchDescription(job, slug) {
+      const url = oracleDetailUrl(job.url, slug);
+      if (!url) return '';
+      try { return oracleDescriptionOf(await get(url, { json: true, timeoutMs: 15000 })); } catch { return ''; }
+    },
   },
 
   // MBDA Deutschland: WordPress admin-ajax endpoint for job listings
@@ -2701,6 +2745,10 @@ export const providers = {
         if (rows.length < 50 || skip + 50 >= (d.totalCount ?? 0)) break;
       }
       return out.filter((j) => j.title);
+    },
+    // The search answer carries no description; the detail page embeds the posting as a script object (ultiproDescriptionOf).
+    async fetchDescription(job) {
+      try { return ultiproDescriptionOf(await get(job.url, { json: false, timeoutMs: 15000 })); } catch { return ''; }
     },
   },
 

@@ -3,6 +3,22 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-11: descriptions that the list call does not carry
+
+- **Detail backfill keeps the text it fetches**: for an open role whose saved description is missing or thin (under 1,200 characters)
+  the text of the detail page is written to the description store (`jdAfterFetch`: a missing file is written, a thin one replaced with
+  its header kept when the page gives at least 200 characters more, a normal one left alone). It used to be read for the posting's
+  facts only and thrown away. Open roles fetched before this change are queued once more; `--retry-failed` lifts the wait after a
+  failed fetch (use it with `--vendors` after a provider learned a description call).
+- **Description calls** (`fetchDescription`) for Oracle Recruiting Cloud (the `recruitingCEJobRequisitionDetails` call: description,
+  responsibilities, qualifications) and UKG Pro / UltiPro (the `CandidateOpportunityDetail` script object of the detail page). Both
+  have no text in the list call and a detail page the generic reader cannot read; the crawl's lazy description path and the backfill
+  use the calls.
+- `crawler/jdclean.mjs`: helpers for the description file layout (`jdDocument`, `jdBody`, `jdHeader`, `clipDescription`) and
+  `stripContactSection`: the "Application and contact" section of an EURES detail document and `Contact:` lines are recruiting
+  contacts and are cut before the backfill saves a fetched text.
+- Tests: `crawler/tests/detail-description.test.mjs`, additions to `crawler/tests/detail-backfill.test.mjs`.
+
 ## 2026-11-07: crawl policy (robots.txt advisory), generous page budgets
 
 - **Crawl policy in one place** (`crawler/policy.mjs`, owner's decision: "keep ambitious with probing and be generous with pages, small

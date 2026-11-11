@@ -124,7 +124,7 @@ first provider whose detect() recognises the entry's `careers_url` is used (regi
 | `breezy` | `([a-z0-9-]+).breezy.hr` |  |
 | `pinpoint` | `([a-z0-9-]+).pinpointhq.com` |  |
 | `avature` | `avature.net`, `jobs.rohde-schwarz.com` |  |
-| `oraclecloud` | `([a-z0-9_.-]+.oraclecloud.com)[^\s]*/sites/([a-zA-Z0-9_-]+)` |  |
+| `oraclecloud` | `([a-z0-9_.-]+.oraclecloud.com)[^\s]*/sites/([a-zA-Z0-9_-]+)` | yes |
 | `mbda` | `mbda-careers.de` |  |
 | `lucca` | `jobs.world.luccasoftware.com/([a-zA-Z0-9_-]+)` |  |
 | `onlyfy` | `([\w-]+).onlyfy.jobs` |  |
@@ -153,7 +153,7 @@ first provider whose detect() recognises the entry's `careers_url` is used (regi
 | `hrlab` | `app.hrlab.de/(?:[a-z]{2}/)?jobs/([\w-]+)` | yes |
 | `eso` | `recruitment.eso.org` |  |
 | `adp` | `workforcenow.adp.com[^#]*[?&]cid=([0-9a-f-]{36})`, `[?&]ccId=([\w]+)` |  |
-| `ultipro` | `(recruiting\d*.ultipro.(?:com or ca))/([A-Za-z0-9]+)/JobBoard/([0-9...` |  |
+| `ultipro` | `(recruiting\d*.ultipro.(?:com or ca))/([A-Za-z0-9]+)/JobBoard/([0-9...` | yes |
 | `icims` | `([\w-]+.icims.com)` |  |
 | `jibe` | `([\w.-]+)/(?:[\w-]+/)?jobs/[\w-]+\?lang=[a-z-]+` |  |
 | `comeet` | `comeet.(?:com or co)/jobs/([\w-]+)/([0-9A-F.]+)` |  |

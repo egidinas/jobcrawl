@@ -6,10 +6,17 @@
 // the 'extra' and 'filtered' roles with a title and nothing else, and the 'open' ones with a plain-text copy clipped at 9,000
 // characters. This script fetches the detail of all of them through the same provider code and the same fetch as the crawl,
 // so rawcapture.mjs keeps every response byte for byte (JOBCRAWL_RAW_DIR is required; without it the fetch would be wasted).
-// Nothing is written to jd/*.md: the declared layer is parsed from the raw store.
+// The fetched text is also kept (2026-11-11; before, it was thrown away and only its length was recorded): for an 'open' role the
+// description file <data>/jd/<hash>.md is written when it is missing, and replaced when the saved text is thin (under 1,200
+// characters) and the fetched one is at least 200 characters longer. A description of normal length is never replaced, and
+// 'extra' / 'filtered' roles get no file (the declared layer is parsed from the raw store). Open roles that an earlier run fetched
+// successfully but whose saved text is still missing or thin are fetched once more.
 //
 //   node crawler/detail-backfill.mjs --profile <dir> --data <dir> [--budget 400] [--minutes 0] [--host-delay 1500] [--concurrency 4]
 //                                    [--host-fail-limit 5] [--statuses extra,filtered,open] [--vendors workday,smartrecruiters] [--dry-run]
+//                                    [--retry-failed]
+//
+// --retry-failed ignores the retry dates of failed URLs (use it with --vendors after a provider learned to read its details).
 //
 // --minutes N stops starting requests after N minutes (0 = no time limit), so a large --budget fits a cycle or a lane. A host whose
 // last --host-fail-limit requests in this run all failed is left for the next run (its remaining URLs are not tried and not counted
@@ -27,13 +34,13 @@
 // One instance per data directory: <data>/detail-backfill.lock holds {pid, started}; a second run finds it, sees the pid alive and
 // the lock younger than 12 hours, and exits without touching the queue, so a long dedicated run and the per-cycle hook never
 // work the same URLs. A crash leaves a stale lock, which the next run takes over (dead pid, or older than 12 hours).
-import { existsSync, readFileSync, writeFileSync, renameSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, statSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { providers, resolve, setCacheDir, pageDescription } from './providers.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters } from './profile.mjs';
 import { setUserAgent } from './useragent.mjs';
-import { jdFileName } from './jdclean.mjs';
+import { jdFileName, jdBody, jdDocument, jdHeader, clipDescription, stripContactSection } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled } from './policy.mjs';
 import { setEuresLane } from './providers-eures.mjs';
@@ -70,7 +77,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * The work list. history: Map url -> row ({url, company, title, status, first_seen, ...}); boards: Map company name -> {provider, slug};
  * state: the backfill state; jdInfo(url) -> text length of the saved description or -1. Returns {queue, skipped, byVendor}.
  */
-export function planBackfill({ history, boards, state = {}, now = Date.now(), statuses = ['extra', 'filtered', 'open'], vendors = null, jdInfo = () => -1 }) {
+export function planBackfill({ history, boards, state = {}, now = Date.now(), statuses = ['extra', 'filtered', 'open'], vendors = null, jdInfo = () => -1, retryFailed = false }) {
   const want = new Set(statuses);
   const only = vendors ? new Set(vendors) : null;
   const skipped = { status: 0, 'no-board': 0, 'list-carries-description': 0, 'no-scrape': 0, done: 0, waiting: 0 };
@@ -82,8 +89,9 @@ export function planBackfill({ history, boards, state = {}, now = Date.now(), st
     if (only ? !only.has(board.provider) : LIST_HAS_DESCRIPTION.has(board.provider)) { skipped['list-carries-description']++; continue; }
     if (NO_SCRAPE.test(row.url)) { skipped['no-scrape']++; continue; }
     const st = state[row.url];
-    if (st?.ok) { skipped.done++; continue; }
-    if (st && st.next > now) { skipped.waiting++; continue; }
+    // done, unless it is an open role fetched before the text was kept (no st.jd) whose saved text is still missing or thin: once more
+    if (st?.ok && !(row.status === 'open' && !st.jd && jdInfo(row.url) < THIN)) { skipped.done++; continue; }
+    if (st && !st.ok && st.next > now && !retryFailed) { skipped.waiting++; continue; }
     let priority = 1;                                   // extra and filtered: no text at all
     if (row.status === 'open') { const len = jdInfo(row.url); priority = len < THIN ? 0 : len >= CLIP ? 2 : 3; }
     queue.push({ row, board, priority, host: hostOf(row.url) });
@@ -126,6 +134,22 @@ export async function runQueue(queue, fetchOne, { budget = 400, hostDelay = 1500
     }
   }));
   return Object.assign(attempted, { skipped });
+}
+
+/**
+ * What the description file of an open role holds after its detail was fetched: the new content, or null to leave the file alone.
+ * existing: the file's content or null; row: the history row; text: the fetched description. A missing file is written; a thin one
+ * (under THIN characters of text) is replaced, header kept, when the fetched text is at least 200 characters longer; a description
+ * of normal length is never replaced (a page text can be longer only because it carries the menus). Recruiting contacts stay out.
+ */
+export function jdAfterFetch(existing, row, text) {
+  const t = stripContactSection(text);
+  if (t.length < 200) return null;
+  if (existing == null) return jdDocument(row, t);
+  const body = jdBody(existing);
+  if (body.length >= THIN || t.length < body.length + 200) return null;
+  const head = jdHeader(existing);
+  return head ? `${head}\n\n${clipDescription(t)}\n` : jdDocument(row, t);
 }
 
 export function nextRetry(tries, now = Date.now()) {
@@ -202,7 +226,7 @@ async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
   const maxMs = Number(opt('minutes', 0)) * 60000, hostFailLimit = Number(opt('host-fail-limit', 5));
   const statuses = opt('statuses', 'extra,filtered,open').split(',');
   const vendors = opt('vendors') ? opt('vendors').split(',') : null;
-  const plan = planBackfill({ history, boards, state, statuses, vendors, jdInfo });
+  const plan = planBackfill({ history, boards, state, statuses, vendors, jdInfo, retryFailed: flag('retry-failed') });
   const prio = [0, 1, 2, 3].map((p) => plan.queue.filter((q) => q.priority === p).length);
   say(`start: ${history.size} history rows, ${boards.size} boards; candidates ${plan.queue.length} (open without text ${prio[0]}, extra/filtered ${prio[1]}, `
     + `clipped open ${prio[2]}, complete open ${prio[3]}); skipped ${JSON.stringify(plan.skipped)}; budget ${budget}${maxMs ? ` or ${maxMs / 60000} min` : ''}, host delay ${hostDelay} ms, ${concurrency} hosts at a time, a host stops after ${hostFailLimit || 'unlimited'} failures in a row`);
@@ -211,24 +235,34 @@ async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
 
   const counts = {};
   const bump = (vendor, k) => { const c = counts[vendor] ??= { ok: 0, fail: 0 }; c[k]++; };
-  let ok = 0, fail = 0;
+  let ok = 0, fail = 0, saved = 0;
   const fetchOne = async ({ row, board }) => {
     const p = providers[board.provider];
     const job = { url: row.url, title: row.title, company: row.company };
     const text = p?.fetchDescription ? await p.fetchDescription(job, board.slug) : await pageDescription(job);
-    return { ok: typeof text === 'string' && text.length >= 200, len: text?.length ?? 0 };
+    return { ok: typeof text === 'string' && text.length >= 200, len: text?.length ?? 0, text };
+  };
+  // the text of an open role goes to its description file (jdAfterFetch decides); a write error is reported, the run goes on
+  const keepText = (row, text) => {
+    const f = pathResolve(jdDir, jdFileName(row.url));
+    let existing = null;
+    try { existing = readFileSync(f, 'utf8'); } catch { /* no file yet */ }
+    const next = jdAfterFetch(existing, row, text);
+    if (!next) return 'kept';
+    try { mkdirSync(jdDir, { recursive: true }); writeFileSync(f, next); saved++; return 'written'; }
+    catch (e) { say(`description not saved for ${row.url}: ${e.message}`); return 'kept'; }
   };
   const onDone = ({ row, board }, res, i) => {
     const st = state[row.url] ?? { tries: 0 };
     st.tries++;
     st.t = Date.now();
-    if (res.ok) { st.ok = true; st.len = res.len; delete st.next; ok++; bump(board.provider, 'ok'); }
+    if (res.ok) { st.ok = true; st.len = res.len; delete st.next; ok++; bump(board.provider, 'ok'); if (row.status === 'open') st.jd = keepText(row, res.text); }
     else { st.ok = false; st.len = res.len ?? 0; if (res.error) st.error = res.error.slice(0, 120); st.next = nextRetry(st.tries); fail++; bump(board.provider, 'fail'); }
     state[row.url] = st;
     if (i % 50 === 0) {
       saveState();
       const dt = (Date.now() - t0) / 1000;
-      say(`progress: ${i}/${Math.min(budget, plan.queue.length)} fetched, ${ok} ok, ${fail} failed, ${dt.toFixed(0)} s, ${(i / dt).toFixed(2)} req/s`);
+      say(`progress: ${i}/${Math.min(budget, plan.queue.length)} fetched, ${ok} ok, ${fail} failed, ${saved} descriptions saved, ${dt.toFixed(0)} s, ${(i / dt).toFixed(2)} req/s`);
     }
   };
   const done = await runQueue(plan.queue, fetchOne, { budget, hostDelay, concurrency, maxMs, hostFailLimit, onDone });
@@ -237,7 +271,7 @@ async function backfill({ flag, opt, t0, say, PROFILE, dataDir }) {
   flushPolicy();
   const left = plan.queue.length - done.length;
   const sk = done.skipped;
-  say(`result: ${ok} ok, ${fail} failed in ${((Date.now() - t0) / 1000).toFixed(0)} s; per vendor ${Object.entries(counts).map(([v, c]) => `${v} ${c.ok}/${c.ok + c.fail}`).join(', ')}; `
+  say(`result: ${ok} ok, ${fail} failed, ${saved} descriptions saved in ${((Date.now() - t0) / 1000).toFixed(0)} s; per vendor ${Object.entries(counts).map(([v, c]) => `${v} ${c.ok}/${c.ok + c.fail}`).join(', ')}; `
     + `${left} left in the queue (about ${Math.ceil(left / Math.max(1, done.length))} more runs like this one)`
     + `${sk.time ? `; ${sk.time} not started (time limit)` : ''}${sk.host_failing ? `; ${sk.host_failing} left on ${sk.hosts.length} failing hosts (${sk.hosts.slice(0, 5).join(', ')})` : ''}; ${rawCaptureSummary()}`);
   for (const line of policySummary()) say(`policy: ${line}`);

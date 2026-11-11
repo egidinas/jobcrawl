@@ -11,6 +11,45 @@ const DAY = 864e5;
 /** File name of a role's saved description: the first 10 hex digits of sha1(url) plus .md. */
 export const jdFileName = (url) => createHash('sha1').update(url).digest('hex').slice(0, 10) + '.md';
 
+/** A long description keeps its beginning and its end (the same cut as the crawl's saveJd). */
+export const clipDescription = (d, max = 9000, tail = 1500) => (d.length <= max ? d : `${d.slice(0, max - tail - 8)}\n[...]\n${d.slice(-tail)}`);
+
+/** The description part of a saved file: what follows the "# title" line and the "- Key: value" lines. */
+export function jdBody(text) {
+  const t = String(text ?? '');
+  const m = t.match(/^#[^\n]*\n\s*(?:- [^\n]*\n)+/);
+  return (m ? t.slice(m[0].length) : t).trim();
+}
+
+/**
+ * A description without the recruiting contacts a detail call appends: everything from a line "Application and contact" on (the
+ * EURES provider's euresDetailSection: application instructions, "Contact:" lines with names, e-mail addresses and phone numbers),
+ * and any single "Contact: ..." line (the JSON-LD applicationContact line of pageDescriptionOf). The role text itself is not changed.
+ */
+export function stripContactSection(text) {
+  let t = String(text ?? '');
+  const cut = t.search(/(?:^|\n)[ \t]*Application and contact[ \t]*(?:\n|$)/);
+  if (cut >= 0) t = t.slice(0, cut);
+  return t.split('\n').filter((l) => !/^\s*Contact:\s/.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * The content of a description file for a history row, in the layout the crawl's saveJd writes (header lines, a blank line, the
+ * clipped text). row: { title, company, location, url, first_seen, posted }.
+ */
+export function jdDocument(row, text) {
+  const posted = /^\d{4}-\d{2}-\d{2}/.test(row.posted ?? '') ? String(row.posted).slice(0, 10) : '';
+  const head = [`# ${row.title}`, '', `- Company: ${row.company}`, `- Location: ${row.location || '?'}`, `- URL: ${row.url}`, `- First seen: ${row.first_seen ?? ''}`,
+    ...(posted ? [`- Posted: ${posted}`] : [])];
+  return `${head.join('\n')}\n\n${clipDescription(String(text).trim())}\n`;
+}
+
+/** The header of an existing description file (kept when its text is replaced), without the text. '' when the file has no header. */
+export function jdHeader(text) {
+  const m = String(text ?? '').match(/^#[^\n]*\n\s*(?:- [^\n]*\n)+/);
+  return m ? m[0].replace(/\s+$/, '') : '';
+}
+
 /**
  * Removes the description files of roles not seen for more than keepDays days (dryRun: counts them and deletes nothing).
  * history: Map url -> row (as the crawler's loadHistory returns it); today: YYYY-MM-DD of the run.
