@@ -644,6 +644,12 @@ export const providers = {
       // postings under /jobposting/<hash>, no tenant in the URL) keep only the postings whose JSON-LD hiringOrganization matches.
       const orgPat = entry.org_filter ? new RegExp(entry.org_filter, 'i') : null;
       const out = urls.map((u) => cache[u.url]?.job).filter((j) => j?.title && (!orgPat || orgPat.test(j.organization ?? '')));
+      // entry.employer_from_jsonld: a multi-employer board's sitemap (findaspacejob.com): the employer is the posting's JSON-LD
+      // hiringOrganization, written "<employer> (via <board>)" like the other aggregator providers; a posting without one keeps the board's name.
+      if (entry.employer_from_jsonld && entry.name) {
+        const board = String(entry.name).replace(/\s*\(via [^)]*\)\s*$/i, '');
+        for (const [k, j] of out.entries()) if (j.organization && !/^(?:confidential|anonymous|n\/a|-)$/i.test(j.organization.trim())) out[k] = { ...j, company: `${j.organization.trim()} (via ${board})` };
+      }
       return markIncomplete(out, Math.max(0, todo.length - i), capped ? `${capped} child sitemaps past the ${SITEMAP_CHILDREN_CAP} cap` : '');
     },
   },

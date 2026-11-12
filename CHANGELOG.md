@@ -3,6 +3,15 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-12: aggregator follow-ups
+
+- **`aggregator: true`** on a registry entry makes a board on a generic provider (sitemap, paginated_list, jsonld_direct) an aggregator
+  (`isAggregatorEntry` in crosslist.mjs): its rows are aggregator rows, the cross-listing step applies, the direct row stays.
+- **`employer_from_jsonld: true`** (sitemap provider): the employer comes from the posting's JSON-LD `hiringOrganization`, written
+  `<employer> (via <board>)`.
+- **Startup sweep**: every open aggregator copy is checked against all open direct rows (posting key and description fingerprint) when the
+  crawl starts, so a match no longer waits for a new direct row to arrive (indexed by key and title token, linear in the aggregator rows).
+
 ## 2026-11-11: descriptions that the list call does not carry
 
 - **Detail backfill keeps the text it fetches**: for an open role whose saved description is missing or thin (under 1,200 characters)

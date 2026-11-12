@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import { resolve as pathResolve } from 'node:path';
 import { providers, resolve, setCacheDir, pageDescription } from './providers.mjs';
 import { fingerprintText } from './fingerprint.mjs';
-import { isCrossListing, sameEmployer, canonCompany, isAggregatorRow, AGGREGATOR_PROVIDERS, rowPostingKeys, setApplyKeys } from './crosslist.mjs';
+import { isCrossListing, sameEmployer, canonCompany, canonTitle, isAggregatorRow, isAggregatorEntry, rowPostingKeys, setApplyKeys } from './crosslist.mjs';
 import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueNames, strictVerdict, probationCycle, newProbation,
   useRelevance, INDUSTRY_AGGREGATOR_PROVIDERS, INDUSTRY_VIA, PROBATION_VERDICT } from './relevance.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters, entryTimeoutMs } from './profile.mjs';
@@ -306,7 +306,7 @@ async function scan() {
   const protectedIdx = makeEmployerIndex([
     ...loadCatalogueNames(CATALOGUE),
     ...protectedFromHistory(history.values()),
-    ...cfg.tracked_companies.filter((c) => !c.probation && !AGGREGATOR_PROVIDERS.has(c.provider)).map((c) => c.name),
+    ...cfg.tracked_companies.filter((c) => !c.probation && !isAggregatorEntry(c)).map((c) => c.name),
   ]);
   const isProtected = (name) => protectedIdx.has(name);
   const enabledAll = cfg.tracked_companies.filter((c) => c.enabled !== false && (!only || c.name.toLowerCase().includes(only)));
@@ -349,7 +349,7 @@ async function scan() {
   const profileOf = new Map(cfg.tracked_companies.filter((c) => c.profile).map((c) => [c.name, c.profile]));
   const stats = { fetched: 0, filtered: 0, seen: 0, crosslisted: 0, shadowed: 0 };
   // Aggregator boards (their employer is named in the title or the company suffix, so employer names cannot be compared).
-  const boardNames = new Set(cfg.tracked_companies.filter((c) => AGGREGATOR_PROVIDERS.has(c.provider)).map((c) => c.name));
+  const boardNames = new Set(cfg.tracked_companies.filter(isAggregatorEntry).map((c) => c.name));
 
   // The employer's own ATS is ground truth. A role an aggregator lists for an employer we crawl directly is not inserted (a known one is
   // filtered), provided the direct feed is healthy and currently holds open roles for that employer. If the direct feed dries up (a broken
@@ -389,9 +389,34 @@ async function scan() {
   // even without a fingerprint. An open aggregator copy of an open direct posting with the same id is marked dup (the employer's ATS is ground truth).
   const loadApplyKeys = (row) => { if (isAggregatorRow(row, boardNames)) { const f = jdFile(row.url); if (existsSync(f)) try { setApplyKeys(row, jdBody(readFileSync(f, 'utf8'))); } catch {} } };
   for (const row of history.values()) if (row.status === 'open') { loadApplyKeys(row); const fp = fpOf(row); if (fp || rowPostingKeys(row).length) openIndex.push({ fp, row }); }
-  for (const e of openIndex) {
-    if (e.row.status !== 'open' || !isAggregatorRow(e.row, boardNames) || !rowPostingKeys(e.row).length) continue;
-    if (openIndex.some((d) => d.row.status === 'open' && !isAggregatorRow(d.row, boardNames) && isCrossListing('', e.row, '', d.row, boardNames))) { e.row.status = 'dup'; stats.crosslisted++; }
+  // Startup sweep: every open aggregator copy is checked against ALL open direct rows (posting key and description fingerprint, the same
+  // isCrossListing as for a new row), so a match does not wait for a new direct row to arrive. The direct rows are indexed by posting key and
+  // by title token (two titles that match share most tokens, so the aggregator title's rarest token finds every candidate); the check stays
+  // linear in the number of aggregator rows.
+  {
+    const directIdx = openIndex.filter((d) => d.row.status === 'open' && !isAggregatorRow(d.row, boardNames));
+    const byKey = new Map(), byTok = new Map();
+    const keyOf = (k) => `${k.vendor}|${k.id}`;
+    for (const d of directIdx) {
+      for (const k of rowPostingKeys(d.row)) { const x = keyOf(k); (byKey.get(x) ?? byKey.set(x, []).get(x)).push(d); }
+      if (d.fp) for (const t of new Set(canonTitle(d.row.title).split(' ').filter(Boolean))) (byTok.get(t) ?? byTok.set(t, []).get(t)).push(d);
+    }
+    let swept = 0;
+    for (const e of openIndex) {
+      if (e.row.status !== 'open' || !isAggregatorRow(e.row, boardNames)) continue;
+      const cand = new Set();
+      for (const k of rowPostingKeys(e.row)) for (const d of byKey.get(keyOf(k)) ?? []) cand.add(d);
+      if (e.fp) {
+        // titleMatch needs token Jaccard >= 0.8: a matching title misses at most floor(0.2 n) of this title's n tokens, so the
+        // floor(0.2 n) + 1 rarest tokens always include one the matching title has
+        const toks = [...new Set(canonTitle(e.row.title).split(' ').filter(Boolean))].sort((x, y) => (byTok.get(x)?.length ?? 0) - (byTok.get(y)?.length ?? 0));
+        for (const t of toks.slice(0, Math.floor(0.2 * toks.length) + 1)) for (const d of byTok.get(t) ?? []) cand.add(d);
+      }
+      for (const d of cand) {
+        if (d.row.status === 'open' && isCrossListing(e.fp, e.row, d.fp, d.row, boardNames)) { e.row.status = 'dup'; stats.crosslisted++; swept++; break; }
+      }
+    }
+    if (swept) console.log(`cross-listing sweep: ${swept} open aggregator copies of an open direct posting marked dup (${directIdx.length} direct rows checked against)`);
   }
   const findOriginal = (fp, row) => openIndex.find((e) => e.row.status === 'open' && e.row.url !== row.url && isCrossListing(fp, row, e.fp, e.row, boardNames));
 
@@ -483,7 +508,7 @@ async function scan() {
       return d && Date.now() - d > maxAggAge ? 'stale aggregator posting' : null;
     };
     const siteVerdict = (j) => (siteOnly && !siteOnly.some((k) => norm(j.location).includes(k)) ? 'location (site whitelist)' : null);
-    const fromAggregator = AGGREGATOR_PROVIDERS.has(res.r.provider);
+    const fromAggregator = isAggregatorEntry({ ...companies[i], provider: res.r.provider });
     const shadowVerdict = (j) => (fromAggregator && employerHasAts((j.company ?? '').replace(/\s*\(via [^)]*\)\s*$/i, '')) ? SHADOWED : null);
     for (const j of res.jobs) {
       stats.fetched++;

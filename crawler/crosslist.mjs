@@ -103,6 +103,10 @@ export function listingKey(row) {
 // eures: the EURES portal aggregates the national public employment services, so its copy of a role an employer lists on its own ATS
 // is a cross-listing (providers-eures.mjs suffixes employers "(via EURES)").
 export const AGGREGATOR_PROVIDERS = new Set(['spacecareers', 'spacecapital', 'spaceindividuals', 'jobsinphotonics', 'mycareersfuture', 'linkedin', 'eures']);
+/** A registry entry is an aggregator board when its provider is one of AGGREGATOR_PROVIDERS or the entry says `aggregator: true`
+ *  (boards on a generic provider: sitemap, paginated_list, jsonld_direct). Rows of such an entry are aggregator rows: their company is
+ *  the board's name, or "<employer> (via <board>)". */
+export const isAggregatorEntry = (c) => c?.aggregator === true || AGGREGATOR_PROVIDERS.has(c?.provider);
 export const isAggregatorRow = (row, boardNames) => /\(via /i.test(row.company ?? '') || boardNames.has(row.company);
 
 // Posting-id rule. The keys of a row are its URL's key plus the keys of employer-ATS apply links found in its description (aggregator rows only).

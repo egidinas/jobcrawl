@@ -19,7 +19,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProfile, profileDirFromArgs } from './profile.mjs';
-import { AGGREGATOR_PROVIDERS, canonCompany } from './crosslist.mjs';
+import { isAggregatorEntry, canonCompany } from './crosslist.mjs';
 import { EURES_COUNTRIES, euresBoardUrl, detectEures, parseSlug } from './providers-eures.mjs';
 
 export const INTERVAL_HOURS = 168;   // weekly (crawl.mjs caps the effective interval at 48 h; see docs/sources/eures-api.md)
@@ -158,7 +158,7 @@ export function selectEmployers(cfg, catalogue, opts = {}) {
   const stats = { tracked: tracked.length, candidates: 0, employers: 0, covered: 0, unknown: 0, other: 0, existing: 0, emitted: 0 };
   const byKey = new Map();   // short name (lowercased) -> { employer, boards: [names], catalogue, verdict, code }
   for (const c of tracked) {
-    if (!c?.name || c.enabled === false || AGGREGATOR_PROVIDERS.has(c.provider)) continue;
+    if (!c?.name || c.enabled === false || isAggregatorEntry(c)) continue;
     stats.candidates++;
     const base = baseName(c.name);
     const cat = lookup(index, base);

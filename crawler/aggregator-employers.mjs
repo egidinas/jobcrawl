@@ -19,7 +19,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { AGGREGATOR_PROVIDERS, canonCompany, sameEmployer } from './crosslist.mjs';
+import { isAggregatorEntry, canonCompany, sameEmployer } from './crosslist.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
 
 export const HISTORY_HEADER = ['url', 'company', 'title', 'location', 'first_seen', 'last_seen', 'status', 'posted'];
@@ -170,7 +170,7 @@ function nameIndex() {
  */
 export function makeKnownIndex({ tracked = [], catalogue = [] } = {}) {
   const trackedIdx = nameIndex(), catIdx = nameIndex(), byDomain = new Map();
-  for (const c of tracked) if (c && c.name && !AGGREGATOR_PROVIDERS.has(c.provider)) trackedIdx.add(c.name, c);
+  for (const c of tracked) if (c && c.name && !isAggregatorEntry(c)) trackedIdx.add(c.name, c);
   for (const c of catalogue) {
     if (!c || !c.name || c.kind === 'board' || c.is_aggregator) continue;
     catIdx.add(c.name, c);
@@ -307,7 +307,7 @@ export function main(args) {
     try { const c = readJson(PROFILE.catalogueFile); catalogue = Array.isArray(c) ? c : c.companies ?? []; } catch (e) { log(`warning: catalogue ${PROFILE.catalogueFile} unreadable (${e.message}); every unknown employer is "new"`); }
   } else log('no catalogue file (profile key crawl.catalogue_file): the status is tracked or new');
   const aggRows = rows.filter((r) => splitVia(r.company));
-  const boardRows = tracked.filter((c) => AGGREGATOR_PROVIDERS.has(c.provider)).length;
+  const boardRows = tracked.filter(isAggregatorEntry).length;
   log(`loaded ${rows.length} history rows, ${aggRows.length} aggregator rows (${aggRows.filter((r) => r.status === 'open').length} open), ${Object.keys(meta).length} meta entries, ${tracked.length} companies entries (${boardRows} aggregator boards), ${catalogue.length} catalogue entries`);
 
   const grouped = groupAggregatorRows(aggRows, meta);
