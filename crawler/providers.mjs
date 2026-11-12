@@ -419,6 +419,8 @@ export function reachmeeRows(html, origin) {
   return out;
 }
 
+const csodShared = new Map();   // site URL -> { at, p }: one read per career site per cycle
+const CSOD_SHARE_MS = 20 * 60 * 1000;
 export const providers = {
   greenhouse: {
     detect: (u) => u.match(/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([\w-]+)/)?.[1],
@@ -651,7 +653,21 @@ export const providers = {
   // documented in the MIT-licensed career-ops project (providers/csod.mjs). slug = the career-site home URL.
   csod: {
     detect: (u) => (/^https:\/\/[\w-]+\.csod\.com\/ux\/ats\/careersite\/\d+/i.test(u) ? u.split('#')[0] : null),
-    async fetch(slug) {
+    // Several entries can name the same career site (OHB SE, MT Aerospace, OHB-System AG, KIRK: one board, four entries). csod.com asks for
+    // Crawl-delay 10, so each full read costs 1 + pages x 10 s (OHB: 267 postings = 12 requests = 2 min); reading it once per cycle for all
+    // entries is what keeps them inside their time budget (they all timed out after 35 s from 2026-11-07, when the policy began to honour it).
+    fetch(slug, entry) {
+      // key on what fetchOnce reads: tenant origin, career-site id and corp (entries may carry a requisition path or other query parameters)
+      let key = String(slug).split('#')[0];
+      try { const u = new URL(slug); key = `${u.origin}/${u.pathname.match(/careersite\/(\d+)/)?.[1] ?? ''}?c=${u.searchParams.get('c') || u.host.split('.')[0]}`; } catch { /* keep the raw slug */ }
+      const hit = csodShared.get(key);
+      if (hit && Date.now() - hit.at < CSOD_SHARE_MS) return hit.p.then((a) => a.map((j) => ({ ...j })));
+      const p = providers.csod.fetchOnce(slug, entry);
+      csodShared.set(key, { at: Date.now(), p });
+      p.catch(() => { if (csodShared.get(key)?.p === p) csodShared.delete(key); });
+      return p.then((a) => a.map((j) => ({ ...j })));
+    },
+    async fetchOnce(slug) {
       const u = new URL(slug);
       const siteId = Number(u.pathname.match(/careersite\/(\d+)/)[1]);
       const corp = u.searchParams.get('c') || u.host.split('.')[0];

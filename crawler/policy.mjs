@@ -166,7 +166,9 @@ export function noFetchReason(url) {
   }
   let segs = [];
   try { segs = u.pathname.split('/').map((s) => decodeURIComponent(s)); } catch { segs = u.pathname.split('/'); }
-  if (segs.some((s) => LOGIN_SEGMENT.test(s))) return 'a login or authentication page';
+  // WordPress's public AJAX endpoint (/wp-admin/admin-ajax.php) is anonymous (job lists such as mbda-careers.de use it), not a login page
+  const publicAjax = /\/wp-admin\/admin-ajax\.php$/i.test(u.pathname);
+  if (!publicAjax && segs.some((s) => LOGIN_SEGMENT.test(s))) return 'a login or authentication page';
   const wall = st.authWalls[u.origin + u.pathname];
   if (wall) return `behind a login (${wall.why}, seen ${wall.at})`;
   const opt = st.optOut.find((o) => hostMatch(host, o.host));
