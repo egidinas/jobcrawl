@@ -109,12 +109,23 @@ export function jobLinks(html, pageUrl, pattern, hosts) {
   return [...out];
 }
 
-/** Every JobPosting in a page's JSON-LD (a single node, @graph, or an ItemList of postings) -> jobs with a URL. */
-export function jobsFromJsonLd(html, pageUrl) {
+/** JSON-LD as employers write it: raw control characters (newlines, tabs) inside strings and trailing commas are common and make JSON.parse fail. */
+export function parseJsonLd(raw) {
+  try { return JSON.parse(raw); } catch { /* try the tolerant forms below */ }
+  const loose = String(raw).replace(/[\u0000-\u001f]+/g, ' ').replace(/,\s*([}\]])/g, '$1');
+  try { return JSON.parse(loose); } catch { return undefined; }
+}
+
+/**
+ * Every JobPosting in a page's JSON-LD (a single node, @graph, or an ItemList of postings) -> jobs with a URL.
+ * `ownPage`: the page is itself one posting's page (a detail page). Most employers' JobPosting nodes carry no url/sameAs/@id
+ * (Google does not require one), so a detail page's node falls back to the page's own URL; a list page's nodes need their own.
+ */
+export function jobsFromJsonLd(html, pageUrl, { ownPage = false } = {}) {
   const out = [];
   for (const m of html.matchAll(/<script[^>]+application\/ld\+json[^>]*>([\s\S]*?)<\/script>/gi)) {
-    let data;
-    try { data = JSON.parse(m[1]); } catch { continue; }
+    let data = parseJsonLd(m[1]);
+    if (data === undefined) continue;
     const nodes = [];
     const walk = (n) => {
       if (!n || typeof n !== 'object') return;
@@ -124,7 +135,7 @@ export function jobsFromJsonLd(html, pageUrl) {
     };
     walk(data);
     for (const jp of nodes) {
-      const url = jp.url ?? jp.sameAs ?? jp['@id'] ?? '';
+      const url = jp.url ?? jp.sameAs ?? jp['@id'] ?? (ownPage ? pageUrl : '');
       if (!url || !/^https?:/.test(url)) continue;
       const loc = [].concat(jp.jobLocation ?? []).map((l) => [l.address?.addressLocality, l.address?.addressCountry?.name ?? l.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
       const org = [].concat(jp.hiringOrganization ?? []).map((o) => (typeof o === 'string' ? o : o?.name ?? '')).find(Boolean) ?? '';
@@ -134,6 +145,7 @@ export function jobsFromJsonLd(html, pageUrl) {
   return out.filter((j) => j.title);
 }
 
+const RETRY_AFTER_FAILURE_MS = 6 * 36e5;
 const DEFAULT_JOB_PATTERN = /(?:^|\/)(?:jobs?|stellen(?:angebot|anzeige)?e?n?|karriere|careers?|vacanc(?:y|ies)|positions?|offene-stellen|stellenangebote|job-?detail|jobposting)(?:[/?._-]|$)/i;
 
 export const paginatedListConfig = `entry.list for provider "paginated_list":
@@ -215,9 +227,9 @@ export const genericProviders = {
           const u = todo[i++];
           try {
             const html = await fetchText(u, { timeoutMs: budget.pageTimeout(25000) });
-            const job = jobsFromJsonLd(html, u)[0] ?? (entry.jsonld_only ? null : parseJobPage(html, u));   // jsonld_only: pages without JobPosting markup are not postings
+            const job = jobsFromJsonLd(html, u, { ownPage: true })[0] ?? (entry.jsonld_only ? null : parseJobPage(html, u));   // jsonld_only: pages without JobPosting markup are not postings
             cache[u] = { t: now, job: job?.title ? { ...job, url: u } : null };
-          } catch { if (!cache[u]) cache[u] = { t: now, job: null }; }
+          } catch { if (!cache[u]) cache[u] = { t: now - ttl + RETRY_AFTER_FAILURE_MS, job: null }; }   // a failed fetch is retried in ~6 h, not after the whole TTL
           await sleep(300);
         }
       }));

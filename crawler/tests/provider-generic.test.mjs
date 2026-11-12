@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { providers, setCacheDir } from '../providers.mjs';
 import { configurePolicy, installGuard, resetPolicy, policyStats, policySettled } from '../policy.mjs';
-import { jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd } from '../providers-generic.mjs';
+import { jsonPath, itemsOf, fieldsOf, jobLinks, jobsFromJsonLd, parseJsonLd } from '../providers-generic.mjs';
 
 const text = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8');
 
@@ -151,4 +151,57 @@ test('jsonld_direct: list page links -> posting pages parsed once and cached; ro
     assert.deepEqual(calls3.slice(1), ['https://www.mpg.de/sitemap.xml', 'https://www.mpg.de/1/a']);
     assert.equal(jobs.length, 1);
   } finally { setCacheDir(null); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('jsonld_direct with jsonld_only: a posting page whose JobPosting node names no url keeps the page URL (profiled boards returned 0 jobs since 2026-11-07)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jc-generic-'));
+  setCacheDir(dir);
+  try {
+    const list = text('research-mpg-jobboard.html'), job = text('research-mpg-job.html');   // the real page names no url in its JSON-LD
+    assert.deepEqual(jobsFromJsonLd(job, 'https://www.mpg.de/27061716/x'), [], 'a list page node without a url stays unusable');
+    const own = jobsFromJsonLd(job, 'https://www.mpg.de/27061716/x', { ownPage: true });
+    assert.equal(own.length, 1);
+    assert.equal(own[0].url, 'https://www.mpg.de/27061716/x', 'a detail page node falls back to the page URL');
+    const entry = { job_url_pattern: '^/[0-9]+/', max_jobs: 10, page_concurrency: 1, jsonld_only: true };
+    let jobs;
+    await withFetch((u) => (u.endsWith('/robots.txt') ? '' : u.endsWith('/jobboard') ? list : job),
+      async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); });
+    assert.equal(jobs.length, 2, 'jsonld_only no longer drops the postings whose JSON-LD has no url');
+    assert.equal(jobs[0].location, 'Dresden, DE');
+    // a page without any JobPosting markup is still skipped under jsonld_only
+    await withFetch((u) => (u.endsWith('/robots.txt') ? '' : u.endsWith('/jobboard') ? list : '<html><body>no markup</body></html>'),
+      async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', { ...entry }); });
+    assert.equal(jobs.length, 2, 'still the cached postings of the first run (TTL), nothing new fetched');
+  } finally { setCacheDir(null); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('jsonld_direct: a failed posting fetch is retried after ~6 h, not remembered as "not a posting" for the whole TTL', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jc-generic-'));
+  setCacheDir(dir);
+  try {
+    const list = text('research-mpg-jobboard.html'), job = text('research-mpg-job.html');
+    const entry = { job_url_pattern: '^/[0-9]+/', max_jobs: 10, page_concurrency: 1, jsonld_only: true };
+    let jobs;
+    await withFetch((u) => (u.endsWith('/robots.txt') ? '' : u.endsWith('/jobboard') ? list : null),   // every posting page answers 404
+      async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); });
+    assert.equal(jobs.length, 0);
+    const key = 'jsonld_direct:https://www.mpg.de/jobboard';
+    const { loadSitemapCache } = await import('../providers.mjs');
+    const cache = loadSitemapCache(key);
+    const ages = Object.values(cache).map((v) => Date.now() - v.t);
+    assert.ok(ages.length === 2 && ages.every((a) => a > 60 * 36e5), 'the failure entries are stamped so they expire in ~6 h (default TTL 72 h)');
+    const calls = await withFetch((u) => (u.endsWith('/robots.txt') ? '' : u.endsWith('/jobboard') ? list : job),
+      async () => { jobs = await providers.jsonld_direct.fetch('https://www.mpg.de/jobboard', entry); });
+    assert.equal(jobs.length, 0, 'not yet expired: 6 h after the failure the pages are tried again');
+    assert.equal(calls.length, 1, 'only the list page was fetched');
+  } finally { setCacheDir(null); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('jobsFromJsonLd: JSON-LD with raw newlines in strings or trailing commas is still read (8 of 32 dry-run boards)', () => {
+  const bad = '<script type="application/ld+json">{"@type":"JobPosting","title":"Elektriker (m/w/d)","url":"https://e.org/j/1","description":"Zeile 1' + String.fromCharCode(10) + 'Zeile 2' + String.fromCharCode(9) + 'Tab",}</script>';
+  const jobs = jobsFromJsonLd(bad, 'https://e.org/j/1');
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].title, 'Elektriker (m/w/d)');
+  assert.equal(parseJsonLd('{"a":1}').a, 1);
+  assert.equal(parseJsonLd('not json'), undefined);
 });
