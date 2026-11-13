@@ -13,7 +13,7 @@
 //
 //   node crawler/ats-resolve.mjs --profile <dir> [--data <dir>] [--label space_boards] [--seed <file.json|names.txt>] [--tiers 3]
 //        [--providers greenhouse,lever,...] [--no-fuzz] [--no-site] [--no-harvest] [--refresh] [--limit N] [--concurrency 16]
-//        [--max-minutes N] [--retest]
+//        [--max-minutes N] [--retest] [--site-pool N (default 12; a loaded host needs 3)] [--max-load L (exit 75 without work while the 1-min load average is above L)]
 //
 // --seed takes a JSON array of { name | unitName, website | companyWebsite | domain } or one name per line.
 // Without --seed the space boards are harvested (the harvest stage is specific to those boards; --seed works for any list).
@@ -43,6 +43,13 @@ const CONC = Number(opt('concurrency') ?? 16);
 const LIMIT = Number(opt('limit') ?? 0);
 const DEADLINE = opt('max-minutes') ? Date.now() + Number(opt('max-minutes')) * 60000 : 0;   // stop starting new companies after this
 const NEG_TTL_DAYS = 14;
+const SITE_POOL = Math.max(1, Number(opt('site-pool') ?? 12));
+const MAX_LOAD = opt('max-load') ? Number(opt('max-load')) : 0;
+if (MAX_LOAD) {   // load gate: a batch started on a busy host only times out and poisons the probe cache, so postpone it (exit 75 = try later)
+  const { loadavg } = await import('node:os');
+  const l1 = loadavg()[0];
+  if (l1 > MAX_LOAD) { console.log(`ats-resolve: postponed, 1-min load ${l1.toFixed(1)} is above --max-load ${MAX_LOAD}`); process.exit(75); }
+}
 const cfg = JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8'));
 
 // ---------- text helpers ----------
@@ -459,7 +466,7 @@ async function siteScan(r) {
 if (!flag('no-site')) {
   const need = [...records.values()].filter((r) => !trackedNames.has(recKey(r.name)) && !r.links.size && r.domains.size);
   let gained = 0, n = 0;
-  await pool(need, 12, async (r) => { await siteScan(r); if (r.links.size) { gained++; r.viaSite = true; } if (++n % 50 === 0) saveCache(); });
+  await pool(need, SITE_POOL, async (r) => { await siteScan(r); if (r.links.size) { gained++; r.viaSite = true; } if (++n % 50 === 0) saveCache(); });
   saveCache();
   console.log(`site scan: ${need.length} company sites, ${gained} gained an ATS link`);
 }
