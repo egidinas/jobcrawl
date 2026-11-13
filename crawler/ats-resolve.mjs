@@ -13,7 +13,7 @@
 //
 //   node crawler/ats-resolve.mjs --profile <dir> [--data <dir>] [--label space_boards] [--seed <file.json|names.txt>] [--tiers 3]
 //        [--providers greenhouse,lever,...] [--no-fuzz] [--no-site] [--no-harvest] [--refresh] [--limit N] [--concurrency 16]
-//        [--max-minutes N] [--retest] [--site-pool N (default 12; a loaded host needs 3)] [--max-load L (exit 75 without work while the 1-min load average is above L)]
+//        [--max-minutes N] [--retest] [--site-pool N (default 12; a loaded host needs 3)] [--host-delay-ms N] [--max-load L (exit 75 without work while the 1-min load average is above L)]
 //
 // --seed takes a JSON array of { name | unitName, website | companyWebsite | domain } or one name per line.
 // Without --seed the space boards are harvested (the harvest stage is specific to those boards; --seed works for any list).
@@ -44,6 +44,7 @@ const LIMIT = Number(opt('limit') ?? 0);
 const DEADLINE = opt('max-minutes') ? Date.now() + Number(opt('max-minutes')) * 60000 : 0;   // stop starting new companies after this
 const NEG_TTL_DAYS = 14;
 const SITE_POOL = Math.max(1, Number(opt('site-pool') ?? 12));
+const HOST_DELAY = Number(opt('host-delay-ms') ?? 0);   // minimum gap between two requests to the same host (the weekly watch uses 1000)
 const MAX_LOAD = opt('max-load') ? Number(opt('max-load')) : 0;
 if (MAX_LOAD) {   // load gate: a batch started on a busy host only times out and poisons the probe cache, so postpone it (exit 75 = try later)
   const { loadavg } = await import('node:os');
@@ -77,6 +78,7 @@ function domainStem(host) {
 // ---------- HTTP with per-host-family limits and 429 back-off ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const hostGates = new Map();
+const hostNext = new Map();   // hostname -> earliest time of its next request (--host-delay-ms)
 // One shared API host (greenhouse, lever, ashby...) gets few parallel requests; families where every company has its own
 // subdomain (personio, recruitee, ...) spread over many hosts and tolerate more.
 const SUBDOMAIN_FAMILY = /^(personio\.(de|com)|teamtailor\.com|softgarden\.io|bamboohr\.com|breezy\.hr|pinpointhq\.com)$/;
@@ -93,6 +95,7 @@ async function req(url, { method = 'GET', headers = {}, body } = {}) {
   const g = gateOf(url);
   await acquire(g);
   try {
+    if (HOST_DELAY) { const h = new URL(url).hostname; const at = Math.max(Date.now(), hostNext.get(h) ?? 0); hostNext.set(h, at + HOST_DELAY); if (at > Date.now()) await sleep(at - Date.now()); }
     for (let a = 0; a < 3; a++) {
       if (g.pauseUntil > Date.now()) await sleep(g.pauseUntil - Date.now());
       stats.requests++;

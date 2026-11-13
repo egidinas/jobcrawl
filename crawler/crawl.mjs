@@ -34,6 +34,7 @@ options:
   --profile <dir>     profile folder (or set JOBCRAWL_PROFILE); required
   --data <dir>        data folder (default: the profile's data_dir, else ./data)
   --config <file>     companies file to use instead of the profile's
+  --overlay <file>    extra employers {tracked_companies:[...]} appended to the companies file (env JOBCRAWL_COMPANIES_OVERLAY)
   --company <text>    only companies whose name contains <text>
   --all               ignore the title and location filters (see everything)
   --jd                also save the job description of every tracked role
@@ -285,8 +286,31 @@ async function pool(items, worker) {
 }
 
 // ---------- scan ----------
+// Optional overlay of employers kept next to the companies file (--overlay <file> or JOBCRAWL_COMPANIES_OVERLAY): {"tracked_companies": [...]}. Its entries are
+// appended when neither the name nor the provider+slug is already tracked; the companies file always wins. Not applied with --config (test copies).
+// Use: a host that cannot write the repo (read-only deploy key) adds newly found employers here; they are folded into the companies file later.
+function withOverlay(cfg) {
+  const file = opt('config') ? '' : (opt('overlay') ?? process.env.JOBCRAWL_COMPANIES_OVERLAY ?? '');
+  if (!file) return cfg;
+  if (!existsSync(file)) { console.error(`crawl: overlay ${file} not found, ignored`); return cfg; }
+  let add;
+  try { add = JSON.parse(readFileSync(file, 'utf8')).tracked_companies; if (!Array.isArray(add)) throw new Error('no tracked_companies array'); }
+  catch (e) { console.error(`crawl: overlay ${file} unreadable (${e.message}), ignored`); return cfg; }
+  const names = new Set(cfg.tracked_companies.map((c) => c.name));
+  const boards = new Set(cfg.tracked_companies.filter((c) => c.provider && c.slug).map((c) => `${c.provider}:${String(c.slug).toLowerCase()}`));
+  let n = 0;
+  for (const c of add) {
+    if (!c || typeof c.name !== 'string' || !(c.provider || c.careers_url)) continue;
+    const b = c.provider && c.slug ? `${c.provider}:${String(c.slug).toLowerCase()}` : '';
+    if (names.has(c.name) || (b && boards.has(b))) continue;
+    cfg.tracked_companies.push(c); names.add(c.name); if (b) boards.add(b); n++;
+  }
+  console.log(`crawl: overlay ${file}: +${n} employers (${add.length - n} already tracked or invalid)`);
+  return cfg;
+}
+
 async function scan() {
-  const cfg = applyProfileFilters(JSON.parse(readFileSync(CONFIG, 'utf8')), PROFILE);
+  const cfg = applyProfileFilters(withOverlay(JSON.parse(readFileSync(CONFIG, 'utf8'))), PROFILE);
   const only = opt('company')?.toLowerCase();
   // Per-site crawl interval: an entry with "interval_hours" is fetched only when it is due, so heavy boards (hundreds of
   // pages, no feed) run once or twice a day while light ones run every cycle. Due times are staggered by a per-company
