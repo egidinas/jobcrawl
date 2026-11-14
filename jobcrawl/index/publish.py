@@ -13,6 +13,7 @@ Port of the reference implementation's publish_match.py and the config part of t
     role-trends.json, role-timeline.*   copied when the traces were built (jobcrawl traces); the traces themselves stay in the vectors folder
     role-timeline-names-NNN.json        the timeline's title and company names, 2000 records per shard (copied with the timeline)
     geo-map.json, geo-map-<id>.json     the geographic cartogram: the index and one file per scope, copied when the vectors folder has the index (jobcrawl geomap; needs no vectors)
+    places-v1.json, levels_l3.json ...  the place file and the place module's detail shapes (GEOMAP_EXTRA), copied with the geography when present
 Without vectors the keyword index and config.json are still written; the Match me panel then runs on keywords alone.
 Nothing personal is involved. Standard library only, except building the neighbours here, which needs numpy: a machine without
 numpy publishes from a vectors folder that already holds role-nb.bin and role-graph.json.
@@ -32,6 +33,9 @@ TRENDS = ('role-trends.json', 'role-timeline.json', 'role-timeline.bin')     # b
 NAMES = re.compile(r'^role-timeline-names-\d{3}\.json$')
 GEOMAP = 'geo-map.json'                    # built by jobcrawl geomap (its own step, no numpy here); copied when present: the index, and the geo-map-<id>.json scopes
 GEOMAP_SCOPE = re.compile(r'^geo-map-[\w-]+\.json$')
+# copied with the geography when present: the place file of the board (jobcrawl.map.places, per cycle) and the shared place module's detail shapes
+# (NUTS3 counties, Singapore's planning areas, finer outlines of the countries outside Europe), loaded by the page once it zooms in
+GEOMAP_EXTRA = ('places-v1.json', 'levels_l3.json', 'levels_extra.json', 'countries_hires.json')
 
 
 class PublishError(ValueError):
@@ -128,7 +132,7 @@ def publish(site, profile, vectors=None, log=print, text_from=None, traces=None)
     written += ['match-bm25.json', 'match-attrs.json']
     if vectors and os.path.exists(os.path.join(vectors, GEOMAP)):
         scopes = sorted(f for f in os.listdir(vectors) if GEOMAP_SCOPE.match(f))
-        for name in [GEOMAP] + scopes:
+        for name in [GEOMAP] + scopes + [f for f in GEOMAP_EXTRA if os.path.exists(os.path.join(vectors, f))]:
             shutil.copyfile(os.path.join(vectors, name), os.path.join(out, name)); written.append(name)
     cfg = web_config(profile)
     if 'role-timeline.json' in written:

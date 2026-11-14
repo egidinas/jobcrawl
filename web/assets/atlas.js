@@ -76,6 +76,7 @@ style.textContent = `
 .shape-toggle{font-size:13px;display:flex;gap:6px;align-items:center}
 .atlas-note{font-size:12.5px;color:var(--muted)}
 .atlas-legend{display:block;margin:2px 0 4px;font-size:12.5px;line-height:1.7;color:var(--ink)}
+.atlas-strip{margin:6px 0 2px;font-size:13px;line-height:1.55;color:var(--ink)}.atlas-strip .sub{display:block;font-size:12px;opacity:.78}.atlas-src{display:block;font-size:11.5px;opacity:.7;margin-top:4px}
 .atlas-scrub{display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap;padding:7px 10px;border-top:1px solid var(--line);background:var(--panel);font-size:13px;color:var(--ink)}
 .atlas-scrub[hidden]{display:none}
 .atlas-scrub button{all:unset;cursor:pointer;width:28px;height:26px;text-align:center;line-height:26px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font-size:12px}.atlas-scrub button:focus-visible{outline:2px solid var(--accent)}
@@ -111,7 +112,7 @@ mount.innerHTML = `<div class="atlas-bar">
 <label class="shape-toggle"><input type="checkbox" id="atlas-all"> ${L('Show every role (otherwise at most three per employer and neighbourhood, so big employers do not crowd the map)', 'Jede Stelle zeigen (sonst höchstens drei je Arbeitgeber und Nachbarschaft, damit große Arbeitgeber die Karte nicht füllen)')}</label></div></details>
 <div class="atlas-grid"><div>
 <div class="atlas-stage"><canvas id="atlas-cv" width="900" height="640"></canvas><div class="atlas-zoom"><button type="button" id="atlas-zin" aria-label="zoom in">+</button><button type="button" id="atlas-zout" aria-label="zoom out">−</button><button type="button" id="atlas-zreset" aria-label="whole map">⟲</button><button type="button" id="atlas-fs" aria-label="${esc(pick('Full screen', 'Vollbild'))}" title="${esc(pick('Full screen', 'Vollbild'))}">⛶</button><button type="button" id="atlas-save-img" aria-label="${esc(pick('Save as image', 'Als Bild speichern'))}" title="${esc(pick('Save as image', 'Als Bild speichern'))}">⤓</button></div><div class="atlas-scrub" id="atlas-scrub" hidden><button type="button" id="atlas-play" aria-label="${esc(pick('Play', 'Abspielen'))}" title="${esc(pick('Play through time', 'Durch die Zeit abspielen'))}">▶</button><input type="range" id="atlas-time" min="0" max="0" value="0" aria-label="${esc(pick('Time', 'Zeitpunkt'))}"><span class="tl-label" id="atlas-tlabel"></span><label><input type="checkbox" id="atlas-heat"> ${L('Hot and cold spots', 'Wo es wächst und schrumpft')}</label></div>${cfg.geomap ? `<div class="atlas-scrub" id="atlas-geo" hidden><span>${L('Distortion', 'Verzerrung')}</span><span class="atlas-seg" id="atlas-morph" role="group" aria-label="${esc(pick('Distortion by roles', 'Verzerrung nach Stellen'))}"><button type="button" data-t="0" aria-pressed="false" title="${esc(pick('The true map', 'Die echte Karte'))}">${L('Off', 'Aus')}</button><button type="button" data-t="0.5" aria-pressed="true" title="${esc(pick('Areas follow the roles in part: the unequal spread, with the shapes kept recognisable', 'Flächen folgen den Stellen zum Teil: die ungleiche Verteilung, die Formen bleiben erkennbar'))}">${L('Moderate', 'Mäßig')}</button><button type="button" data-t="1" aria-pressed="false" title="${esc(pick('Every area sized by its share of the roles', 'Jede Fläche nach ihrem Anteil an den Stellen'))}">${L('Full', 'Voll')}</button></span><span>${L('Branches', 'Standorte')}</span><span class="atlas-seg" id="atlas-branches" role="group"><button type="button" data-b="now" aria-pressed="true" title="${esc(pick('Where roles are open now', 'Wo Stellen offen sind'))}">${L('Open now', 'Offen')}</button><button type="button" data-b="file" aria-pressed="true" title="${esc(pick('Locations on file, also where nothing is open', 'Hinterlegte Standorte, auch ohne offene Stelle'))}">${L('On file', 'Hinterlegt')}</button><button type="button" data-b="past" aria-pressed="false" title="${esc(pick('Where the company had roles before', 'Wo das Unternehmen früher Stellen hatte'))}">${L('Past roles', 'Frühere')}</button></span><input type="range" id="atlas-morph-t" min="0" max="1" step="0.005" value="0.5" aria-label="${esc(pick('Distortion, from the true map to areas by roles', 'Verzerrung, von der echten Karte bis zu Flächen nach Stellen'))}"></div>` : ''}</div>
-<p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
+<p class="atlas-note atlas-strip" id="atlas-strip" hidden></p><p class="atlas-note" id="atlas-status">${L('Loading the roles…', 'Lade die Stellen …')}</p></div>
 <div class="atlas-side"><div class="atlas-area" id="atlas-area"></div><div class="atlas-bar" style="margin:0"><strong id="atlas-in">${L('In the lens', 'In der Lupe')}</strong><button type="button" class="sm" id="atlas-shuffle">${L('Another sample', 'Andere Stichprobe')}</button></div>
 <ul class="atlas-list" id="atlas-list"></ul>
 <p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens.' + (SHAPE ? ' ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.' : ''), 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe.' + (SHAPE ? ' ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.' : ''))}</p></div></div>`;
@@ -751,7 +752,7 @@ function coScopeOk(e) { if (st.scope >= cfg.scopes.length - 1) return true; cons
 function geoLoad() { if (!geoLoading) geoLoading = fetch(dataUrl(cfg.geomap)).then((r) => (r.ok ? r.json() : null)).catch(() => null).then((j) => { GEO = j && (j.version === 1 || j.version === 2) ? j : null; geo.lays.clear();
   if (GEO && GEO.version === 2) { const top = geoLevels().slice(-1)[0]; return top ? geoFetchScope(top).then(() => GEO) : GEO; } return GEO; }).then(() => {
   geo.mod = !!(GEO && Object.values(GEO.scopes || {}).some((S) => S.moderate)); if (geoUni()) geo.t = geo.to = 0; else if (!geo.mod && geo.t === 0.5) geo.t = geo.to = 1;   // the zoomable map starts on the true map (seamless through the levels)
-  const mb = document.querySelector('#atlas-morph [data-t="0.5"]'); if (mb) mb.hidden = !geo.mod; geoMarks(); return GEO; }); return geoLoading; }
+  const mb = document.querySelector('#atlas-morph [data-t="0.5"]'); if (mb) mb.hidden = !geo.mod; geoMarks(); if (GEO && geoUni()) placeLoad(); return GEO; }); return geoLoading; }
 const geoUni = () => !!(GEO && GEO.version === 2);
 const geoScopeData = (sid) => (geoUni() ? geo.data.get(sid) : GEO && GEO.scopes && GEO.scopes[sid]) || null;
 // the levels, finest first (by the width of their box)
@@ -784,20 +785,14 @@ function geoFly(z1, then) { cancelAnimationFrame(geo.fly); const z0 = { ...st.z 
     st.z = { s: s1, cx: z0.cx + (z1.cx - z0.cx) * q, cy: z0.cy + (z1.cy - z0.cy) * q }; draw(); if (p < 1) geo.fly = requestAnimationFrame(step); else if (then) then(); };
   geo.fly = requestAnimationFrame(step); }
 const maxZoom = () => (st.mode === 'geo' && geoUni() ? 4000 : 24);
-// the colour of a density on the one zoomable map: log10 of roles per area (world units squared), from the widest level's lowest (5th percentile) to its highest
-// plus half a decade (a district can be denser than any country); the same area has about the same colour at every level
-function geoDensQ(d) { if (!geo.dr) { const top = geoLevels().slice(-1)[0], S = top && geo.data.get(top), b = S && S.box, k = b && S.w ? (b[2] - b[0]) / S.w : 0, v = [];
-    if (S && k) for (const sh of S.shapes || []) { if (!(sh.roles > 0)) continue; let a = 0; for (const r of sh.rings) { let q = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) q += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); a += Math.abs(q) / 2; } if (a > 0) v.push(Math.log10(sh.roles / (a * k * k))); }
-    v.sort((x, y) => x - y); geo.dr = v.length ? [v[Math.floor(0.05 * (v.length - 1))], v[v.length - 1] + 0.5] : [0, 1]; }
-  return Math.max(0, Math.min(1, (Math.log10(d) - geo.dr[0]) / Math.max(1e-9, geo.dr[1] - geo.dr[0]))); }
 // a scope's layer: its shapes (q: the density rank, -1 with no role), its places (q: the rank by roles) and its companies (the catalogue entity
 // with the geo position, so the company cards work); coAt: the companies at each place, within 1.2 % of the box (by their geo position)
 function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
   const S = geoScopeData(sid) || {};
   const shapes = (S.shapes || []).map((s) => { let a = 0; for (const r of s.rings) { let q = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) q += (r[j][0] + r[i][0]) * (r[j][1] - r[i][1]); a += Math.abs(q) / 2; } return { ...s, area: a, q: -1, path: null, pr: [], lx: 0, ly: 0 }; });
-  const box0 = S.box || (GEO.scopes[sid] || {}).box, k0 = box0 && S.w ? (box0[2] - box0[0]) / S.w : 0;
-  if (geoUni() && k0) shapes.forEach((s) => { if (s.roles > 0) s.q = geoDensQ(s.roles / (s.area * k0 * k0)); });   // one zoomable map: one colour scale for every level
-  else { const dens = shapes.filter((s) => s.roles > 0).sort((a, b) => a.roles / a.area - b.roles / b.area); dens.forEach((s, i) => { s.q = dens.length > 1 ? i / (dens.length - 1) : 0.5; }); }
+  // the German counties over the states (NUTS3 of the shared place module, carried in the germany and bavaria scopes; geomap moves them with the
+  // cartogram): drawn from the county zoom on, coloured by their own counts (see paintGeo)
+  const counties = (S.counties || []).map((s) => ({ ...s, kind: 'county', path: null, pr: [], lx: 0, ly: 0 }));
   // edge: a shape the level's box cuts (a neighbour shown for context); on the true map the coarser level draws it instead (no seam at the box)
   shapes.forEach((s) => { s.edge = s.rings.some((r) => r.some((v) => v[0] <= 1e-4 || v[1] <= 1e-4 || v[0] >= (S.w || 1) - 1e-4 || v[1] >= (S.h || 1) - 1e-4)); });
   const places = (S.places || []).map((p) => ({ id: 'pl:' + p.id, place: true, name: p.name, n: p.n, idx: [], slug: null, c1: 0, c2: 0, gx: p.x, gy: p.y, hx: p.mx ?? (p.x + p.cx) / 2, hy: p.my ?? (p.y + p.cy) / 2, kx: p.cx, ky: p.cy, x: 0, y: 0 }));
@@ -811,10 +806,81 @@ function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
   const coAt = new Map(); cos.forEach((c, j) => { let best = -1, bd = 0.012 ** 2; places.forEach((p, i) => { const d = (p.gx - c.gx) ** 2 + (p.gy - c.gy) ** 2; if (d < bd) { bd = d; best = i; } }); if (best >= 0) { if (!coAt.has(best)) coAt.set(best, []); coAt.get(best).push(places.length + j); } });
   const V = []; if (shapes.length) shapes.forEach((s) => s.rings.forEach((r) => r.forEach((v) => V.push(v[0], v[1], v[4] ?? (v[0] + v[2]) / 2, v[5] ?? (v[1] + v[3]) / 2, v[2], v[3])))); else [...places, ...cos].forEach((e) => V.push(e.gx, e.gy, e.hx, e.hy, e.kx, e.ky));
   const rivers = (S.rivers || []).filter((r) => r.pts && r.pts.length > 1), box = S.box || (GEO.scopes[sid] || {}).box || null;
-  const Lg = { kind: 'geo', sid, shapes, rivers, box, k: box && S.w ? (box[2] - box[0]) / S.w : 1, ents: [...places, ...cos], n: places.length + cos.length, coAt, nMax: Math.max(1, ...places.map((p) => p.n)), V: Float64Array.from(V), key: '', pkey: '', fit: null, rpath: null };
+  const Lg = { kind: 'geo', sid, shapes, counties, rivers, box, k: box && S.w ? (box[2] - box[0]) / S.w : 1, ents: [...places, ...cos], n: places.length + cos.length, coAt, nMax: Math.max(1, ...places.map((p) => p.n)), V: Float64Array.from(V), key: '', pkey: '', fit: null, rpath: null };
   geo.lays.set(sid, Lg); return Lg; }
 // a coordinate at t from its true (a), moderate (m) and full (k) value: 0 to 0.5 true to moderate, 0.5 to 1 moderate to full
 const geoAt = (a, m, k, t) => (t <= 0.5 ? a + (m - a) * 2 * t : m + (k - m) * (2 * t - 1));
+// ---- place map A (coordinator 2026-11-14, option 1): the shared place module (./place/place.esm.js, a generated copy of the transitions page's
+// place.esm.js at 83595d089a) on this page's own canvas. ONE source for the numbers: the board's place file (places-v1.json, one row per open
+// role: located / country-only / none). Located roles are counted in areas by point in polygon on the module's shapes (countries and German
+// states from the world and Europe outline files, NUTS3 counties and Singapore's planning areas once the view is under about 11 degrees);
+// country-only roles are a figure on their country, never points. Areas: 7 blue classes per level, grey for none. From city zoom (MapLibre
+// zoom 7.5 on this canvas's width) the located roles are clusters (supercluster, as map-proto's MapLibre clusters) in the same colours.
+const PA = { M: null, D: null, gi: null, ctl: null, pv: null, ready: false, detail: false, hires: new Set(), detailAsked: false, loading: null, key: '', n: new Map(), sc: null, circles: [], inView: null, base: '' };
+const PA_DETAIL_DEG = 11;
+const paSm = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
+// the view's true width in degrees of longitude (the whole canvas, not only the map box), and its MapLibre zoom on this canvas (PlaceA.viewDeg inverted)
+const geoDeg = () => { if (!geoUni()) return 360 / Math.max(1, st.z.s); const F = geoFrame(); return 360 * W / (F.p * st.z.s); };
+const paZoom = (deg) => Math.log2(360 * W / (512 * Math.max(1e-9, deg)));
+const paTier = (deg) => (deg > 25 ? 'country' : deg > 8.9 || !PA.detail ? 'state' : 'county');   // the name and legend level of PlaceA (states until the county detail is in)
+const paLevelOf = (s) => (s.kind === 'country' ? 'country' : s.kind === 'state' ? 'state' : 'county');
+// a shape's unit in the place module (its count n and class colour rgb); a county before the detail is in: its state
+function paUnit(s) { if (!PA.ready) return null; const lv = paLevelOf(s), u = PA.n.get(lv + ':' + s.id); if (u) return u; return lv === 'county' && !PA.detail ? PA.n.get('state:' + String(s.id).slice(0, 3)) || null : null; }
+// world Mercator (0..1) -> screen px on the true map
+function paXY(wx, wy) { const F = geoFrame(); return [sx(0.5 + (wx - F.mx) * F.p / BW), sy(0.5 + (wy - F.my) * F.p / BH)]; }
+function placeLoad() {
+  if (PA.loading) return PA.loading;
+  const lv = geoLevels(), top = GEO.scopes.worldwide ? 'worldwide' : lv[lv.length - 1], eu = GEO.scopes.europe ? 'europe' : lv[lv.length - 2];
+  PA.base = dataUrl(cfg.geomap).replace(/[^/]*$/, '');
+  PA.loading = Promise.all([import('./place/place.esm.js?v=83595d089a'), fetch(PA.base + 'places-v1.json').then((r) => (r.ok ? r.json() : null)).catch(() => null), import('./vendor/supercluster.min.js').catch(() => null)])
+    .then(async ([M, pv]) => {
+      if (!pv || !Array.isArray(pv.rows) || !top || !eu) { console.warn('[place] no place file; the areas stay grey'); return null; }
+      // the module's input, from the place file alone (one row per role id; the module reads the id, the company and the country of a row)
+      const coIx = new Map(), companies = [], prow = [], galaxy = {};
+      for (const r of pv.rows) { let c = coIx.get(r[1]); if (c === undefined) { c = companies.length; coIx.set(r[1], c); companies.push([r[1], r[1]]); } prow.push([r[0], '', c, 0, 0, 0, r[2] || '', 0, 0, 0, 0, '']); galaxy[r[0]] = 1; }
+      const D = M.PlaceData.prepareFromPlaces(pv, { postings: { rows: prow, companies }, galaxy }), gi = M.PlaceData.geoInput(D);
+      await M.loadGeo([PA.base + GEO.scopes[top].file, PA.base + GEO.scopes[eu].file], gi.counts, gi.pts, { place: (landOf) => { const r = M.PlaceData.snapOwn(D, landOf); gi.refresh(); return r; } });
+      Object.assign(PA, { M, D, gi, pv, ctl: M.PlaceA.create({ map: null, D }), ready: true, key: '' });
+      M.GEO.onDetail = () => { PA.detail = true; fetch(PA.base + 'countries_hires.json').then((r) => r.json()).then((h) => { PA.hires = new Set(h.shapes.map((x) => x.id).filter((id) => id !== 'DE')); if (st.mode === 'geo') draw(); }).catch(() => {}); PA.key = ''; placeRecount(); if (st.mode === 'geo') draw(); };
+      placeRecount(); if (st.mode === 'geo') draw(); return PA; })
+    .catch((e) => { console.warn('[place] place module not loaded', e); return null; });
+  return PA.loading; }
+// the county detail (NUTS3, Singapore's planning areas, finer outlines outside Europe): loaded once, the first time the view is under about 11 degrees
+function placeDetail() { if (!PA.ready || PA.detailAsked) return; PA.detailAsked = true;
+  PA.M.loadGeoDetail({ shapes: [PA.base + 'levels_l3.json', PA.base + 'levels_extra.json'], hires: PA.base + 'countries_hires.json' }).catch((e) => { console.warn('[place] county detail not loaded', e); }); }
+// the selection (the field chips; the place file holds every open role of the public board) and its counts, colours and clusters
+function placeRecount() { if (!PA.ready) return; const fk = [...st.fields].sort().join(',') + '|' + (PA.detail ? 1 : 0); if (fk === PA.key) return; PA.key = fk;
+  const D = PA.D, ff = st.fields.size ? [...st.fields].map((f) => ix.fields.indexOf(f)).filter((q) => q >= 0) : null;
+  for (let i = 0; i < D.N; i++) { if (!ff) { D.sel[i] = 1; continue; } const j = idIndex.get(D.ids[i]); D.sel[i] = j !== undefined && ff.some((q) => ix.attrs[j][4] >> q & 1) ? 1 : 0; }
+  const G = PA.M.GEO; PA.M.PlaceData.recount(D, G); PA.n = new Map();
+  for (const [lv, list] of [['country', G.countries], ['state', G.states], ['county', G.counties]]) for (const x of list) PA.n.set(lv + ':' + x.id, x);
+  PA.sc = null; PA.inView = null; geo.lays.forEach((Lg) => { Lg.pkey = ''; }); }
+// the located, selected roles clustered for the view (radius 45 px at 512 px tiles and up to zoom 11, as map-proto's MapLibre clusters)
+function paClusters(zoom) { const SC = globalThis.Supercluster; if (!PA.ready || !SC) return [];
+  if (!PA.sc) { const D = PA.D, pts = []; for (let i = 0; i < D.N; i++) if (D.cat[i] === 1 && D.sel[i]) pts.push({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [D.lon[i], D.lat[i]] } });
+    PA.sc = new SC({ radius: 45, maxZoom: 11 }).load(pts); }
+  const F = geoFrame(), v = geoView(), hw = W / (F.p * st.z.s) / 2, hh = H / (F.p * st.z.s) / 2, lon = (x) => Math.max(-180, Math.min(180, x * 360 - 180)), lat = (y) => Math.max(-85, Math.min(85, 180 / Math.PI * Math.atan(Math.sinh(Math.PI * (1 - 2 * y)))));
+  return PA.sc.getClusters([lon(v.x - hw), lat(v.y + hh), lon(v.x + hw), lat(v.y - hh)], Math.max(0, Math.min(16, Math.floor(zoom)))); }
+// the located, selected roles in the view (the identity strip), cached per view
+function paInView() { if (!PA.ready) return 0; const F = geoFrame(), v = geoView(), hw = W / (F.p * st.z.s) / 2, hh = H / (F.p * st.z.s) / 2, key = [v.x, v.y, hw, hh, PA.key].join('|');
+  if (PA.inView && PA.inView.key === key) return PA.inView.n; const D = PA.D, T = PA.gi.pts.T; let n = 0;
+  for (let i = 0; i < D.N; i++) if (D.cat[i] === 1 && D.sel[i]) { const x = T[2 * i], y = T[2 * i + 1]; if (x >= v.x - hw && x <= v.x + hw && y >= v.y - hh && y <= v.y + hh) n++; }
+  PA.inView = { key, n }; return n; }
+// the identity strip: selection = located + country-only + no place, the located ones in view; the difference to the board's in-scope place file
+function paStrip() { if (!PA.ready) return PA.loading ? L('Counting the open roles by place…', 'Zähle die offenen Stellen nach Ort …') : '';
+  const D = PA.D, c = D.cnt, f = (n) => n.toLocaleString(isDe() ? 'de-DE' : 'en'), iv = geoUni() ? paInView() : undefined;
+  const main = isDe() ? `Auswahl <b>${f(D.nSel)}</b> = <b>${f(c.located)}</b> mit echtem Ort + <b>${f(c.country)}</b> nur mit Land (eine Zahl am Land, keine Punkte) + <b>${f(c.none)}</b> ohne Ort` + (iv === undefined ? '' : ` · <b>${f(iv)}</b> im Blick`)
+    : PA.ctl.stripHtml(iv);
+  const cmp = PA.pv && PA.pv.compare, rows = cmp && cmp.counts && cmp.counts.rows, diff = rows ? Math.abs(D.nSel - rows) : 0;
+  const sub = st.fields.size || !rows || !diff ? '' : L(`This page counts the public board's open roles; the map prototype counts the board's in-scope postings, so totals differ by ${f(diff)}.`,
+    `Diese Seite zählt die offenen Stellen des öffentlichen Boards; der Kartenprototyp zählt die Stellen im Fokus des Boards, daher unterscheiden sich die Summen um ${f(diff)}.`);
+  return main + (sub ? `<span class="sub">${sub}</span>` : ''); }
+// the area legend of the level in view (its class bounds), as PlaceA's legend
+function paLegend(tier, clustersOn) { if (!PA.ready) return ''; const rows = PA.M.legendRows(tier); if (!rows.length) return '';
+  const name = { country: L('Countries', 'Länder'), state: L('States', 'Bundesländer'), county: L('Counties', 'Kreise') }[tier];
+  return `<span class="atlas-legend"><b>${name}: ${L('open roles per area', 'offene Stellen je Fläche')}</b> ${rows.map(([col, t]) => `<span style="white-space:nowrap;margin-right:8px"><span style="display:inline-block;width:10px;height:10px;background:${col};margin:0 3px 0 0;vertical-align:-1px"></span>${t}</span>`).join('')}`
+    + `<span style="white-space:nowrap;margin-right:8px"><span style="display:inline-block;width:10px;height:10px;background:rgb(26,28,36);border:1px solid currentColor;margin:0 3px 0 0;vertical-align:-1px;opacity:.6"></span>${L('none', 'keine')}</span>`
+    + (clustersOn ? `<span style="white-space:nowrap;opacity:.8">${L('clusters: same colours', 'Gruppen: dieselben Farben')}</span>` : '') + '</span>'; }
 const geoLay = () => { const sc = cfg.scopes[st.scope], Lg = geoLayer(geoUni() ? geoActive() : sc ? sc.id : ''); geoSync(Lg); return Lg; };
 // the layer at the morph t, fitted to the map box BW x BH: the box of the shapes at t (of the places when there are none), its centre and one
 // scale for both axes (94 % of the box, aspect kept); every entity takes its position in map units (see sx and sy)
@@ -832,7 +898,7 @@ function geoSync(Lg) { const t = geo.t, key = t + '|' + BW + '|' + BH; if (Lg.ke
 // over); s.lx, s.ly: the label point (the middle of the largest ring)
 function geoPaths(Lg) { const key = [geo.t, W, H, BW, BH, st.z.s, st.z.cx, st.z.cy].join('|'); if (Lg.pkey === key) return; Lg.pkey = key;
   const t = geo.t, f = Lg.fit, X = (x) => sx(0.5 + (x - f.mx) * f.p / BW), Y = (y) => sy(0.5 + (y - f.my) * f.p / BH);
-    for (const s of Lg.shapes) { const path = new Path2D(); s.pr = []; let big = null;
+    for (const s of Lg.counties.length ? Lg.shapes.concat(Lg.counties) : Lg.shapes) { const path = new Path2D(); s.pr = []; let big = null;
     if (geoUni() && t < 0.02) { if (!s.tb) s.tb = s.rings.map((r) => { let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity; for (const v of r) { if (v[0] < a) a = v[0]; if (v[0] > c) c = v[0]; if (v[1] < b) b = v[1]; if (v[1] > d) d = v[1]; } return [a, b, c, d]; });
       const on = s.tb.some((q) => !(X(q[2]) < -20 || X(q[0]) > W + 20 || Y(q[3]) < -20 || Y(q[1]) > H + 20)); if (!on) { s.path = path; s.lx = s.ly = 0; s.ar = 0; continue; } }   // off screen on the true map: skipped
     for (let ri = 0; ri < s.rings.length; ri++) { const r = s.rings[ri];
@@ -862,8 +928,11 @@ function labelPoint(q) { const n = q.length / 2; let A = 0, cx = 0, cy = 0, a = 
 // is the point inside the rings (even-odd: holes and islands count as the rings give them)
 const inRings = (rings, x, y) => { let c = false; for (const q of rings) for (let i = 0, j = q.length - 2; i < q.length; j = i, i += 2) { const xi = q[i], yi = q[i + 1], xj = q[j], yj = q[j + 1]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
 const geoShapeAt = (Lg, X, Y) => Lg.shapes.find((s) => s.pr.length && inRings(s.pr, X, Y)) || null;
-// a shape's fill: its density colour in the theme's band (vivid), grey when it has no role
-const geoShapeRgb = (s, T) => (s.q >= 0 ? vivid(geoHue(s.q), T.fieldL[0], T.fieldL[1], T.C) : (T.glow ? [26, 28, 36] : [226, 228, 234]));
+// a shape's fill: the class colour of its level (countries, German states, counties: 7 blue classes each, from the place file's counts; see
+// placeRecount), grey when it has no open role (and while the place file loads)
+const geoShapeRgb = (s, T) => { const u = paUnit(s); return u && u.n > 0 && u.rgb ? u.rgb : (T.glow ? [26, 28, 36] : [226, 228, 234]); };
+// the open roles counted in a shape (located roles by point in polygon, from the place file); geomap's own count until the file is in
+const shapeN = (s) => { if (!PA.ready) return s.roles || 0; const u = paUnit(s); return u ? u.n : 0; };
 // the companies at a place (their catalogue entities)
 const placeCos = (k) => { const Lg = lay(); return (Lg.coAt.get(k) || []).map((j) => Lg.ents[j]); };
 // a place in the lens: its name, its open roles and the companies located there (the data gives no city per role: a place card, not a role list)
@@ -872,7 +941,7 @@ function placeCardHtml(k, e) { const cs = placeCos(k); return `<li class="atlas-
 // which branch points the geography shows (toggles, any mix): 'now' where roles are open now, 'past' where the company had roles before, 'file' the locations on file
 // (checked addresses, branch coordinates, the company's own places), also where nothing is open. Headquarters are always shown.
 const brOk = (e) => !e.kind || st.branches.has(e.kind === 'branch' ? 'now' : e.kind === 'addr' ? 'file' : e.kind);
-function prepareGeo(T) { const Lg = geoLay(), n = Lg.n, cn = new Int32Array(n), cw = new Float32Array(n), cNew = new Uint8Array(n);
+function prepareGeo(T) { placeRecount(); const Lg = geoLay(), n = Lg.n, cn = new Int32Array(n), cw = new Float32Array(n), cNew = new Uint8Array(n);
   act = Lg.ents.map((e) => e.place || visibleRoles(e).length > 0); vis = Lg.ents.map((e) => e.place || (coFieldsOk(e) && (geoUni() || coScopeOk(e)) && brOk(e)));   // one zoomable map: a level holds its extent's companies, no scope filter
   Lg.ents.forEach((e, k) => { if (!e.place) cn[k] = visibleRoles(e).length; }); fit = null;
   return { Ly: Lg, roles: false, geo: true, T, ink: css('--ink'), paper: css('--panel'), stat: null, fresh: { t: 0, w: 0, m: 0 }, heat: false, cn, cw, cNew, cwMax: 0, lw: linkWeights(Lg) }; }
@@ -918,15 +987,39 @@ function paintGeo(ctx, P, o) {
   geoPaths(Lg);
   // one zoomable map: on the true map the coarser levels lie under the level drawn (they meet, one projection), so outside its box the map goes
   // on; a level that was just left fades out under the new one (360 ms)
-  const A0 = T.glow ? 0.82 : 1, fade = geo.fade && geoUni() ? Math.min(1, (performance.now() - geo.fade.t0) / 360) : 1, wOf = (sid) => GEO.scopes[sid].box[2] - GEO.scopes[sid].box[0];
+  const deg = geoDeg(), zc = paZoom(deg), Acfg = PA.ready ? PA.M.PlaceA.cfg : { clusterFrom: 7.5, clusterFull: 8.5, areaFloor: 0.22 }, trueMap = geoUni() && geo.t < 0.02;
+  if (deg < PA_DETAIL_DEG) placeDetail();
+  if (PA.ready) for (const s of Lg.shapes) s.roles = shapeN(s);   // the counts of the place file (the cartogram keeps geomap's)
+  // the areas fade to PlaceA's floor as the clusters take over (MapLibre zoom 7.5 to 8.5 on this canvas); clusters only on the true map
+  const clOn = PA.ready && trueMap && zc >= Acfg.clusterFrom, clW = clOn ? Math.max(0, Math.min(1, (zc - Acfg.clusterFrom) / (Acfg.clusterFull - Acfg.clusterFrom))) : 0, areaA = clOn ? Acfg.areaFloor + (1 - Acfg.areaFloor) * paSm(Acfg.clusterFull - zc) : 1;
+  const A0 = (T.glow ? 0.82 : 1) * areaA, fade = geo.fade && geoUni() ? Math.min(1, (performance.now() - geo.fade.t0) / 360) : 1, wOf = (sid) => GEO.scopes[sid].box[2] - GEO.scopes[sid].box[0];
   const vw = geoUni() ? geoView() : null, covers = !!(vw && Lg.box && vw.x - vw.w / 2 >= Lg.box[0] && vw.x + vw.w / 2 <= Lg.box[2] && vw.y - vw.w * H / W / 2 >= Lg.box[1] && vw.y + vw.w * H / W / 2 <= Lg.box[3]);
   const below = !geoUni() || covers ? [] : geo.t < 0.02 ? geoLevels().filter((sid) => sid !== Lg.sid && geo.data.has(sid) && (!Lg.box || wOf(sid) > Lg.box[2] - Lg.box[0])).reverse() : [];   // none when the level covers the view
   if (geoUni() && geo.fade && geo.fade.from !== Lg.sid && geo.data.has(geo.fade.from) && !below.includes(geo.fade.from)) below.push(geo.fade.from);
-  const shapesOf = (L, a, cut = false) => { const sh = cut ? L.shapes.filter((s) => !s.edge) : L.shapes; ctx.globalCompositeOperation = T.multiply ? 'multiply' : 'source-over'; ctx.globalAlpha = a;
-    for (const s of sh) { const c = geoShapeRgb(s, T); ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.fill(s.path, 'evenodd'); }
-    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.35 * a / A0; ctx.strokeStyle = ink; ctx.lineWidth = 0.6; for (const s of sh) ctx.stroke(s.path); };
-  for (const sid of below) { const Lc = geoLayer(sid); geoSync(Lc); geoPaths(Lc); shapesOf(Lc, sid === (geo.fade && geo.fade.from) && geo.t >= 0.02 ? A0 * (1 - fade) : A0); }
+  // the counties fade in under about 11 degrees (as PlaceA): Germany's from the scope files (they follow the cartogram), the others' (and Singapore's
+  // planning areas) from the place module, on the true map only; a country drawn by the module's counties fades out under them
+  const ca = PA.detail ? paSm((PA_DETAIL_DEG - deg) / 3) : 0, grey = T.glow ? [26, 28, 36] : [226, 228, 234];
+  const deHere = Lg.counties.length > 0 || Lg.shapes.some((s) => s.kind === 'district');
+  const modCo = ca > 0 && trueMap ? PA.M.GEO.counties.filter((c) => c.cc !== 'DE' || !deHere) : [], coCC = new Set(modCo.map((c) => c.cc));
+  // the module's paths (world Mercator x U) on screen: x' = k x + e, y' = k y + f
+  const MT = (() => { if (!PA.ready) return null; const F = geoFrame(); return { k: F.p * st.z.s / PA.M.GEO.U, e: (0.5 - F.mx * F.p / BW - st.z.cx) * st.z.s * BW + W / 2, f: (0.5 - F.my * F.p / BH - st.z.cy) * st.z.s * BH + H / 2 }; })();
+  const useMod = !!MT && trueMap && PA.detail && deg < PA_DETAIL_DEG;
+  const shapesOf = (L, a, cut = false) => { const sh = cut ? L.shapes.filter((s) => !s.edge) : L.shapes; ctx.globalCompositeOperation = T.multiply ? 'multiply' : 'source-over';
+    const modPath = (s) => (useMod && s.kind === 'country' && PA.hires.has(s.id) ? PA.n.get('country:' + s.id) : null);
+    for (const s of sh) { const c = geoShapeRgb(s, T), m = modPath(s); ctx.globalAlpha = a * (s.kind === 'country' && coCC.has(s.id) ? 1 - ca : 1); ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`;
+      if (m) { ctx.save(); ctx.transform(MT.k, 0, 0, MT.k, MT.e, MT.f); ctx.fill(m.path, 'evenodd'); ctx.restore(); } else ctx.fill(s.path, 'evenodd'); }
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.35 * a / A0 * areaA; ctx.strokeStyle = ink; ctx.lineWidth = 0.6;
+    for (const s of sh) { const m = modPath(s); if (m) { ctx.save(); ctx.transform(MT.k, 0, 0, MT.k, MT.e, MT.f); ctx.lineWidth = 0.6 / MT.k; ctx.stroke(m.path); ctx.restore(); } else ctx.stroke(s.path); } };
+  const countiesOf = (L, a) => { if (!(ca > 0) || !L.counties.length) return; ctx.globalAlpha = a * ca;
+    for (const c of L.counties) { const u = paUnit(c), col = u && u.n > 0 ? u.rgb : grey; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.fill(c.path, 'evenodd'); }
+    ctx.globalAlpha = 0.35 * a / A0 * areaA * ca; ctx.strokeStyle = ink; ctx.lineWidth = 0.5; for (const c of L.counties) ctx.stroke(c.path); };
+  for (const sid of below) { const Lc = geoLayer(sid); geoSync(Lc); geoPaths(Lc); const a = sid === (geo.fade && geo.fade.from) && geo.t >= 0.02 ? A0 * (1 - fade) : A0; shapesOf(Lc, a); countiesOf(Lc, a); }
   shapesOf(Lg, A0 * fade, below.length > 0 && geo.t < 0.02);
+  countiesOf(Lg, A0 * fade);
+  if (modCo.length) { const { k, e, f } = MT;
+    const vis0 = (c) => !(c.bb[2] * k + e < -10 || c.bb[0] * k + e > W + 10 || c.bb[3] * k + f < -10 || c.bb[1] * k + f > H + 10); ctx.save(); ctx.transform(k, 0, 0, k, e, f);
+    for (const c of modCo) { if (!vis0(c)) continue; const col = c.n > 0 && c.rgb ? c.rgb : grey; ctx.globalAlpha = A0 * fade * ca; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.fill(c.path, 'evenodd'); ctx.globalAlpha = 0.35 * fade * ca * areaA; ctx.strokeStyle = ink; ctx.lineWidth = 0.5 / k; ctx.stroke(c.path); }
+    ctx.restore(); }
   // the rivers, a thin line in a water colour (the big ones wider), for finding one's way on the map
   if (Lg.rpath) { const rw = Math.min(1.8, 0.8 + 0.25 * Math.log2(Math.max(1, st.z.s))); ctx.globalAlpha = (T.glow ? 0.9 : 0.85) * fade; ctx.strokeStyle = T.glow ? 'rgb(150,205,255)' : 'rgb(30,95,190)'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.lineWidth = 1.5 * rw; ctx.stroke(Lg.rpath[0]); ctx.lineWidth = 1.0 * rw; ctx.stroke(Lg.rpath[1]); }
@@ -940,12 +1033,19 @@ function paintGeo(ctx, P, o) {
   // level (a view narrower than about 2 degrees) a place splits into its companies: each at a seeded angle and distance from the site (a hash of
   // the company, never a spiral or a lattice), pushed apart a few rounds so no two dots touch.
   const stacks = new Map(), piles = [];
-  Lg.ents.forEach((e, k) => { e.ox = e.oy = 0; e.grp = null; e.noHit = false; if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return; nCo++;
-    const key = e.spot || k; let g = stacks.get(key); if (!g) stacks.set(key, g = []); g.push(k); });
+  // place map A: below the cluster zoom no company dots (areas, names and figures only; the linked ones keep their halo); from the cluster zoom the
+  // clusters of located roles, and a company's dot where no cluster covers it (from zoom 12 every site), as before
+  const clusters = clOn ? paClusters(zc) : [], one = (p) => !p.properties.cluster;   // up to zoom 11 every group of two or more roles is a cluster (one site included, as MapLibre's); beyond, the companies' dots
+  const cRad = (n) => (n < 3 ? 9 : n < 10 ? 12 : n < 30 ? 15 : n < 100 ? 19 : n < 300 ? 24 : n < 1000 ? 30 : 36);
+  PA.circles = clusters.filter((p) => !one(p)).map((p) => { const lon = p.geometry.coordinates[0], la = p.geometry.coordinates[1], r0 = la * Math.PI / 180, [X, Y] = paXY((lon + 180) / 360, (1 - Math.log(Math.tan(r0) + 1 / Math.cos(r0)) / Math.PI) / 2); return { x: X, y: Y, r: cRad(p.properties.point_count), n: p.properties.point_count }; });
+    const dotsOn = !PA.ready || !geoUni() || clOn, covered = (X0, Y0) => PA.circles.some((c) => (c.x - X0) ** 2 + (c.y - Y0) ** 2 <= (c.r + 2) ** 2);
+  Lg.ents.forEach((e, k) => { e.ox = e.oy = 0; e.grp = null; e.noHit = false; if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return;
+    const linkedK = lw && lw[k] > 0; if (!linkedK && (!dotsOn || (clOn && covered(X0, Y0)))) { e.noHit = true; return; } nCo++;
+    const key = dotsOn ? e.spot || k : k; let g = stacks.get(key); if (!g) stacks.set(key, g = []); g.push(k); });
   const viewDeg = geoUni() ? 360 * geoView().w : 360 / Math.max(1, st.z.s), SPLIT = viewDeg < 2.2;
   const hh = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; };
   const G0 = [...stacks.values()].map((ks) => { const e = Lg.ents[ks[0]]; return { x: sx(e.x), y: sy(e.y), ks }; }).sort((p, q) => q.ks.length - p.ks.length);
-  const grps = []; if (SPLIT) grps.push(...G0); else for (const g of G0) { const m = grps.find((q) => Math.abs(q.x - g.x) < 7 && Math.abs(q.y - g.y) < 7); if (m) m.ks.push(...g.ks); else grps.push({ x: g.x, y: g.y, ks: [...g.ks] }); }
+  const grps = []; if (SPLIT || !dotsOn) grps.push(...G0); else for (const g of G0) { const m = grps.find((q) => Math.abs(q.x - g.x) < 7 && Math.abs(q.y - g.y) < 7); if (m) m.ks.push(...g.ks); else grps.push({ x: g.x, y: g.y, ks: [...g.ks] }); }
   const plOf = new Map(); Lg.coAt.forEach((arr, pi) => arr.forEach((j) => plOf.set(j, pi)));
   const novas = [];
   const dotAt = (k, X0, Y0) => { const e = Lg.ents[k], on = cn[k] > 0, r = Math.round((on ? 2.3 + 0.75 * Math.sqrt(Math.min(cn[k], 100)) : 2.1) * zd * 2) / 2;
@@ -973,6 +1073,12 @@ function paintGeo(ctx, P, o) {
     ctx.globalAlpha = 0.96; ctx.fillStyle = col; ctx.strokeStyle = bg; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(G.x, G.y, r, 0, 7); ctx.fill(); ctx.stroke();
     if (screen && (G.tot >= 10 || G.ks.length >= 4)) { const t = String(G.tot || G.ks.length); ctx.save(); ctx.globalAlpha = 0.95; ctx.font = `700 ${Math.round(Math.max(9, Math.min(12, r * 0.95)))}px 'Hanken Grotesk', sans-serif`; ctx.textAlign = r >= 7 ? 'center' : 'left'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.fillStyle = r >= 7 ? '#fff' : ink; const tx = r >= 7 ? G.x : G.x + r + 3; ctx.strokeText(t, tx, G.y); ctx.fillText(t, tx, G.y); ctx.restore(); } }
+  // the clusters, over the names (as map-proto, where MapLibre draws them over the area canvas)
+  const drawClusters = () => { if (!PA.circles.length) return; ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const c of PA.circles) { const col = PA.M.classRgb(c.n) || [29, 58, 110]; ctx.globalAlpha = 0.92 * clW; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, 7); ctx.fill();
+      ctx.globalAlpha = clW; ctx.strokeStyle = '#05060a'; ctx.lineWidth = 1.2; ctx.stroke();
+      if (screen) { const t = c.n >= 1000 ? (c.n / 1000).toFixed(c.n >= 10000 ? 0 : 1) + 'k' : String(c.n); ctx.font = `600 ${c.n < 3 ? 10 : c.n < 10 ? 11 : c.n < 30 ? 12 : c.n < 100 ? 13 : c.n < 300 ? 14 : c.n < 1000 ? 15 : 16}px system-ui, sans-serif`; ctx.fillStyle = '#05060a'; ctx.fillText(t, c.x, c.y); } }
+    ctx.restore(); };
   // the number of companies in a stack of three or more, small, beside its dot (on screen)
   if (screen && piles.length) { ctx.save(); ctx.globalAlpha = 0.85; ctx.font = `600 ${Math.round(9 * Math.min(1.2, zd))}px 'Hanken Grotesk', sans-serif`; ctx.textBaseline = 'middle'; ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.fillStyle = ink;
     for (const [g, r] of piles) { const t = String(g.n); ctx.strokeText(t, g.X0 + r + 2, g.Y0); ctx.fillText(t, g.X0 + r + 2, g.Y0); } ctx.restore(); }
@@ -987,8 +1093,9 @@ function paintGeo(ctx, P, o) {
   ctx.globalAlpha = 1;
   // the frame is kept for the view tween, except on the one zoomable map (it flies live; a copy of the canvas every frame slows the zoom)
   if (o.keep && !geoUni()) { const kf = base || (base = { c: document.createElement('canvas') }); kf.c.width = ctx.canvas.width; kf.c.height = ctx.canvas.height; kf.c.getContext('2d').drawImage(ctx.canvas, 0, 0); kf.z = { ...st.z }; }
-  const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0 };
-  if (!light) {
+  const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0, clusters: PA.circles.length, tier: paTier(deg), deg, dotsOn, clOn };
+  if (!light && PA.ready && geoUni()) paNames(ctx, Lg, { deg, zc, areaA, screen, counts, trueMap });
+  else if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
     // label scale: a small map (a phone) gets smaller tags
     const fk = Math.max(0.6, Math.min(1.15, Math.sqrt(Math.min(W, H * 1.4) / 700))), tsl = ts * fk;
@@ -1043,25 +1150,64 @@ function paintGeo(ctx, P, o) {
       const ab = place(lines, cands, true, 0, { first: true }); if (ab) { ab.area = true; counts.areas++; } }
     ctx.letterSpacing = '0px';
   }
+  drawClusters();
   if (screen) {   // the lens, its sample and the open point's ring
     const r = st.size * BW, lx = sx(st.lens.x), ly = sy(st.lens.y); ctx.globalAlpha = 1; if (lensOn()) { ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(lx, ly, r, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     ctx.strokeStyle = ink; ctx.lineWidth = 1.2; ctx.globalAlpha = 0.8; st.sample.forEach((k) => { const e = Lg.ents[k]; if (!e) return; ctx.beginPath(); ctx.arc(sx(e.x) + (e.ox || 0), sy(e.y) + (e.oy || 0), 6, 0, 7); ctx.stroke(); }); ctx.globalAlpha = 1;   // the companies listed below: a ring round their dot
     if (sel && sel.ly === Lg && vis[sel.k]) { const e = Lg.ents[sel.k]; ctx.strokeStyle = T.linkInk || ink; ctx.lineWidth = 1.6; ctx.beginPath(); ctx.arc(sx(e.x), sy(e.y), (e.place ? rOf(e) : 3) + 4, 0, 7); ctx.stroke(); } }
   return { shown: pl.length + nCo, counts };
 }
+// the names of place map A on this canvas (PlaceA.labelItems / paintLabels, with this page's projection; the morph moves the scope shapes' label points)
+function paNames(ctx, Lg, o) { const M = PA.M, G = M.GEO, D = PA.D, tier = paTier(o.deg), F = geoFrame(), k = F.p * st.z.s, fa = 0.82 * o.areaA, na = PA.ctl.nameAlpha(o.zc), small = W < 600;
+  const fromWorld = (wx, wy) => paXY(wx, wy), items = [], seen = new Set();
+  // the scope's own shapes (and counties) give the label point and the on-screen area of their unit (so the names follow the morph)
+  const at = new Map(); const addAt = (key, s) => { if (!s.pr.length || !(s.ar > 0)) return; let a = at.get(key); if (!a) at.set(key, (a = { x: 0, y: 0, ar: 0, w: 0 })); const w = Math.sqrt(s.ar); a.x += s.lx * w; a.y += s.ly * w; a.w += w; a.ar += s.ar; };
+  for (const s of Lg.shapes) { const cc = String(s.id).slice(0, 2); addAt('country:' + (s.kind === 'country' ? s.id : cc), s); if (s.kind !== 'country') addAt('state:' + String(s.id).slice(0, 3), s); if (s.kind === 'district') addAt('county:' + s.id, s); }
+  for (const c of Lg.counties) addAt('county:' + c.id, c);
+  const unitAt = (lv, u) => { const a = at.get(lv + ':' + u.id); if (a && a.w) return [a.x / a.w, a.y / a.w, a.ar]; if (!o.trueMap) return null; const [x, y] = fromWorld(u.mx, u.my); return [x, y, u.areaWorld * k * k]; };
+  const nameOf = (lv, u) => { if (lv === 'country') { const sh = Lg.shapes.find((s) => s.kind === 'country' && s.id === u.id); return sh ? geoNameOf(sh) : (() => { try { return new Intl.DisplayNames([isDe() ? 'de' : 'en'], { type: 'region' }).of(u.id) || u.name; } catch (e) { return u.name; } })(); }
+    if (lv === 'state') return isDe() ? STATE_DE[u.id] || u.name : u.name; const sh = Lg.shapes.concat(Lg.counties).find((s) => s.id === u.id); return sh ? geoNameOf(sh) : u.name; };
+  const withCounties = new Set(G.counties.filter((c) => c.n > 0).map((c) => c.cc));
+  const set = tier === 'country' ? G.countries.map((u) => ['country', u]) : tier === 'state' ? [...G.states.map((u) => ['state', u]), ...G.countries.filter((u) => u.id !== 'DE').map((u) => ['country', u])]
+    : [...G.counties.map((u) => ['county', u]), ...G.countries.filter((u) => !withCounties.has(u.id)).map((u) => ['country', u])];
+  const boxes = o.screen ? [[W - 56, 0, W, 180]] : [], hit = (bx) => boxes.some((q) => bx[0] < q[2] && bx[2] > q[0] && bx[1] < q[3] && bx[3] > q[1]);
+  for (const [lv, u] of set.filter(([, u]) => u.n > 0).sort((a, b) => b[1].n - a[1].n)) { if (items.length >= 60) break;
+    const p = unitAt(lv, u); if (!p) continue; const [x, y, areaPx] = p; if (x < 0 || y < 20 || x > W || y > H - 20) continue;
+    const fs = Math.max(small ? 10 : 11, Math.min(22, Math.round(Math.sqrt(areaPx) / 8))), co = lv === 'country' ? D.coOnly[u.id] || 0 : 0, t = nameOf(lv, u), cnt = u.n.toLocaleString(isDe() ? 'de-DE' : 'en');
+    ctx.font = `600 ${fs}px system-ui,sans-serif`; const t1 = ctx.measureText(t).width; ctx.font = `500 ${Math.round(fs * 0.85)}px system-ui,sans-serif`; const t2 = ctx.measureText(cnt).width;
+    const s2 = Math.round(fs * 0.7), ctext = co ? `+${co.toLocaleString(isDe() ? 'de-DE' : 'en')} ${pick('country-only', 'nur Land')}` : ''; ctx.font = `500 ${s2}px system-ui,sans-serif`; const t3 = co ? ctx.measureText(ctext).width : 0;
+    const tw = Math.max(t1, t2, t3) + 8, th = fs * 2.3 + (co ? s2 * 1.3 : 0), bx = [x - tw / 2, y - th / 2, x + tw / 2, y + th / 2];
+    if (areaPx < 1.4 * tw * th || hit(bx)) continue; boxes.push(bx); items.push({ t, x, y, fs, cnt, ctext, sm: s2, rgb: u.rgb }); if (lv === 'country') seen.add(u.id); }
+  if (o.deg > 2.5) for (const u of G.countries.filter((x) => (D.coOnly[x.id] || 0) > 0 && !seen.has(x.id)).sort((a, b) => (D.coOnly[b.id] || 0) - (D.coOnly[a.id] || 0))) {
+    const p = unitAt('country', u); if (!p) continue; const [x, y] = p; if (x < 0 || y < 20 || x > W || y > H - 20) continue;
+    ctx.font = '600 11px system-ui,sans-serif'; const t = `${u.id} +${(D.coOnly[u.id] || 0).toLocaleString(isDe() ? 'de-DE' : 'en')} ${pick('country-only', 'nur Land')}`, tw = ctx.measureText(t).width + 8, bx = [x - tw / 2, y - 8, x + tw / 2, y + 8];
+    if (hit(bx)) continue; boxes.push(bx); items.push({ badge: true, t, x, y, rgb: u.rgb }); }
+  ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, na)); ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+  for (const p of items) { const ink = M.PlaceA.inkFor(p.rgb, fa, 'name'), am = M.PlaceA.inkFor(p.rgb, fa, 'amber'); ctx.lineWidth = 3.2;
+    if (p.badge) { ctx.font = '600 11px system-ui,sans-serif'; ctx.strokeStyle = am.halo; ctx.strokeText(p.t, p.x, p.y); ctx.fillStyle = am.text; ctx.fillText(p.t, p.x, p.y); continue; }
+    const y = p.y - (p.ctext ? p.sm * 0.6 : 0); ctx.strokeStyle = ink.halo;
+    ctx.font = `600 ${p.fs}px system-ui,sans-serif`; ctx.strokeText(p.t, p.x, y - p.fs * 0.55); ctx.fillStyle = ink.text; ctx.fillText(p.t, p.x, y - p.fs * 0.55);
+    ctx.font = `500 ${Math.round(p.fs * 0.85)}px system-ui,sans-serif`; ctx.strokeText(p.cnt, p.x, y + p.fs * 0.6); ctx.fillStyle = ink.text; ctx.fillText(p.cnt, p.x, y + p.fs * 0.6);
+    if (p.ctext) { ctx.font = `500 ${p.sm}px system-ui,sans-serif`; ctx.strokeStyle = am.halo; ctx.strokeText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); ctx.fillStyle = am.text; ctx.fillText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); } }
+  ctx.restore(); o.counts.areas = items.filter((p) => !p.badge).length; o.counts.badges = items.length - o.counts.areas; PA.lastLabels = items.map((p) => [p.t, p.cnt || '', p.ctext || '']); }
 // the view's painter: the geography, or the atlas's own (roles, companies)
 const paintAny = (ctx, P, o) => (P.geo ? paintGeo(ctx, P, o) : paintMap(ctx, P, o));
 // the area panel in the geography: the shape under the lens, and the places and companies in the lens
 function renderGeoArea(pool) { const Lg = lay(), s = lensOn() ? geoShapeAt(Lg, sx(st.lens.x), sy(st.lens.y)) : null, co = pool.filter((k) => !Lg.ents[k].place), cos = co.length, n = co.reduce((t, k) => t + visibleRoles(Lg.ents[k]).length, 0);
   $('atlas-area').innerHTML = `<span class="atlas-note">${L('This area', 'Dieser Bereich')}</span>`
-    + (s ? `<b>${esc(geoNameOf(s))}</b><span class="atlas-note">${s.roles.toLocaleString()} ${L('roles in it', 'Stellen darin')}</span>` : lensOn() ? `<span class="atlas-note">${L('No area under the lens', 'Keine Fläche unter der Lupe')}</span>` : `<b>${L('The map in view', 'Die Karte im Blick')}</b>`)
+    + (s ? `<b>${esc(geoNameOf(s))}</b><span class="atlas-note">${shapeN(s).toLocaleString()} ${L('open roles with a place in it', 'offene Stellen mit Ort darin')}</span>` : lensOn() ? `<span class="atlas-note">${L('No area under the lens', 'Keine Fläche unter der Lupe')}</span>` : `<b>${L('The map in view', 'Die Karte im Blick')}</b>`)
     + `<span>${cos} ${lensOn() ? L('companies in the lens', 'Firmen in der Lupe') : L('companies in view', 'Firmen im Blick')} · ${n.toLocaleString()} ${L('open roles at them', 'offene Stellen bei ihnen')} (${L('a company\'s card lists its roles', 'die Karte einer Firma nennt ihre Stellen')})</span>`; }
 // the status line of the geography: what is shown, and the morph and the lens in brief
 function geoStatus(res, P) { const Lg = P.Ly, c = res.counts;
   if (!Lg.shapes.length && !Lg.ents.length) return L('There is no geography for this area in the file.', 'Für diesen Bereich gibt es in der Datei keine Geografie.');
   const link = lnk && lnk.to === 'geo' ? L(' The link lights companies only: the data does not place roles in cities.', ' Die Verknüpfung hebt nur Firmen hervor: die Daten ordnen Stellen keinen Städten zu.') : '';
-  return geoLegend(Lg) + '<br>' + L(`${c.companies.toLocaleString()} companies shown. Areas are named at the level of the view (continents, countries, states, districts) with the companies in them; zoom in for finer areas. A company is a dot at its headquarters and at each branch, in the colour of its company type: filled with open roles (larger with more), a ring without. Shapes are coloured by roles per area: blue few, amber many, grey none. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
-    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Flächen sind auf der Ebene der Ansicht benannt (Kontinente, Länder, Bundesländer, Kreise), mit den Firmen darin; für feinere Flächen hineinzoomen. Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, in der Farbe ihres Unternehmenstyps: gefüllt mit offenen Stellen (größer mit mehr), ein Ring ohne. Flächen sind nach Stellen je Fläche gefärbt: blau wenige, bernstein viele, grau keine. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
+  if (PA.ready && geoUni()) {
+    const legend = paLegend(c.tier, c.clOn) + (c.dotsOn && c.companies ? geoLegend(Lg) : '');
+    return legend + L(`Areas are coloured by their open roles in seven shades of blue: the lighter, the more open roles; grey, none. Each level (countries, German states, counties) has its own scale, shown above. A name carries its count; "+N country-only" counts the roles that name only a country (a figure on the country, never a point). Zoom in for states and counties; from city level the roles gather into clusters with their number, and a company is a dot where no cluster covers it${c.dotsOn ? ` (${c.companies.toLocaleString()} shown, in the colour of its company type)` : ''}. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
+      `Flächen sind nach ihren offenen Stellen in sieben Blautönen gefärbt: je heller, desto mehr offene Stellen; grau: keine. Jede Ebene (Länder, Bundesländer, Kreise) hat ihre eigene Skala, oben gezeigt. Ein Name trägt seine Zahl; „+N nur Land“ zählt die Stellen, die nur ein Land nennen (eine Zahl am Land, nie ein Punkt). Für Bundesländer und Kreise hineinzoomen; ab Stadtebene sammeln sich die Stellen in Gruppen mit ihrer Zahl, und eine Firma ist ein Punkt, wo keine Gruppe sie verdeckt${c.dotsOn ? ` (${c.companies.toLocaleString('de-DE')} gezeigt, in der Farbe ihres Unternehmenstyps)` : ''}. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link
+      + `<span class="atlas-src">${L('Boundaries: Eurostat GISCO, NUTS 2024 counties, © EuroGeographics for the administrative boundaries; Natural Earth (public domain); place names GeoNames (CC BY 4.0).', 'Grenzen: Eurostat GISCO, NUTS-2024-Kreise, © EuroGeographics für die Verwaltungsgrenzen; Natural Earth (gemeinfrei); Ortsnamen GeoNames (CC BY 4.0).')}</span>`; }
+  return geoLegend(Lg) + '<br>' + L(`${c.companies.toLocaleString()} companies shown. Areas are named at the level of the view (continents, countries, states, districts) with the companies in them; zoom in for finer areas. A company is a dot at its headquarters and at each branch, in the colour of its company type: filled with open roles (larger with more), a ring without. Grey areas have no open role. Drag the bar under the map to morph from the true map to the map by roles, where each area is sized by its roles. Drag the lens to sample an area; zoom with + and − or the mouse wheel.`,
+    `${c.companies.toLocaleString('de-DE')} Firmen gezeigt. Flächen sind auf der Ebene der Ansicht benannt (Kontinente, Länder, Bundesländer, Kreise), mit den Firmen darin; für feinere Flächen hineinzoomen. Eine Firma ist ein Punkt an ihrem Sitz und an jedem Standort, in der Farbe ihres Unternehmenstyps: gefüllt mit offenen Stellen (größer mit mehr), ein Ring ohne. Graue Flächen haben keine offene Stelle. Die Leiste unter der Karte zieht von der echten Karte zur Karte nach Stellen, in der jede Fläche nach ihren Stellen groß ist. Die Lupe ziehen, um einen Bereich zu sehen; mit + und − oder dem Mausrad zoomen.`) + link; }
 function geoBar() { const el = $('atlas-geo'); if (el) el.hidden = st.mode !== 'geo'; }
 function geoStop() { if (geo.raf) cancelAnimationFrame(geo.raf); geo.raf = 0; geo.morph = false; }
 function geoSetT(t) { geo.t = Math.max(0, Math.min(1, t)); geoMarks(); draw(); }
@@ -1088,6 +1234,7 @@ function draw() {
   const unitEn = P.roles ? 'roles' : 'companies', unitDe = P.roles ? 'Stellen' : 'Firmen', showTaste = P.showTaste;
   if (TL) tlShow(); geoBar(); buildHit(Ly); renderBanner(); if (sel && (sel.ly !== Ly || !vis[sel.k] || (Ly.ents[sel.k].hidden && !st.all))) hidePop();
   if (sel) { const e = Ly.ents[sel.k], X = sx(e.x), Y = sy(e.y); if (X < 0 || Y < 0 || X > W || Y > H) hidePop(); else placePop(X, Y); }
+  const strip = $('atlas-strip'); if (strip) { strip.hidden = !P.geo || !geoUni(); if (P.geo && geoUni() && !geo.morph) strip.innerHTML = paStrip(); }
   if (P.geo) { if (!geo.morph) $('atlas-status').innerHTML = geoStatus(res, P); return; }
   const fr = P.fresh, legend = P.roles && fr.t + fr.w + fr.m ?`  ✦ ${L('new today', 'neu heute')} ${fr.t} · ${L('this week', 'diese Woche')} ${fr.w} · ${L('this month', 'diesen Monat')} ${fr.m}` : '';
   $('atlas-status').innerHTML = L(`${res.shown.toLocaleString()} ${unitEn} shown${P.roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
@@ -1686,6 +1833,13 @@ if (PAGES) {   // the views have pages: the page links switch the view (in place
 }
 if (['companies', 'geo'].includes(mount.dataset.mode) && mount.dataset.mode !== st.mode) setView({ mode: mount.dataset.mode });   // this page's view
 else updateModeHeader();
+const CAM = new URLSearchParams(location.search).has('cam');
+if (CAM) window.jobcrawlPlace = { camera: ({ lon, lat, deg }) => { cancelAnimationFrame(geo.fly); const F = geoFrame(), r = lat * Math.PI / 180, wx = (lon + 180) / 360, wy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2;
+    st.z = { s: 360 * W / (F.p * deg), cx: 0.5 + (wx - F.mx) * F.p / BW, cy: 0.5 + (wy - F.my) * F.p / BH }; draw(); setTimeout(() => { if (st.mode === 'geo') resample(); }, 0); return geoDeg(); },
+  ready: () => PA.ready, detail: () => PA.detail, info: () => { if (!PA.ready) return null; const G = PA.M.GEO, D = PA.D, u = (lv, id) => { const x = PA.n.get(lv + ':' + id); return x ? x.n : null; };
+    return { sel: D.nSel, cnt: { ...D.cnt }, coOnlyDE: D.coOnly.DE || 0, inView: paInView(), deg: geoDeg(), zoom: paZoom(geoDeg()), tier: paTier(geoDeg()), detail: PA.detail, missing: D.missing, surface: PA.pv.surface, built: PA.pv.built,
+      compare: PA.pv.compare || null, bavaria: u('state', 'DE2'), oberbayern: null, munich: u('county', 'DE212'), munichLand: u('county', 'DE21H'), germany: u('country', 'DE'), singapore: u('country', 'SG'), sgCountryOnly: D.coOnly.SG || 0, clusters: PA.circles.length, labels: PA.lastLabels || [],
+      deCountiesInScope: [...geo.lays.values()].flatMap((Lg) => Lg.counties.map((c) => c.id).concat(Lg.shapes.filter((s) => s.kind === 'district').map((s) => s.id))), deCountiesMissing: [...geo.lays.values()].flatMap((Lg) => Lg.counties.map((c) => c.id).concat(Lg.shapes.filter((s) => s.kind === 'district').map((s) => s.id))).filter((id) => PA.detail && !PA.n.has('county:' + id)) }; } };
 window.jobcrawlAtlas = { renderImage, setView, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
   lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; },
   timeline: () => (TL ? { steps: TL.steps.length, kind: TL.kind, idx: scrub.idx, tm: scrub.tm, end: TL.end, records: TLN } : null), scrubTo: (i) => { tlStop(); setScrub(i); }, play: () => tlPlay(), heatMean: (c) => heatMeanOf(c), heatOn: (on) => { $('atlas-heat').checked = !!on; draw(); }, layer: () => { const Ly = lay(); return { n: Ly.ents.length, embers: Ly.ents.filter((e) => e.ember).length }; }, heatCells: () => { if (!lastHeat) return null; let mx = 0, big = 0, pos = 0, neg = 0; for (const v of lastHeat.sc) { const m = Math.abs(v); if (m > mx) mx = m; if (m >= 0.05) { big++; if (v > 0) pos++; else neg++; } } return { cells: lastHeat.sc.length, max: +mx.toFixed(3), warm: pos, cool: neg }; } };

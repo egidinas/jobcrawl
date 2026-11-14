@@ -591,6 +591,79 @@ def read_role_sites(path):
     return {rid: v for rid, v in (d.get('roles') or {}).items() if v.get('lat') is not None and v.get('lon') is not None}
 
 
+PLACES_FILE = 'places-v1.json'       # the place file of the public board (jobcrawl.map.places): the one source of every place map's counts
+LEVELS_FILE = 'levels_l3.json'       # the shared place module's NUTS3 shapes (NUTS 2024, built by build_levels.py): the one source of German counties
+
+
+def place_jobs(index, desc):
+    """(id, company slug, country code, role key) of every role of the board, for places.build_places: the country is the first resolved place's
+    (as role_places), the role key is the id itself (the 8-hex role id is the resolver's key)."""
+    out = []
+    for rid, _title, _co, _url, slug in index:
+        places = [p for p in geo.resolve((desc.get(rid) or {}).get('l', ''))['places'] if p.get('country')]
+        out.append((rid, slug or '', places[0]['country'] if places else '', None))
+    return out
+
+
+def build_places_file(site, vectors, role_sites, log=print, index=None, desc=None, compare=None):
+    """Writes VECTORS/places-v1.json for the board in SITE from the resolver's role-sites.json. compare: another surface's place file (the board
+    bundle's, for map-proto and the transitions page); its surface and counts are recorded so the page can name the difference. Returns the path."""
+    from jobcrawl.map import places
+    if not role_sites or not os.path.exists(role_sites):
+        raise GeoMapError(f'no role-sites.json at {role_sites!r}: the place file needs the resolver output')
+    if index is None:
+        index, desc = read_site(site)
+    roles, built = places.read_role_sites(role_sites)
+    doc = places.build_places(roles, place_jobs(index, desc), 'public', built)
+    if compare and os.path.exists(compare):
+        try:
+            with open(compare, encoding='utf-8') as fh:
+                other = json.load(fh)
+            doc['compare'] = {'surface': other.get('surface', ''), 'built': other.get('built', ''), 'counts': other.get('counts', {})}
+        except (OSError, ValueError) as e:
+            log(f'places: compare file {compare} not read ({e})')
+    os.makedirs(vectors, exist_ok=True)
+    path = places.write_places(os.path.join(vectors, PLACES_FILE), doc)
+    log(f'places: {PLACES_FILE} from {role_sites} (built {built}): {doc["counts"]}' + (f'; compare {doc["compare"]["surface"]} {doc["compare"]["counts"]}' if 'compare' in doc else ''))
+    return path
+
+
+def read_levels(path, cc='DE'):
+    """The NUTS3 shapes of one country from the shared module's levels_l3.json ({shapes: [{id, name, cc, r: [[x0, y0, x1, y1, ...] in 1e-4 degrees]}]})
+    as geo_base shapes: kind 'district', name as geo_base names a district, rings in lon/lat. [] when the file is not there."""
+    if not path or not os.path.exists(path):
+        return []
+    with open(path, encoding='utf-8') as fh:
+        d = json.load(fh)
+    out = []
+    for s in d.get('shapes') or []:
+        if s.get('cc') != cc:
+            continue
+        rings = [[(flat[i] / 1e4, flat[i + 1] / 1e4) for i in range(0, len(flat) - 1, 2)] for flat in s.get('r') or []]
+        rings = [r for r in rings if len(r) >= 3]
+        if rings:
+            nm = geo_base._district_name(s.get('name'))
+            out.append({'id': s['id'], 'cc': cc, 'name': nm, 'de': nm, 'match': [s.get('name') or nm], 'kind': 'district', 'rings': rings})
+    return out
+
+
+def nuts3_shapes(sh, counties, log=print):
+    """A scope's shapes with the German counties from the shared NUTS3 file: a district scope's own districts (geo_base's NUTS 2021 1:1M) are
+    replaced by the shared file's counties of the same state (the cartogram then runs on them), and every other German county becomes an overlay
+    (drawn over its state by the page at county zoom; not part of the cartogram). Returns (shapes, overlay)."""
+    if not counties:
+        return sh, []
+    own = [s for s in sh['states'] if s.get('kind') == 'district']
+    prefixes = {s['id'][:3] for s in own}
+    parent = own[0].get('parent') if own else None
+    if own:
+        mine = [dict(c, parent=parent) for c in counties if c['id'][:3] in prefixes]
+        sh = dict(sh, states=[s for s in sh['states'] if s.get('kind') != 'district'] + mine)
+        log(f'  NUTS3: {len(own)} districts of {sorted(prefixes)} replaced by {len(mine)} counties of the shared file')
+    overlay = [c for c in counties if c['id'][:3] not in prefixes]
+    return sh, overlay
+
+
 def role_places(index, desc, shapes, keys_of=None, sites=None):
     """The places of the board's roles: {key: {'key', 'name', 'cc', 'n' (roles naming it), 'share' (sum of 1/places per role),
     'll' (lat, lon) or None, 'shape' (polygon id or None), 'pr' (precision of the point)}}, the roles with no place, and the roles' share
@@ -999,7 +1072,29 @@ def river_rows(frame, rivers, carto, carto_m, log=print):
     return rows
 
 
-def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, rivers=()):
+def overlay_rows(frame, overlay, carto, carto_m):
+    """The overlay counties of a scope (see nuts3_shapes) in the scope's plane: rings cut to the extent, simplified, cut finely and moved by the
+    scope's two maps, as the shapes' rings ([x, y, cx, cy, mx, my]). A county outside the extent is left out."""
+    rows, cell = [], 1.0 / GRID
+    for c in overlay:
+        out_rings = []
+        for r in c['rings']:
+            q = clip_box(ring_xy(frame, r), frame.w, frame.h)
+            if len(q) < 3:
+                continue
+            sm = simplify(q, SIMPLIFY)
+            if len(sm) < 3 or poly_area(sm) < RING_MIN * frame.w * frame.h:
+                continue
+            d = densify(sm, OUT_STEP * cell)
+            cc_, mm = carto.apply(d), carto_m.apply(d)
+            out_rings.append([[round(float(d[i, 0]), DEC), round(float(d[i, 1]), DEC), round(float(cc_[i, 0]), DEC), round(float(cc_[i, 1]), DEC),
+                               round(float(mm[i, 0]), DEC), round(float(mm[i, 1]), DEC)] for i in range(len(d))])
+        if out_rings:
+            rows.append({'id': c['id'], 'name': c['name'], 'de': c.get('de', c['name']), 'kind': 'county', 'rings': out_rings})
+    return rows
+
+
+def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, rivers=(), overlay=()):
     """The map of one scope: shapes, places, companies and rivers with their true and cartogram positions, and the validation."""
     frame = Frame(box, kx)
     names = {s['id']: s for s in shapes['countries'] + shapes['states']}
@@ -1100,6 +1195,9 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, 
             row.update({kk: rec[kk] for kk in ('pr', 'sid', 'uid', 'city') if rec.get(kk)})   # precision of the point and, for a site, its id, employer and city
             out_places.append(row)
     out_rivers = river_rows(frame, rivers, carto, carto_m, log)
+    out_counties = overlay_rows(frame, overlay, carto, carto_m) if overlay else []
+    if overlay:
+        log(f'  {len(out_counties)} overlay counties (NUTS3) in the extent')
     out_companies = []
     if comp_in:
         pos = carto.apply([[x, y] for _s, x, y, _i, _k, _m in comp_in])
@@ -1117,18 +1215,26 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, 
                 row.update({kk: vv for kk, vv in (('k', meta.get('k')), ('pn', meta.get('pn')), ('h', meta.get('h')), ('ls', meta.get('ls')), ('pr', meta.get('pr'))) if vv})
             out_companies.append(row)
     log(f'  {len(out_shapes)} shapes, {len(out_places)} places, {len(out_companies)} companies in the extent')
-    return {'extent': [round(v, 4) for v in box], 'box': [round(v, 7) for v in frame.box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
-            'places': out_places, 'companies': out_companies, 'rivers': out_rivers, 'error': round(res['error'], 4), 'method': method,
-            'moderate': {'error': round(res_m['error'], 4), 'method': method_m, 'mix': MODERATE}}
+    out = {'extent': [round(v, 4) for v in box], 'box': [round(v, 7) for v in frame.box], 'w': round(frame.w, 4), 'h': round(frame.h, 4), 'shapes': out_shapes,
+           'places': out_places, 'companies': out_companies, 'rivers': out_rivers, 'error': round(res['error'], 4), 'method': method,
+           'moderate': {'error': round(res_m['error'], 4), 'method': method_m, 'mix': MODERATE}}
+    if out_counties:
+        out['counties'] = out_counties
+    return out
 
 
-def build(site, profile, vectors, companies=None, cache=None, log=print, history=None, verified=None, role_sites=None):
-    """Writes VECTORS/geo-map-<scope id>.json for each scope and the index VECTORS/geo-map.json for the board in SITE. Returns the index's path."""
+def build(site, profile, vectors, companies=None, cache=None, log=print, history=None, verified=None, role_sites=None, levels=None, compare=None):
+    """Writes VECTORS/geo-map-<scope id>.json for each scope and the index VECTORS/geo-map.json for the board in SITE, and VECTORS/places-v1.json
+    (with role_sites). levels: the shared NUTS3 file (default VECTORS/levels_l3.json): Germany's counties in the germany and bavaria scopes. Returns
+    the index's path."""
     if not os.path.exists(os.path.join(site, 'jobs-index.json')):
         raise GeoMapError(f'no jobs-index.json in {site} (run jobcrawl build first)')
     cache = cache or os.path.join(vectors, '.geo-cache')
     shapes = geo_base.load(cache, ('DE',), log)
     index, desc = read_site(site)
+    index_rows = index                                                  # (index is the geo-map index further down)
+    counties = read_levels(levels or os.path.join(vectors, LEVELS_FILE))
+    log(f'NUTS3 counties of Germany from the shared file: {len(counties)}' if counties else 'no shared NUTS3 file: the district scopes keep geo_base\'s districts')
     keys_of = {}
     pins = read_role_sites(role_sites)
     table, unplaced, shape_share = role_places(index, desc, shapes, keys_of, pins)
@@ -1177,8 +1283,11 @@ def build(site, profile, vectors, companies=None, cache=None, log=print, history
     for scope in scopes:
         sh = geo_base.load_scope(cache, scope, 'DE', log)                  # the outlines at this scope's level of detail (the world 1:10M, Europe 1:3M, Germany and Bavaria's districts 1:1M)
         box, kx = scope_box(scope, sh)
+        overlay = []
+        if geo_base.detail_of(scope) in ('states', 'districts'):           # Germany and a German state: the shared NUTS3 counties (decision 2026-11-14: one source of counties)
+            sh, overlay = nuts3_shapes(sh, counties, log)
         rivers = geo_base.load_rivers(cache, geo_base.detail_of(scope) == 'europe', log)
-        m = dict(scope_map(scope, box, kx, sh, table, comp, shape_roles=shape_share, log=log, rivers=rivers), id=scope['id'])
+        m = dict(scope_map(scope, box, kx, sh, table, comp, shape_roles=shape_share, log=log, rivers=rivers, overlay=overlay), id=scope['id'])
         name = scope_file(scope['id'])
         path_scope = os.path.join(vectors, name)
         with open(path_scope, 'w', encoding='utf-8') as fh:
@@ -1191,4 +1300,8 @@ def build(site, profile, vectors, companies=None, cache=None, log=print, history
         json.dump(index, fh, ensure_ascii=False, separators=(',', ':'))
     total = os.path.getsize(path) + sum(os.path.getsize(os.path.join(vectors, v['file'])) for v in index['scopes'].values())
     log(f'geo-map: index of {len(scopes)} scopes, {os.path.getsize(path)} bytes; {total / 1e6:.2f} MB in all -> {path}')
+    if role_sites and os.path.exists(role_sites):
+        build_places_file(site, vectors, role_sites, log=log, index=index_rows, desc=desc, compare=compare)
+    else:
+        log(f'places: no role-sites.json ({role_sites!r}); {PLACES_FILE} not written')
     return path

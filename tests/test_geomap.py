@@ -420,3 +420,56 @@ class RoleSitesSidecar(unittest.TestCase):
             self.assertEqual(g.read_role_sites(os.path.join(tmp, 'missing.json')), {})
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class PlaceFile(unittest.TestCase):
+    """places.build_places: one row per posting, the category rule of the brief (located / country-only / none) and the unknown roles."""
+
+    def test_one_row_per_category_and_not_in_role_sites(self):
+        from jobcrawl.map import places
+        roles = {'a1': {'p': 'site', 'lat': 48.1, 'lon': 11.5, 'b': 'posting_place', 'cc': 'DE'},          # located
+                 'b2': {'p': 'city', 'lat': 48.1, 'lon': 11.5, 'b': 'rule:geo_resolver (city_ambiguous)', 'cc': 'DE'},   # ambiguous: country-only
+                 'c3': {'p': 'region', 'b': 'rule:geo_resolver (region)', 'cc': 'FR'},                    # no point: country-only
+                 'd4': {'p': 'country', 'b': 'none'}}                                                      # no country: none
+        jobs = [('a1', 'co-a', 'DE', None), ('b2', 'co-b', 'DE', None), ('c3', 'co-c', '', None), ('d4', 'co-d', '', None),
+                ('e5', 'co-e', 'AT', None), ('a1', 'co-a', 'DE', None)]                                    # e5 unknown to the resolver; a1 twice
+        doc = places.build_places(roles, jobs, 'public', '2026-11-14T00:00:00+00:00')
+        self.assertEqual(doc['counts'], {'rows': 5, 'located': 1, 'country_only': 3, 'none': 1, 'not_in_role_sites': 1})
+        by = {r[0]: r for r in doc['rows']}
+        self.assertEqual((by['a1'][5], by['a1'][6]), (11.5, 48.1))
+        self.assertIsNone(by['b2'][5])                                     # an ambiguous point is never drawn
+        self.assertEqual(by['e5'][2], 'AT')                                # the surface's own country
+        self.assertEqual(doc['bases'][by['e5'][4]], 'surface')
+        n = doc['counts']
+        self.assertEqual(n['located'] + n['country_only'] + n['none'], n['rows'])
+
+
+class SharedCounties(unittest.TestCase):
+    """The German counties come from the shared NUTS3 file: a district scope's own districts are replaced, the rest are an overlay."""
+
+    def test_read_levels_and_replace_districts(self):
+        from jobcrawl.map import geomap as g
+        tmp = tempfile.mkdtemp(prefix='jc-levels-')
+        try:
+            p = os.path.join(tmp, 'levels_l3.json')
+            sq = lambda x, y: [x, y, x + 10000, y, x + 10000, y + 10000, x, y + 10000]
+            with open(p, 'w', encoding='utf-8') as fh:
+                json.dump({'shapes': [{'id': 'DE212', 'name': 'München, Kreisfreie Stadt', 'cc': 'DE', 'r': [sq(115000, 480000)]},
+                                      {'id': 'DE111', 'name': 'Stuttgart, Stadtkreis', 'cc': 'DE', 'r': [sq(91000, 487000)]},
+                                      {'id': 'AT130', 'name': 'Wien', 'cc': 'AT', 'r': [sq(163000, 481000)]}]}, fh)
+            counties = g.read_levels(p)
+            self.assertEqual([c['id'] for c in counties], ['DE212', 'DE111'])
+            self.assertEqual(counties[0]['name'], 'München (city)')
+            self.assertAlmostEqual(counties[0]['rings'][0][0][0], 11.5)
+            sh = {'countries': [], 'states': [{'id': 'DE1', 'kind': 'state'}, {'id': 'DE21H', 'kind': 'district', 'parent': 'Bavaria'}]}
+            out, overlay = g.nuts3_shapes(sh, counties, silent)
+            self.assertEqual(sorted(s['id'] for s in out['states']), ['DE1', 'DE212'])
+            self.assertEqual([s.get('parent') for s in out['states'] if s['id'] == 'DE212'], ['Bavaria'])
+            self.assertEqual([c['id'] for c in overlay], ['DE111'])
+            sh2 = {'countries': [], 'states': [{'id': 'DE1', 'kind': 'state'}, {'id': 'DE2', 'kind': 'state'}]}
+            out2, overlay2 = g.nuts3_shapes(sh2, counties, silent)
+            self.assertEqual(out2, sh2)                                    # a country scope keeps its states; every county is an overlay
+            self.assertEqual(len(overlay2), 2)
+            self.assertEqual(g.read_levels(os.path.join(tmp, 'missing.json')), [])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
