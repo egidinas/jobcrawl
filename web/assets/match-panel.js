@@ -10,6 +10,9 @@ import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matc
 import * as PF from './profile.js';
 
 const cfg = await loadConfig();
+// shadow: the in-browser model (EmbeddingGemma-2, a second vector space) stays hidden until an ax_b03 browser model is measured (size,
+// load time on a phone, same results as the NUC on 20 CVs); the NUC stays the default (owner 2026-11-14). Public is unchanged.
+const BROWSER_MODEL = !(window.MADE_B2_SHADOW === true || /^shadow\./.test(location.hostname));
 PF.setPersonas(cfg.personas);
 const K = PF.keys();
 const mount = document.getElementById('match-panel');
@@ -114,7 +117,7 @@ mount.innerHTML = `<details class="match-details">
 <button type="button" class="button outline" id="match-spread">${L('Show me a spread to rate', 'Eine Auswahl zum Bewerten zeigen')}</button>
 <a class="button outline" href="${pageUrl('atlas.html')}" id="match-atlas">${L('Explore the atlas', 'Atlas erkunden')}</a>
 <button type="button" class="button" id="match-taste" hidden>${L('Update results from my ratings', 'Ergebnisse aus meinen Bewertungen aktualisieren')}</button>
-<button type="button" class="button outline" id="match-model">${L('Add meaning matching', 'Bedeutungsabgleich zuschalten')}</button>
+<button type="button" class="button outline" id="match-model"${BROWSER_MODEL ? '' : ' hidden'}>${L('Add meaning matching', 'Bedeutungsabgleich zuschalten')}</button>
 </div>
 
 <div class="match-status" id="match-status" aria-live="polite"></div>
@@ -633,8 +636,8 @@ mount.addEventListener('click', async (e) => {
 
   const btn = e.target.closest('button'); if (!btn) return;
   try {
-    if (btn.id === 'match-go') { btn.disabled = true; await run(!!st.model || (await cacheReady())); btn.disabled = false; }
-    else if (btn.id === 'match-model') { btn.disabled = true; await run(true); btn.disabled = false; }
+    if (btn.id === 'match-go') { btn.disabled = true; await run(BROWSER_MODEL && (!!st.model || (await cacheReady()))); btn.disabled = false; }
+    else if (btn.id === 'match-model') { if (!BROWSER_MODEL) return; btn.disabled = true; await run(true); btn.disabled = false; }
     else if (btn.id === 'match-taste') { btn.disabled = true; await run(!!st.model); btn.disabled = false; }
     else if (btn.id === 'match-spread') { btn.disabled = true; await spread(); btn.disabled = false; }
     else if (btn.id === 'match-more') { st.shown += 20; render(); }
@@ -657,6 +660,6 @@ if (location.hash === '#match') mount.querySelector('details').open = true;
 window.addEventListener('hashchange', () => { if (location.hash === '#match') { mount.querySelector('details').open = true; mount.scrollIntoView({ block: 'start' }); } });
 mount.querySelector('details').addEventListener('toggle', (e) => { if (e.target.open) ensureIndex().catch(() => {}); });
 if (mount.querySelector('details').open) ensureIndex().catch(() => {});
-cacheReady().then((ready) => { if (ready) $('match-model').hidden = true; });
+if (BROWSER_MODEL) cacheReady().then((ready) => { if (ready) $('match-model').hidden = true; });
 document.getElementById('match-jump')?.addEventListener('click', () => { const d = mount.querySelector('details'); d.open = true; mount.scrollIntoView({ block: 'start' }); });
 restoreSettings();
