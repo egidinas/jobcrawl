@@ -619,7 +619,12 @@ def build_places_file(site, vectors, role_sites, log=print, index=None, desc=Non
     in_country = places.CountryTest(world) if os.path.exists(world) else None                # a site in another country than the posting's: country-only
     if not len(counties) or in_country is None:
         log(f'places: county shapes {len(counties)}, country check {"on" if in_country else "off (no " + world + ")"}')
-    doc = places.build_places(roles, place_jobs(index, desc), 'public', built, in_country=in_country, counties=counties)
+    jobs = place_jobs(index, desc)
+    from jobcrawl.map import sg_places                                                          # Singapore: precise places from the raw MCF records (extra)
+    cc_of = {j[0]: j[2] for j in jobs}
+    sg = {rid: (url, co) for rid, _t, co, url, _s in index if cc_of.get(rid) == 'SG'}
+    extra = sg_places.sg_extra(sg, log=log)[0] if sg else {}
+    doc = places.build_places(roles, jobs, 'public', built, in_country=in_country, counties=counties, extra=extra)
     if compare and os.path.exists(compare):
         try:
             with open(compare, encoding='utf-8') as fh:

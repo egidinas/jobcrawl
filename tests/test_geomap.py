@@ -494,3 +494,15 @@ class SharedCounties(unittest.TestCase):
             self.assertEqual(g.read_levels(os.path.join(tmp, 'missing.json')), [])
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+
+class SingaporePlaces(unittest.TestCase):
+    def test_no_raw_files_no_placements(self):
+        from jobcrawl.map import sg_places
+        tmp = tempfile.mkdtemp(prefix='jc-sg-')
+        try:
+            out, st = sg_places.sg_extra({'a1b2c3d4': ('https://www.mycareersfuture.gov.sg/job/x-' + '0' * 32, 'Co Pte Ltd')}, os.path.join(tmp, 'cache.json'), raw=tmp, log=silent)
+            self.assertEqual(out, {})
+            self.assertEqual(st['sg_postings'], 1)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
