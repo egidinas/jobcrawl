@@ -923,25 +923,45 @@ function paintGeo(ctx, P, o) {
   // more of them), a ring has none. One path per colour, kind and size; filled dots on top, a dark rim so they stand out on any area. The
   // linked ones (lw > 0) get a halo; the rest of a link (lw 0) is dimmed to a quarter
   const dots = new Map(), linked = [], zd = Math.min(1.4, 0.85 + 0.12 * Math.log2(Math.max(1, st.z.s))); let nCo = 0;
-  // companies on one point (a catalogue with only a city centre for them) are spread around it on screen, by a few pixels: a tight cluster when
-  // zoomed out, opening up as one zooms in (the spacing grows with the zoom, in pixels, so it never becomes a pattern across the map)
+  // PLACES, not stacks (owner 2026-11-14: "the diagonal stacks look weird ... points that are actually parsable"). While zoomed out, companies on one
+  // spot, or within 7 px of each other on screen, are ONE place point: size by its open roles on a capped square-root scale, a soft glow (as the
+  // role galaxy's supernovas), its count once it is big enough; hover names the place, the count and the top companies; a click zooms in. At city
+  // level (a view narrower than about 2 degrees) a place splits into its companies: each at a seeded angle and distance from the site (a hash of
+  // the company, never a spiral or a lattice), pushed apart a few rounds so no two dots touch.
   const stacks = new Map(), piles = [];
-  Lg.ents.forEach((e, k) => { e.ox = e.oy = 0; if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return; nCo++;
+  Lg.ents.forEach((e, k) => { e.ox = e.oy = 0; e.grp = null; e.noHit = false; if (e.place || !vis[k]) return; const X0 = sx(e.x), Y0 = sy(e.y); if (!inBox(X0, Y0)) return; nCo++;
     const key = e.spot || k; let g = stacks.get(key); if (!g) stacks.set(key, g = []); g.push(k); });
-  const spread = Math.max(0, Math.min(1.25, 0.35 + 0.2 * Math.log2(Math.max(1, st.z.s) / 4)));   // spacing in dot diameters
-  for (const g of stacks.values()) {
-    g.sort((a, b) => (cn[b] || 0) - (cn[a] || 0));   // the ones with most open roles in the middle
-    g.forEach((k, i) => { const e = Lg.ents[k]; let X0 = sx(e.x), Y0 = sy(e.y);
-      const on = cn[k] > 0, r = Math.round((on ? 2.3 + 0.75 * Math.sqrt(Math.min(cn[k], 100)) : 2.1) * zd * 2) / 2;
-      if (i && spread > 0) { const d = spread * 2 * 2.6 * zd * Math.sqrt(i), t = i * 2.39996; e.ox = Math.cos(t) * d; e.oy = Math.sin(t) * d; X0 += e.ox; Y0 += e.oy; }
-      const w = lw ? lw[k] : -1; if (w > 0) { linked.push(k); return; }
-      const col = coTypeCol(e), a = (on ? 0.95 : 0.75) * (w === 0 ? 0.3 : 1), key = col + '|' + on + '|' + r + '|' + a;
-      let b = dots.get(key); if (!b) dots.set(key, b = { col, on, a, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); });
-    if (g.length >= 3 && spread < 0.6) { const e = Lg.ents[g[0]]; piles.push([{ X0: sx(e.x), Y0: sy(e.y), n: g.length }, 2.6 * zd * (1 + spread * 2 * Math.sqrt(g.length))]); } }   // still tight: its number beside it
+  const viewDeg = geoUni() ? 360 * geoView().w : 360 / Math.max(1, st.z.s), SPLIT = viewDeg < 2.2;
+  const hh = (s) => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; };
+  const G0 = [...stacks.values()].map((ks) => { const e = Lg.ents[ks[0]]; return { x: sx(e.x), y: sy(e.y), ks }; }).sort((p, q) => q.ks.length - p.ks.length);
+  const grps = []; if (SPLIT) grps.push(...G0); else for (const g of G0) { const m = grps.find((q) => Math.abs(q.x - g.x) < 7 && Math.abs(q.y - g.y) < 7); if (m) m.ks.push(...g.ks); else grps.push({ x: g.x, y: g.y, ks: [...g.ks] }); }
+  const plOf = new Map(); Lg.coAt.forEach((arr, pi) => arr.forEach((j) => plOf.set(j, pi)));
+  const novas = [];
+  const dotAt = (k, X0, Y0) => { const e = Lg.ents[k], on = cn[k] > 0, r = Math.round((on ? 2.3 + 0.75 * Math.sqrt(Math.min(cn[k], 100)) : 2.1) * zd * 2) / 2;
+    const w = lw ? lw[k] : -1; if (w > 0) { linked.push(k); return; }
+    const col = coTypeCol(e), al = (on ? 0.95 : 0.75) * (w === 0 ? 0.3 : 1), key = col + '|' + on + '|' + r + '|' + al;
+    let b = dots.get(key); if (!b) dots.set(key, b = { col, on, a: al, r, p: new Path2D() }); b.p.moveTo(X0 + r, Y0); b.p.arc(X0, Y0, r, 0, 7); };
+  for (const G of grps) {
+    G.ks.sort((p, q) => (cn[q] || 0) - (cn[p] || 0));   // the one with most open roles first (the centre)
+    if (G.ks.length === 1) { const k = G.ks[0], e = Lg.ents[k]; dotAt(k, sx(e.x), sy(e.y)); continue; }
+    if (!SPLIT) { const pi = plOf.get(G.ks[0]); G.tot = G.ks.reduce((t, k) => t + (cn[k] || 0), 0); G.name = pi !== undefined ? Lg.ents[pi].name : '';
+      G.ks.forEach((k, i) => { const e = Lg.ents[k]; e.ox = G.x - sx(e.x); e.oy = G.y - sy(e.y); e.grp = G; e.noHit = i > 0; });
+      novas.push(G); continue; }
+    const P = G.ks.map((k, i) => { if (!i) return [0, 0]; const s = Lg.ents[k].slug || String(k), an = hh(s) * 6.2832, d = 2.6 * zd * (2.2 + 2.0 * Math.sqrt(i)) * (0.8 + 0.4 * hh(s + '|r')); return [Math.cos(an) * d, Math.sin(an) * d]; });
+    const want = 2.6 * zd * 2.3;
+    for (let it = 0; it < 14; it++) for (let i = 0; i < P.length; i++) for (let j = i + 1; j < P.length; j++) { const dx = P[j][0] - P[i][0], dy = P[j][1] - P[i][1], d = Math.hypot(dx, dy) || 0.01;
+      if (d < want) { const m = (want - d) / 2; if (i) { P[i][0] -= dx / d * m; P[i][1] -= dy / d * m; } P[j][0] += dx / d * m * (i ? 1 : 2); P[j][1] += dy / d * m * (i ? 1 : 2); } }
+    G.ks.forEach((k, i) => { const e = Lg.ents[k]; e.ox = P[i][0]; e.oy = P[i][1]; dotAt(k, sx(e.x) + e.ox, sy(e.y) + e.oy); }); }
   const dl = [...dots.values()].sort((x, y) => (x.on - y.on) || x.r - y.r);
   for (const b of dl) { ctx.globalAlpha = b.a;
     if (b.on) { ctx.strokeStyle = bg; ctx.lineWidth = 1.2; ctx.stroke(b.p); ctx.fillStyle = b.col; ctx.fill(b.p); }
     else { ctx.strokeStyle = b.col; ctx.lineWidth = 1.3; ctx.stroke(b.p); } }
+  // the place points: a glow, the core in the colour of its leading company's type, the count inside once it is big enough
+  for (const G of novas) { const col = coTypeCol(Lg.ents[G.ks[0]]), r = Math.min(15, (3 + 1.4 * Math.sqrt(Math.max(1, G.tot))) * zd * 0.8), R = r * 2.6, gd = ctx.createRadialGradient(G.x, G.y, 0, G.x, G.y, R);
+    gd.addColorStop(0, col); gd.addColorStop(1, 'rgba(0,0,0,0)'); ctx.globalAlpha = 0.42; ctx.fillStyle = gd; ctx.beginPath(); ctx.arc(G.x, G.y, R, 0, 7); ctx.fill();
+    ctx.globalAlpha = 0.96; ctx.fillStyle = col; ctx.strokeStyle = bg; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.arc(G.x, G.y, r, 0, 7); ctx.fill(); ctx.stroke();
+    if (screen && (G.tot >= 10 || G.ks.length >= 4)) { const t = String(G.tot || G.ks.length); ctx.save(); ctx.globalAlpha = 0.95; ctx.font = `700 ${Math.round(Math.max(9, Math.min(12, r * 0.95)))}px 'Hanken Grotesk', sans-serif`; ctx.textAlign = r >= 7 ? 'center' : 'left'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.fillStyle = r >= 7 ? '#fff' : ink; const tx = r >= 7 ? G.x : G.x + r + 3; ctx.strokeText(t, tx, G.y); ctx.fillText(t, tx, G.y); ctx.restore(); } }
   // the number of companies in a stack of three or more, small, beside its dot (on screen)
   if (screen && piles.length) { ctx.save(); ctx.globalAlpha = 0.85; ctx.font = `600 ${Math.round(9 * Math.min(1.2, zd))}px 'Hanken Grotesk', sans-serif`; ctx.textBaseline = 'middle'; ctx.lineWidth = 3; ctx.strokeStyle = bg; ctx.fillStyle = ink;
     for (const [g, r] of piles) { const t = String(g.n); ctx.strokeText(t, g.X0 + r + 2, g.Y0); ctx.fillText(t, g.X0 + r + 2, g.Y0); } ctx.restore(); }
@@ -1469,7 +1489,7 @@ const ptr = (e) => { const b = cv.getBoundingClientRect(); return [(e.clientX - 
 // the grid of the drawn points (rebuilt in draw): cells of 24 px; hitAt gives the nearest point within 10 px of a screen position, or -1
 function buildHit(Ly) { const cs = 24, nx = Math.ceil(W / cs) + 1, ny = Math.ceil(H / cs) + 1, cells = Array.from({ length: nx * ny }, () => []), X = new Float32Array(Ly.n), Y = new Float32Array(Ly.n);
   // places are not drawn on the geography: not pickable either; a company spread off its point (a stack) is picked where it is drawn
-  Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all) || e.place) return; const x = sx(e.x) + (e.ox || 0), y = sy(e.y) + (e.oy || 0); if (x < -5 || y < -5 || x > W + 5 || y > H + 5) return; X[k] = x; Y[k] = y;
+  Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all) || e.place || e.noHit) return; const x = sx(e.x) + (e.ox || 0), y = sy(e.y) + (e.oy || 0); if (x < -5 || y < -5 || x > W + 5 || y > H + 5) return; X[k] = x; Y[k] = y;
     cells[Math.max(0, Math.min(ny - 1, Math.floor(y / cs))) * nx + Math.max(0, Math.min(nx - 1, Math.floor(x / cs)))].push(k); });
   hitG = { cs, nx, ny, cells, X, Y }; }
 function hitAt(px, py) { const h = hitG; if (!h) return -1; let best = -1, bd = 100; const cx = Math.floor(px / h.cs), cy = Math.floor(py / h.cs);
@@ -1477,7 +1497,7 @@ function hitAt(px, py) { const h = hitG; if (!h) return -1; let best = -1, bd = 
   return best; }
 // hover: a point within 10 px shows its title (the canvas tooltip) and a hand; inside the lens a move cursor, elsewhere a grab
 function hover(e) { const [px, py] = ptr(e), k = hitAt(px, py), t = k >= 0 ? (st.mode === 'roles' ? (lay().ents[k].past ? '' : cleanTitle(rows[lay().ents[k].idx[0]][1])) : lay().ents[k].name) : '';
-  cv.style.cursor = k >= 0 ? 'pointer' : lensOn() && Math.hypot(px - sx(st.lens.x), py - sy(st.lens.y)) <= st.size * BW + 8 ? 'move' : 'grab'; if (cv.title !== t) cv.title = t; }
+  cv.style.cursor = k >= 0 ? 'pointer' : lensOn() && Math.hypot(px - sx(st.lens.x), py - sy(st.lens.y)) <= st.size * BW + 8 ? 'move' : 'grab'; const G = k >= 0 && st.mode === 'geo' ? lay().ents[k].grp : null; const t2 = G ? `${G.name || pick('This place', 'Dieser Ort')} · ${G.tot.toLocaleString()} ${pick('open roles', 'offene Stellen')} · ${G.ks.length} ${pick('companies', 'Firmen')}: ${G.ks.slice(0, 3).map((q) => shortName(lay().ents[q].name)).join(', ')}${G.ks.length > 3 ? ' …' : ''} (${pick('click to zoom in', 'klicken zum Hineinzoomen')})` : t; if (cv.title !== t2) cv.title = t2; }
 // the card of the selected point (on the stage, so it also works in full screen): a role with its title as a link, company, region,
 // level, age and the marks; or a company with its name, about text and open roles
 const pop = document.createElement('div'); pop.className = 'atlas-pop'; pop.hidden = true; stage.appendChild(pop);
@@ -1524,6 +1544,7 @@ cv.addEventListener('pointermove', (e) => { if (!touches.has(e.pointerId)) { if 
   draw(); });
 const endPtr = (e) => { touches.delete(e.pointerId); if (pinch) { if (touches.size < 2) { pinch = null; resample(); } return; }
   if (!drag) return; const [px, py] = ptr(e), tap = drag.moved < 5, k = tap ? hitAt(px, py) : -1, kind = drag.kind; drag = null;
+  if (k >= 0 && st.mode === 'geo' && lay().ents[k].grp) { const vd = geoUni() ? 360 * geoView().w : 360 / Math.max(1, st.z.s); zoomTo(st.z.s * Math.max(2, vd / 1.9), px, py); return; }   // a place point: zoom in until it splits
   if (k >= 0) { showPop(k); draw(); return; }   // a tap on a point opens its card; the lens stays where it is
   if (tap) hidePop();
   const moved = kind === 'lens' || (tap && lensOn()); if (kind === 'pan' && tap && lensOn()) { st.lens.x = ux(px); st.lens.y = uy(py); }
