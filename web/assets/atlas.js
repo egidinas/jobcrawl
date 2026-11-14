@@ -6,6 +6,15 @@
 import { loadConfig, dataUrl, roleLink, companyLink, defaultScope, modelCache, L, esc, isDe, pick } from './app.js';
 import { makeIndex, tasteScores, tasteWeight } from './match.js';
 import * as PF from './profile.js';
+// company tile: the stored logo, else (any load error, a 404 included) the site's monogram tile, as tools/build_pages.py logo_html
+// (same letters and the same hue formula as mono_hue), so a missing logo never leaves a gap or a broken image
+function coLogo(slug, name) {
+  const letters = ((String(name || '').match(/[A-Za-z0-9]+/g) || []).slice(0, 2).map((w) => w[0]).join('').toUpperCase()) || '?';
+  const key = String(slug || name || ''); let hue = 0; for (const ch of key) hue += ch.codePointAt(0); hue = (hue * 37) % 360;
+  const mono = `<span class="atlas-co-logo mono" style="--h:${hue}" aria-hidden="true">${esc(letters)}</span>`;
+  if (!slug) return mono;
+  return `<span class="atlas-co-logo" aria-hidden="true"><img src="assets/company/${esc(slug)}.png" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;const s=this.parentElement;s.className='atlas-co-logo mono';s.style.setProperty('--h','${hue}');s.textContent='${esc(letters).replace(/'/g, '')}'"></span>`;
+}
 const cfg = await loadConfig();
 PF.setPersonas(cfg.personas);
 const K = PF.keys();
@@ -77,7 +86,9 @@ style.textContent = `
 .atlas-stage:fullscreen .atlas-scrub,.atlas-stage:-webkit-full-screen .atlas-scrub{position:absolute;left:0;right:0;bottom:0;border-top:0;background:color-mix(in srgb,var(--panel) 72%,transparent)}
 .atlas-area .chg{display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted);flex-wrap:wrap;width:100%}
 .atlas-chart{width:120px;height:24px;flex:none}
-.co-logo{height:28px;width:auto;max-width:84px;object-fit:contain;vertical-align:middle;margin-right:8px;border-radius:4px}
+.atlas-co-logo{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin-right:8px;border-radius:5px;background:#fff;overflow:hidden;vertical-align:middle}
+.atlas-co-logo img{width:100%;height:100%;object-fit:contain;padding:2px;box-sizing:border-box}
+.atlas-co-logo.mono{background:hsl(var(--h) 42% 30%);color:#fff;font:700 11px/1 'Hanken Grotesk',system-ui,sans-serif;letter-spacing:.02em}
 .atlas-link-t{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--ink);padding-bottom:7px;cursor:pointer}
 .atlas-banner{position:absolute;left:8px;top:8px;z-index:3;max-width:calc(100% - 60px);box-sizing:border-box;padding:6px 30px 6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--paper);color:var(--ink);font-size:12.5px;line-height:1.4;box-shadow:0 4px 14px rgba(0,0,0,.2);overflow-wrap:anywhere}.atlas-banner[hidden]{display:none}
 .atlas-banner-x{all:unset;cursor:pointer;position:absolute;right:6px;top:4px;width:20px;height:20px;text-align:center;line-height:20px;font-size:15px;color:var(--muted)}.atlas-banner-x:focus-visible{outline:2px solid var(--accent)}
@@ -1381,7 +1392,7 @@ function cardHtml(k) {
   const facts = [loc && `📍 ${loc}`, archName && `🏛 ${archName}`, tracked && `✓ ${pick('Tracked ATS', 'Überwachtes Portal')}`, ...tags.slice(0, 3).map((t) => `#${t}`)].filter(Boolean);
 
   return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}">`
-    + `<button type="button" class="hd" aria-expanded="${open}"><img class="co-logo" src="assets/company/${esc(e.slug)}.png" alt="" loading="lazy" onerror="this.remove()">${esc(e.name)}${archName ? ` <span class="atlas-tag-tier" style="background:${archCol}">${esc(archName)}</span>` : ''}${tracked ? ` <span class="atlas-badge-tracked">● ${L('Tracked', 'Überwacht')}</span>` : ''}</button>`
+    + `<button type="button" class="hd" aria-expanded="${open}">${coLogo(e.slug, e.name)}${esc(e.name)}${archName ? ` <span class="atlas-tag-tier" style="background:${archCol}">${esc(archName)}</span>` : ''}${tracked ? ` <span class="atlas-badge-tracked">● ${L('Tracked', 'Überwacht')}</span>` : ''}</button>`
     + `<div class="m">${loc ? esc(loc) + ' · ' : ''}${lk ? `<span class="co-has-roles">${lk.n} ${L('of', 'von')} ${lk.N} ${L('roles in the selection', 'Stellen in der Auswahl')}</span>` : vr.length ? `<span class="co-has-roles">${vr.length} ${L('open roles', 'offene Stellen')}</span>` : `<span class="co-no-roles">${L('No current vacancies', 'Keine aktuellen Vakanzen')}</span>`}${flds.length ? ' · ' + esc(flds.join(', ')) : (e.field ? ' · ' + esc(e.field) : '')}</div>`
     + `<div class="snip">${esc(snip(desc, 170))}</div>`
     + `<div class="more">`
