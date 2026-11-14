@@ -811,7 +811,7 @@ function geoLayer(sid) { if (geo.lays.has(sid)) return geo.lays.get(sid);
 // a coordinate at t from its true (a), moderate (m) and full (k) value: 0 to 0.5 true to moderate, 0.5 to 1 moderate to full
 const geoAt = (a, m, k, t) => (t <= 0.5 ? a + (m - a) * 2 * t : m + (k - m) * (2 * t - 1));
 // ---- place map A (coordinator 2026-11-14, option 1): the shared place module (./place/place.esm.js, a generated copy of the transitions page's
-// place.esm.js at 83595d089a) on this page's own canvas. ONE source for the numbers: the board's place file (places-v1.json, one row per open
+// place.esm.js at 3b92e864cb) on this page's own canvas. ONE source for the numbers: the board's place file (places-v1.json, one row per open
 // role: located / country-only / none). Located roles are counted in areas by point in polygon on the module's shapes (countries and German
 // states from the world and Europe outline files, NUTS3 counties and Singapore's planning areas once the view is under about 11 degrees);
 // country-only roles are a figure on their country, never points. Areas: 7 blue classes per level, grey for none. From city zoom (MapLibre
@@ -832,7 +832,7 @@ function placeLoad() {
   if (PA.loading) return PA.loading;
   const lv = geoLevels(), top = GEO.scopes.worldwide ? 'worldwide' : lv[lv.length - 1], eu = GEO.scopes.europe ? 'europe' : lv[lv.length - 2];
   PA.base = dataUrl(cfg.geomap).replace(/[^/]*$/, '');
-  PA.loading = Promise.all([import('./place/place.esm.js?v=83595d089a'), fetch(PA.base + 'places-v1.json').then((r) => (r.ok ? r.json() : null)).catch(() => null), import('./vendor/supercluster.min.js').catch(() => null)])
+  PA.loading = Promise.all([import('./place/place.esm.js?v=3b92e864cb'), fetch(PA.base + 'places-v1.json').then((r) => (r.ok ? r.json() : null)).catch(() => null), import('./vendor/supercluster.min.js').catch(() => null)])
     .then(async ([M, pv]) => {
       if (!pv || !Array.isArray(pv.rows) || !top || !eu) { console.warn('[place] no place file; the areas stay grey'); return null; }
       // the module's input, from the place file alone (one row per role id; the module reads the id, the company and the country of a row)
@@ -1170,26 +1170,28 @@ function paNames(ctx, Lg, o) { const M = PA.M, G = M.GEO, D = PA.D, tier = paTie
   const withCounties = new Set(G.counties.filter((c) => c.n > 0).map((c) => c.cc));
   const set = tier === 'country' ? G.countries.map((u) => ['country', u]) : tier === 'state' ? [...G.states.map((u) => ['state', u]), ...G.countries.filter((u) => u.id !== 'DE').map((u) => ['country', u])]
     : [...G.counties.map((u) => ['county', u]), ...G.countries.filter((u) => !withCounties.has(u.id)).map((u) => ['country', u])];
-  const boxes = o.screen ? [[W - 56, 0, W, 180]] : [], hit = (bx) => boxes.some((q) => bx[0] < q[2] && bx[2] > q[0] && bx[1] < q[3] && bx[3] > q[1]);
+  // country-only figures never float as free labels (PlaceA 3b92e864cb): a country's own figure is the second small line of its name; the
+  // figures of countries whose name is not drawn add up in one chip, top right below this page's zoom controls (its corner reserved first)
+  const top = o.screen ? 186 : 8, chipW = Math.min(W - 16, 230), chipBox = [W - 8 - chipW, top + 2, W - 8, top + 22];
+  const boxes = o.screen ? [[W - 56, 0, W, 180], chipBox] : [chipBox], hit = (bx) => boxes.some((q) => bx[0] < q[2] && bx[2] > q[0] && bx[1] < q[3] && bx[3] > q[1]);
   for (const [lv, u] of set.filter(([, u]) => u.n > 0).sort((a, b) => b[1].n - a[1].n)) { if (items.length >= 60) break;
     const p = unitAt(lv, u); if (!p) continue; const [x, y, areaPx] = p; if (x < 0 || y < 20 || x > W || y > H - 20) continue;
     const fs = Math.max(small ? 10 : 11, Math.min(22, Math.round(Math.sqrt(areaPx) / 8))), co = lv === 'country' ? D.coOnly[u.id] || 0 : 0, t = nameOf(lv, u), cnt = u.n.toLocaleString(isDe() ? 'de-DE' : 'en');
     ctx.font = `600 ${fs}px system-ui,sans-serif`; const t1 = ctx.measureText(t).width; ctx.font = `500 ${Math.round(fs * 0.85)}px system-ui,sans-serif`; const t2 = ctx.measureText(cnt).width;
     const s2 = Math.round(fs * 0.7), ctext = co ? `+${co.toLocaleString(isDe() ? 'de-DE' : 'en')} ${pick('country-only', 'nur Land')}` : ''; ctx.font = `500 ${s2}px system-ui,sans-serif`; const t3 = co ? ctx.measureText(ctext).width : 0;
     const tw = Math.max(t1, t2, t3) + 8, th = fs * 2.3 + (co ? s2 * 1.3 : 0), bx = [x - tw / 2, y - th / 2, x + tw / 2, y + th / 2];
-    if (areaPx < 1.4 * tw * th || hit(bx)) continue; boxes.push(bx); items.push({ t, x, y, fs, cnt, ctext, sm: s2, rgb: u.rgb }); if (lv === 'country') seen.add(u.id); }
-  if (o.deg > 2.5) for (const u of G.countries.filter((x) => (D.coOnly[x.id] || 0) > 0 && !seen.has(x.id)).sort((a, b) => (D.coOnly[b.id] || 0) - (D.coOnly[a.id] || 0))) {
-    const p = unitAt('country', u); if (!p) continue; const [x, y] = p; if (x < 0 || y < 20 || x > W || y > H - 20) continue;
-    ctx.font = '600 11px system-ui,sans-serif'; const t = `${u.id} +${(D.coOnly[u.id] || 0).toLocaleString(isDe() ? 'de-DE' : 'en')} ${pick('country-only', 'nur Land')}`, tw = ctx.measureText(t).width + 8, bx = [x - tw / 2, y - 8, x + tw / 2, y + 8];
-    if (hit(bx)) continue; boxes.push(bx); items.push({ badge: true, t, x, y, rgb: u.rgb }); }
+    if (areaPx < 1.4 * tw * th || hit(bx) || bx[0] < 2 || bx[2] > W - 2) continue; boxes.push(bx); items.push({ t, x, y, fs, cnt, ctext, sm: s2, rgb: u.rgb }); if (lv === 'country') seen.add(u.id); }
+  let rest = 0; for (const k in D.coOnly) if (!seen.has(k)) rest += D.coOnly[k];
+  if (rest > 0) items.push({ chip: true, t: `${pick('not placed', 'ohne Ort')}: ${rest.toLocaleString(isDe() ? 'de-DE' : 'en')} ${pick('country-only', 'nur Land')}`, x: chipBox[2], y: (chipBox[1] + chipBox[3]) / 2 });
   ctx.save(); ctx.globalAlpha = Math.max(0, Math.min(1, na)); ctx.textBaseline = 'middle'; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
   for (const p of items) { const ink = M.PlaceA.inkFor(p.rgb, fa, 'name'), am = M.PlaceA.inkFor(p.rgb, fa, 'amber'); ctx.lineWidth = 3.2;
-    if (p.badge) { ctx.font = '600 11px system-ui,sans-serif'; ctx.strokeStyle = am.halo; ctx.strokeText(p.t, p.x, p.y); ctx.fillStyle = am.text; ctx.fillText(p.t, p.x, p.y); continue; }
+    if (p.chip) { ctx.save(); ctx.font = '600 11px system-ui,sans-serif'; ctx.textAlign = 'right'; const w = ctx.measureText(p.t).width + 14; ctx.globalAlpha = 0.9; ctx.fillStyle = '#0b1424'; ctx.strokeStyle = '#3a4a6a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(p.x - w, p.y - 10, w, 20, 6); ctx.fill(); ctx.stroke(); ctx.globalAlpha = 1; ctx.fillStyle = '#f2b36b'; ctx.fillText(p.t, p.x - 7, p.y); ctx.restore(); continue; }
     const y = p.y - (p.ctext ? p.sm * 0.6 : 0); ctx.strokeStyle = ink.halo;
     ctx.font = `600 ${p.fs}px system-ui,sans-serif`; ctx.strokeText(p.t, p.x, y - p.fs * 0.55); ctx.fillStyle = ink.text; ctx.fillText(p.t, p.x, y - p.fs * 0.55);
     ctx.font = `500 ${Math.round(p.fs * 0.85)}px system-ui,sans-serif`; ctx.strokeText(p.cnt, p.x, y + p.fs * 0.6); ctx.fillStyle = ink.text; ctx.fillText(p.cnt, p.x, y + p.fs * 0.6);
     if (p.ctext) { ctx.font = `500 ${p.sm}px system-ui,sans-serif`; ctx.strokeStyle = am.halo; ctx.strokeText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); ctx.fillStyle = am.text; ctx.fillText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); } }
-  ctx.restore(); o.counts.areas = items.filter((p) => !p.badge).length; o.counts.badges = items.length - o.counts.areas; PA.lastLabels = items.map((p) => [p.t, p.cnt || '', p.ctext || '']); }
+  ctx.restore(); o.counts.areas = items.filter((p) => !p.chip).length; o.counts.chip = items.some((p) => p.chip); PA.lastLabels = items.map((p) => [p.t, p.cnt || '', p.ctext || '']); }
 // the view's painter: the geography, or the atlas's own (roles, companies)
 const paintAny = (ctx, P, o) => (P.geo ? paintGeo(ctx, P, o) : paintMap(ctx, P, o));
 // the area panel in the geography: the shape under the lens, and the places and companies in the lens

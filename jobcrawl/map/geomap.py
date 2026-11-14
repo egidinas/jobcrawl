@@ -614,7 +614,12 @@ def build_places_file(site, vectors, role_sites, log=print, index=None, desc=Non
     if index is None:
         index, desc = read_site(site)
     roles, built = places.read_role_sites(role_sites)
-    doc = places.build_places(roles, place_jobs(index, desc), 'public', built)
+    counties = places.CountyIndex([os.path.join(vectors, LEVELS_FILE), os.path.join(vectors, 'levels_extra.json')])   # the county code per located role (n3)
+    world = os.path.join(vectors, scope_file('worldwide'))
+    in_country = places.CountryTest(world) if os.path.exists(world) else None                # a site in another country than the posting's: country-only
+    if not len(counties) or in_country is None:
+        log(f'places: county shapes {len(counties)}, country check {"on" if in_country else "off (no " + world + ")"}')
+    doc = places.build_places(roles, place_jobs(index, desc), 'public', built, in_country=in_country, counties=counties)
     if compare and os.path.exists(compare):
         try:
             with open(compare, encoding='utf-8') as fh:

@@ -6,7 +6,7 @@ the same rule (owner/coordinator 2026-11-14: "the numbers must come from ONE sou
 
     {"version": 1, "built": iso, "role_sites_built": iso, "surface": "public" | "board:<bundle id>",
      "precisions": ["site", "postcode", "city", "region", "country"], "bases": [...],
-     "cols": ["id", "co", "cc", "p", "b", "lon", "lat"],
+     "cols": ["id", "co", "cc", "p", "b", "lon", "lat", "n3"],   (n3: the county code of a located row, or null)
      "rows": [[id, company id, country code, precision index, basis index, lon | null, lat | null], ...],
      "counts": {"rows", "located", "country_only", "none", "not_in_role_sites"}}
 
@@ -111,13 +111,61 @@ class CountryTest:
         return False
 
 
-def build_places(roles, jobs, surface, role_sites_built='', in_country=None, enforce=True, extra=None):
+class CountyIndex:
+    """The county shapes of the shared place module (levels_l3.json: NUTS3; levels_extra.json: Singapore's planning areas) for point lookups.
+    Each located row gets the code of the shape holding its point (even-odd over the shape's rings, as the pages fill them), assigned ONCE here so
+    no page recomputes it: a state is the first three characters of the code, so a state's count is the sum of its counties' counts in every
+    phase of every page. A point in no shape (coast, lake and border gaps) has no code and counts at country level only."""
+    CELL = 0.5
+
+    def __init__(self, paths):
+        self.shapes, self.grid = [], {}
+        for path in paths:
+            if not path or not os.path.exists(path):
+                continue
+            with open(path, encoding='utf-8') as fh:
+                for sh in json.load(fh).get('shapes') or []:
+                    rings = [[(flat[i] / 1e4, flat[i + 1] / 1e4) for i in range(0, len(flat) - 1, 2)] for flat in sh.get('r') or []]
+                    rings = [r for r in rings if len(r) >= 3]
+                    if not rings:
+                        continue
+                    xs = [x for r in rings for x, _ in r]; ys = [y for r in rings for _, y in r]
+                    k = len(self.shapes)
+                    self.shapes.append((sh['id'], rings, (min(xs), min(ys), max(xs), max(ys))))
+                    for gx in range(int(min(xs) // self.CELL), int(max(xs) // self.CELL) + 1):
+                        for gy in range(int(min(ys) // self.CELL), int(max(ys) // self.CELL) + 1):
+                            self.grid.setdefault((gx, gy), []).append(k)
+
+    def __len__(self):
+        return len(self.shapes)
+
+    def code(self, lon, lat):
+        """The id of the shape holding the point, or None."""
+        for k in self.grid.get((int(lon // self.CELL), int(lat // self.CELL)), ()):
+            sid, rings, bb = self.shapes[k]
+            if not (bb[0] <= lon <= bb[2] and bb[1] <= lat <= bb[3]):
+                continue
+            inside = False
+            for r in rings:
+                j = len(r) - 1
+                for i in range(len(r)):
+                    xi, yi = r[i]; xj, yj = r[j]
+                    if (yi > lat) != (yj > lat) and lon < (xj - xi) * (lat - yi) / (yj - yi) + xi:
+                        inside = not inside
+                    j = i
+            if inside:
+                return sid
+        return None
+
+
+def build_places(roles, jobs, surface, role_sites_built='', in_country=None, enforce=True, extra=None, counties=None):
     """roles: read_role_sites()[0]; jobs: iterable of (id, company id, country code or '', role key or None) of the surface's open postings.
     The role key is the posting's key in role-sites.json (the resolver keys roles by role_key(url)); None = the id itself.
     in_country: CountryTest (or any (cc, lon, lat) -> True/False/None); every located point outside its posting's country is counted in
     counts['wrong_country'] by country, and with enforce it falls back to country-only (lon/lat null, basis '<basis>|wrong_country').
     extra: {id: [lon, lat, basis, precision]} precise placements from other steps (Singapore MCF postal codes, single company addresses); they
-    replace the resolver's point when present. A basis with '_choice' (one picked among several) is a guess and counts as country-only."""
+    replace the resolver's point when present. A basis with '_choice' (one picked among several) is a guess and counts as country-only.
+    counties: a CountyIndex for the county code column n3 (None: n3 stays null)."""
     bases, bidx, rows = [], {}, []
     counts = {'rows': 0, 'located': 0, 'country_only': 0, 'none': 0, 'not_in_role_sites': 0, 'extra_used': 0, 'wrong_country': {}, 'wrong_country_total': 0}
 
@@ -153,14 +201,19 @@ def build_places(roles, jobs, surface, role_sites_built='', in_country=None, enf
                 loc, basis, p = False, basis + '|wrong_country', 'country'
         if not loc:
             lon = lat = None
-        rows.append([jid, co or '', cc or '', PRECISIONS.index(p), b_of(basis), None if lon is None else round(float(lon), 5), None if lat is None else round(float(lat), 5)])
+        lon = None if lon is None else round(float(lon), 5)
+        lat = None if lat is None else round(float(lat), 5)
+        n3 = counties.code(lon, lat) if counties and loc else None
+        if n3:
+            counts['with_county'] = counts.get('with_county', 0) + 1
+        rows.append([jid, co or '', cc or '', PRECISIONS.index(p), b_of(basis), lon, lat, n3])
         counts['rows'] += 1
         counts['located' if loc else ('country_only' if cc else 'none')] += 1
     counts['wrong_country'] = dict(sorted(counts['wrong_country'].items(), key=lambda kv: -kv[1]))
     return {'version': 1, 'rev': 2, 'built': _dt.datetime.now(_dt.timezone.utc).isoformat(timespec='seconds'), 'role_sites_built': role_sites_built,
             'surface': surface, 'precisions': PRECISIONS, 'bases': bases, 'not_located_bases': list(NOT_LOCATED_BASES),
             'country_check': {'enforced': bool(in_country is not None and enforce), 'tol_km': TOL_KM},
-            'cols': ['id', 'co', 'cc', 'p', 'b', 'lon', 'lat'], 'rows': rows, 'counts': counts}
+            'cols': ['id', 'co', 'cc', 'p', 'b', 'lon', 'lat', 'n3'], 'rows': rows, 'counts': counts}
 
 
 def write_places(path, doc):

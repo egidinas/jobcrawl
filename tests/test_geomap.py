@@ -434,7 +434,9 @@ class PlaceFile(unittest.TestCase):
         jobs = [('a1', 'co-a', 'DE', None), ('b2', 'co-b', 'DE', None), ('c3', 'co-c', '', None), ('d4', 'co-d', '', None),
                 ('e5', 'co-e', 'AT', None), ('a1', 'co-a', 'DE', None)]                                    # e5 unknown to the resolver; a1 twice
         doc = places.build_places(roles, jobs, 'public', '2026-11-14T00:00:00+00:00')
-        self.assertEqual(doc['counts'], {'rows': 5, 'located': 1, 'country_only': 3, 'none': 1, 'not_in_role_sites': 1})
+        self.assertEqual({k: doc['counts'][k] for k in ('rows', 'located', 'country_only', 'none', 'not_in_role_sites')},
+                         {'rows': 5, 'located': 1, 'country_only': 3, 'none': 1, 'not_in_role_sites': 1})
+        self.assertIsNone(doc['rows'][0][7])                               # no county shapes: no county code
         by = {r[0]: r for r in doc['rows']}
         self.assertEqual((by['a1'][5], by['a1'][6]), (11.5, 48.1))
         self.assertIsNone(by['b2'][5])                                     # an ambiguous point is never drawn
@@ -442,6 +444,25 @@ class PlaceFile(unittest.TestCase):
         self.assertEqual(doc['bases'][by['e5'][4]], 'surface')
         n = doc['counts']
         self.assertEqual(n['located'] + n['country_only'] + n['none'], n['rows'])
+
+    def test_county_code_of_located_rows(self):
+        from jobcrawl.map import places
+        tmp = tempfile.mkdtemp(prefix='jc-codes-')
+        try:
+            p = os.path.join(tmp, 'levels_l3.json')
+            sq = lambda x, y: [x, y, x + 10000, y, x + 10000, y + 10000, x, y + 10000]
+            with open(p, 'w', encoding='utf-8') as fh:
+                json.dump({'shapes': [{'id': 'DE212', 'name': 'München', 'cc': 'DE', 'r': [sq(115000, 480000)]},
+                                      {'id': 'DE21H', 'name': 'LK München', 'cc': 'DE', 'r': [sq(110000, 475000), sq(115000, 480000)]}]}, fh)   # a hole: the city
+            idx = places.CountyIndex([p, os.path.join(tmp, 'missing.json')])
+            roles = {'a': {'p': 'site', 'lat': 48.05, 'lon': 11.55, 'b': 'x', 'cc': 'DE'}, 'b': {'p': 'site', 'lat': 47.8, 'lon': 11.2, 'b': 'x', 'cc': 'DE'},
+                     'c': {'p': 'site', 'lat': 40.0, 'lon': 2.0, 'b': 'x', 'cc': 'ES'}, 'd': {'p': 'country', 'b': 'x', 'cc': 'DE'}}
+            doc = places.build_places(roles, [(k, 'co', '', None) for k in 'abcd'], 'public', '', counties=idx)
+            self.assertEqual([r[7] for r in doc['rows']], ['DE212', 'DE21H', None, None])
+            self.assertEqual(doc['counts']['with_county'], 2)
+            self.assertEqual(doc['cols'][7], 'n3')
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 class SharedCounties(unittest.TestCase):

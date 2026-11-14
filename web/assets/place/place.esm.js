@@ -1,4 +1,4 @@
-// place.esm.js: generated from geobase.js + place_data.js + place_a.js at source commit 83595d089a (proto/transitions on feat/atlas-view-transitions, make_esm_place.sh); do not edit
+// place.esm.js: generated from geobase.js + place_data.js + place_a.js at source commit 3b92e864cb (proto/transitions on feat/atlas-view-transitions, make_esm_place.sh); do not edit
 // Places base for the transitions page, in the look of the site's geography page (atlas-geography.html, neon theme): flat OKLCH area fills
 // ranked by posting density (deep blue = few, magenta, amber = many), thin borders, rivers, names with counts. Drawn on a 2D canvas behind
 // the transparent MapLibre canvas with the map's own projection. Painting and tokens follow paintGeo / geoLayer in
@@ -111,9 +111,11 @@ async function geoPhase1(urls, counts, pts, opts) {
   const landOf = (cc) => { if (landCache.has(cc)) return landCache.get(cc); const sh = seen.get(cc); const o = sh ? { has: (lon, lat) => cxl.isPointInPath(sh.path, geoMercX(lon) * GEO.U, geoMercY(lat) * GEO.U, 'evenodd'), w: (sh.bb[2] - sh.bb[0]) / GEO.U * 360, h: (sh.bb[3] - sh.bb[1]) / GEO.U * 360 } : null; landCache.set(cc, o); return o; };
   Object.assign(GEOSTATE, { world, europe, seen, countries, colourOf, landOf, landCache, pts, opts, cxl });
   if (opts.place) GEO.placeStats = opts.place(landOf);
-  // the German states by point in polygon on the postings' positions (the counties are not there yet)
+  // the German states. With a county code per posting (pts.n3code, assigned once when the place file is built) a state is the first three characters of its postings' county codes, so its count is
+  // by construction the sum of its counties' counts in both phases; without codes the states are counted by point in polygon on the postings' positions (the counties are not there yet).
   const states = europe.shapes.filter((s) => s.kind === 'state'), n1 = new Int32Array(pts.N).fill(-1); states.forEach((s) => { s.n = 0; });
-  for (let i = 0; i < pts.N; i++) {
+  if (pts.n3code) { const sid = new Map(states.map((s, j) => [s.id, j])); for (let i = 0; i < pts.N; i++) { const c = pts.has[i] && pts.n3code[i]; if (!c) continue; const j = sid.get(c.slice(0, 3)); if (j !== undefined) { n1[i] = j; states[j].n++; } } }
+  else for (let i = 0; i < pts.N; i++) {
     if (!pts.has[i]) continue; const x = pts.T[2 * i] * GEO.U, y = pts.T[2 * i + 1] * GEO.U;
     for (let j = 0; j < states.length; j++) { const s = states[j]; if (x < s.bb[0] || x > s.bb[2] || y < s.bb[1] || y > s.bb[3]) continue; if (cxl.isPointInPath(s.path, x, y, 'evenodd')) { n1[i] = j; s.n++; break; } }
   }
@@ -133,8 +135,9 @@ function loadGeoDetail(l3) {
     landCache.clear(); if (opts.place) GEO.placeStats = opts.place(landOf);
     // postings -> county: the NUTS assignment file when given (declared / gazetteer), else the point in the polygon on the drawn position
     const cx = document.createElement('canvas').getContext('2d'), byId = new Map(counties.map((c, i) => [c.id, i])), n3 = new Int32Array(pts.N).fill(-1); let fromFile = 0, fromPip = 0;
-    if (assign) for (let i = 0; i < pts.N; i++) { if (!pts.has[i]) continue; const k = assign.m[pts.ids[i]]; if (k !== undefined) { const j = byId.get(assign.codes[k]); if (j !== undefined) { n3[i] = j; fromFile++; } } }
-    for (let i = 0; i < pts.N; i++) {
+    if (pts.n3code) { for (let i = 0; i < pts.N; i++) { const c = pts.has[i] && pts.n3code[i]; if (!c) continue; const j = byId.get(c); if (j !== undefined) { n3[i] = j; fromFile++; } } }   // the codes assigned when the place file was built: no point in polygon at all
+    else if (assign) for (let i = 0; i < pts.N; i++) { if (!pts.has[i]) continue; const k = assign.m[pts.ids[i]]; if (k !== undefined) { const j = byId.get(assign.codes[k]); if (j !== undefined) { n3[i] = j; fromFile++; } } }
+    if (!pts.n3code) for (let i = 0; i < pts.N; i++) {
       if (n3[i] >= 0 || !pts.has[i]) continue; const x = pts.T[2 * i] * GEO.U, y = pts.T[2 * i + 1] * GEO.U;
       for (let j = 0; j < counties.length; j++) { const c = counties[j]; if (x < c.bb[0] || x > c.bb[2] || y < c.bb[1] || y > c.bb[3]) continue; if (cx.isPointInPath(c.path, x, y, 'evenodd')) { n3[i] = j; fromPip++; break; } }
     }
@@ -151,7 +154,7 @@ function loadGeoDetail(l3) {
 }
 // the class scale for a page that paints with its own canvas (no drawGeo): bounds and colours of a level ('country' | 'state' | 'county') and the legend rows
 const classesFor = (level) => ({ breaks: (GEO.breaks || {})[level] || [], colours: CLASS_COL.slice() });
-const legendRows = (level) => { const b = classesFor(level).breaks; return b.map((x, k) => [CLASS_COL[k], k < b.length - 1 ? `${x.toLocaleString('en')}–${(b[k + 1] - 1).toLocaleString('en')}` : `${x.toLocaleString('en')}+`]); };
+const legendRows = (level) => { const b = classesFor(level).breaks; return b.map((x, k) => [CLASS_COL[k], k < b.length - 1 ? (b[k + 1] - 1 > x ? `${x.toLocaleString('en')}–${(b[k + 1] - 1).toLocaleString('en')}` : x.toLocaleString('en')) : `${x.toLocaleString('en')}+`]); };
 // the affine map from path units to css px for the current camera: [a, b, c, d, e, f] (css x = a*u + c*v + e, css y = b*u + d*v + f)
 function geoAffine(m, cw, ch, U) { const w = m[15]; return [m[0] / w * 0.5 * cw / U, -m[1] / w * 0.5 * ch / U, m[4] / w * 0.5 * cw / U, -m[5] / w * 0.5 * ch / U, m[12] / w * 0.5 * cw + 0.5 * cw, (0.5 - m[13] / w * 0.5) * ch]; }
 const smooth = (t) => { t = Math.max(0, Math.min(1, t)); return t * t * (3 - 2 * t); };
@@ -224,11 +227,11 @@ const PlaceData = (function () {
   // the per-cycle place file (places-v1.json, jobcrawl map/places.py): located = lon present (the generator already applied its not-located bases), country-only = a country but no point, none = no country.
   // The rows of postings.json (with galaxy coordinates) stay the rows of D; ids join to the place file; rows the place file does not have fall back to country-only / none and are counted in D.missing.
   function prepareFromPlaces(pv, src) {
-    const D = prepare({ postings: src.postings, galaxy: src.galaxy, coTypes: src.coTypes, places: {}, meta: src.meta }), byId = new Map(); pv.rows.forEach((r) => byId.set(r[0], r)); D.source = 'places-v1 ' + (pv.surface || ''); D.missing = 0; D.basisName = new Array(D.N).fill('');
+    const D = prepare({ postings: src.postings, galaxy: src.galaxy, coTypes: src.coTypes, places: {}, meta: src.meta }), byId = new Map(), ci = pv.cols ? pv.cols.indexOf('n3') : -1, codes = src.codes || null; if (ci >= 0 || codes) D.n3code = new Array(D.N).fill(null);; pv.rows.forEach((r) => byId.set(r[0], r)); D.source = 'places-v1 ' + (pv.surface || ''); D.missing = 0; D.basisName = new Array(D.N).fill('');
     for (let i = 0; i < D.N; i++) {
       const r = byId.get(D.ids[i]);
       if (!r) { D.missing++; D.cat[i] = D.cc[i] ? 2 : 3; D.lon[i] = 0; D.lat[i] = 0; D.basis[i] = 0; continue; }
-      D.basisName[i] = pv.bases[r[4]] || '';
+      D.basisName[i] = pv.bases[r[4]] || ''; if (D.n3code) D.n3code[i] = (ci >= 0 ? r[ci] : codes[r[0]]) || null;
       if (r[5] != null && r[6] != null) { D.lon[i] = r[5]; D.lat[i] = r[6]; D.cat[i] = 1; D.basis[i] = 1; D.cc[i] = r[2] || D.cc[i]; }
       else { D.lon[i] = 0; D.lat[i] = 0; D.basis[i] = 0; D.cc[i] = r[2] || ''; D.cat[i] = r[2] ? 2 : 3; }
     }
@@ -238,7 +241,7 @@ const PlaceData = (function () {
   function geoInput(D) {
     const T = new Float64Array(D.N * 2), has = new Uint8Array(D.N), refresh = () => { for (let i = 0; i < D.N; i++) { has[i] = D.cat[i] === 1 ? 1 : 0; T[2 * i] = mercX(D.lon[i]); T[2 * i + 1] = mercY(D.lat[i]); } };
     refresh(); const cnt = {}; for (let i = 0; i < D.N; i++) if (D.cat[i] === 1) cnt[D.cc[i]] = (cnt[D.cc[i]] || 0) + 1;
-    return { pts: { T, has, N: D.N, ids: D.ids }, counts: cnt, refresh };
+    return { pts: { T, has, N: D.N, ids: D.ids, n3code: D.n3code }, counts: cnt, refresh };
   }
   function snapOwn(D, landOf) {   // an own-coordinate point just off its country's coast moves to the nearest real place of its country that lies on land
     const hubs = {}; let moved = 0, foreign = 0;
@@ -341,19 +344,18 @@ const PlaceA = (function () {
     ctl.labelItems = (g, cw, ch, zoom) => {
       const deg = viewDeg(zoom, cw), set = deg > 25 ? 'country' : deg > SITE_BELOW ? 'state' : 'county', ppu = 512 * Math.pow(2, zoom), out = [], boxes = [], shownCc = new Set();
       const hit = (bx) => boxes.some((o) => bx[0] < o[2] && bx[2] > o[0] && bx[1] < o[3] && bx[3] > o[1]);
+      const top = Math.max(40, opts.topInset ? opts.topInset() : 40), chipW = Math.min(cw - 16, 214), chipBox = [cw - 8 - chipW, top + 2, cw - 8, top + 22]; boxes.push(chipBox);   // below the page's own controls   // the corner of the chip is reserved before any name
       for (const l of GEO.labelSets[set].filter((x) => x.n > 0).sort((a, b) => b.n - a.n)) {
-        if (out.length >= 60) break; const p = map.project([lonOf(l.mx), latOf(l.my)]), x = p.x, y = p.y; if (x < 0 || y < 40 || x > cw || y > ch - 30) continue;
+        if (out.length >= 60) break; const p = map.project([lonOf(l.mx), latOf(l.my)]), x = p.x, y = p.y; if (x < 0 || y < top + 24 || x > cw || y > ch - 30) continue;
         const areaPx = l.area * ppu * ppu, fs = Math.max(cw < 600 ? 10 : 11, Math.min(22, Math.round(Math.sqrt(areaPx) / 8))), co = l.kind === 'country' ? D.coOnly[l.id] || 0 : 0;
         g.font = `600 ${fs}px system-ui,sans-serif`; const t1 = g.measureText(l.t).width; g.font = `500 ${Math.round(fs * 0.85)}px system-ui,sans-serif`; const cnt = l.n.toLocaleString('en'), t2 = g.measureText(cnt).width;
         const s2 = Math.round(fs * 0.7); g.font = `500 ${s2}px system-ui,sans-serif`; const ctext = co ? `+${co.toLocaleString('en')} country-only` : '', t3 = co ? g.measureText(ctext).width : 0;
         const tw = Math.max(t1, t2, t3) + 8, th = fs * 2.3 + (co ? s2 * 1.3 : 0), bx = [x - tw / 2, y - th / 2, x + tw / 2, y + th / 2];
-        if (areaPx < 1.4 * tw * th || hit(bx)) continue; boxes.push(bx); out.push({ l, x, y, bx, fs, cnt, ctext, sm: s2, rgb: l.s && l.s.rgb }); if (l.kind === 'country') shownCc.add(l.id);
+        if (areaPx < 1.4 * tw * th || hit(bx) || bx[0] < 2 || bx[2] > cw - 2) continue; boxes.push(bx); out.push({ l, x, y, bx, fs, cnt, ctext, sm: s2, rgb: l.s && l.s.rgb }); if (l.kind === 'country') shownCc.add(l.id);
       }
-      if (deg > 2.5) for (const c of GEO.countries.filter((x) => (D.coOnly[x.id] || 0) > 0 && !shownCc.has(x.id)).sort((a, b) => (D.coOnly[b.id] || 0) - (D.coOnly[a.id] || 0))) {
-        const p = map.project([lonOf(c.mx), latOf(c.my)]); if (p.x < 0 || p.y < 40 || p.x > cw || p.y > ch - 30) continue;
-        g.font = '600 11px system-ui,sans-serif'; const t = `${c.id} +${(D.coOnly[c.id] || 0).toLocaleString('en')} country-only`, tw = g.measureText(t).width + 8, bx = [p.x - tw / 2, p.y - 8, p.x + tw / 2, p.y + 8];
-        if (hit(bx)) continue; boxes.push(bx); out.push({ badge: true, t, x: p.x, y: p.y, bx, rgb: c.rgb });
-      }
+      // country-only figures never float as free labels: a country's own figure is the second small line of its name; the figures of countries whose name is not drawn at this zoom add up in one chip
+      let rest = 0; for (const k in D.coOnly) if (!shownCc.has(k)) rest += D.coOnly[k];
+      if (rest > 0) out.push({ chip: true, t: `not placed: ${rest.toLocaleString('en')} country-only`, x: chipBox[2], y: (chipBox[1] + chipBox[3]) / 2, bx: chipBox });
       lastBoxes = out.map((p) => p.bx); return out;
     };
     ctl.paintLabels = (g, items, alpha, zoom) => {
@@ -361,6 +363,7 @@ const PlaceA = (function () {
       g.globalAlpha = Math.max(0, Math.min(1, alpha)); g.textBaseline = 'middle'; g.textAlign = 'center'; g.lineJoin = 'round';
       for (const p of items) {
         const ink = inkFor(p.rgb, fa, 'name'), am = inkFor(p.rgb, fa, 'amber'); g.lineWidth = 3.2;
+        if (p.chip) { g.font = '600 11px system-ui,sans-serif'; g.textAlign = 'right'; const w = g.measureText(p.t).width + 14; g.globalAlpha = 0.9; g.fillStyle = '#0b1424'; g.strokeStyle = '#3a4a6a'; g.lineWidth = 1; g.beginPath(); g.roundRect(p.x - w, p.y - 10, w, 20, 6); g.fill(); g.stroke(); g.globalAlpha = Math.max(0, Math.min(1, alpha)); g.fillStyle = '#f2b36b'; g.fillText(p.t, p.x - 7, p.y); g.textAlign = 'center'; continue; }
         if (p.badge) { g.font = '600 11px system-ui,sans-serif'; g.strokeStyle = am.halo; g.strokeText(p.t, p.x, p.y); g.fillStyle = am.text; g.fillText(p.t, p.x, p.y); continue; }
         const y = p.y - (p.ctext ? p.sm * 0.6 : 0); g.strokeStyle = ink.halo;
         g.font = `600 ${p.fs}px system-ui,sans-serif`; g.strokeText(p.l.t, p.x, y - p.fs * 0.55); g.fillStyle = ink.text; g.fillText(p.l.t, p.x, y - p.fs * 0.55);
@@ -396,7 +399,7 @@ const PlaceA = (function () {
     ctl.legendHtml = (zoom, cw) => {
       const deg = viewDeg(zoom, cw), lv = deg > 25 ? 'country' : deg > SITE_BELOW ? 'state' : 'county', b = (GEO.breaks || {})[lv]; if (!b) return '';
       const name = { country: 'Countries', state: 'States', county: 'Counties' }[lv];
-      return `<b>${name}: open roles per area</b> ` + b.map((x, k) => `<span style="display:inline-block;width:10px;height:10px;background:${CLASS_COL[k]};margin:0 3px 0 8px;vertical-align:-1px"></span>${x.toLocaleString('en')}${k < b.length - 1 ? '–' + (b[k + 1] - 1).toLocaleString('en') : '+'}`).join('') + ` <span style="opacity:.7;margin-left:8px">clusters: same colours</span>`;
+      return `<b>${name}: open roles per area</b> ` + b.map((x, k) => `<span style="display:inline-block;width:10px;height:10px;background:${CLASS_COL[k]};margin:0 3px 0 8px;vertical-align:-1px"></span>${x.toLocaleString('en')}${k < b.length - 1 ? (b[k + 1] - 1 > x ? '–' + (b[k + 1] - 1).toLocaleString('en') : '') : '+'}`).join('') + ` <span style="opacity:.7;margin-left:8px">clusters: same colours</span>`;
     };
     ctl.stripHtml = (inView, extra) => { const c = D.cnt, f = (n) => n.toLocaleString('en');
       return `Selection <b>${f(D.nSel)}</b> = <b>${f(c.located)}</b> with a real place + <b>${f(c.country)}</b> country-only (a figure on the country, no points) + <b>${f(c.none)}</b> without a place` + (inView === undefined ? '' : ` · <b>${f(inView)}</b> in view`) + (extra || ''); };
