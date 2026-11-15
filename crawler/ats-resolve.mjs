@@ -13,8 +13,9 @@
 //
 //   node crawler/ats-resolve.mjs --profile <dir> [--data <dir>] [--label space_boards] [--seed <file.json|names.txt>] [--tiers 3]
 //        [--providers greenhouse,lever,...] [--no-fuzz] [--no-site] [--no-harvest] [--refresh] [--limit N] [--concurrency 16]
-//        [--max-minutes N] [--retest] [--site-pool N (default 12; a loaded host needs 3)] [--host-delay-ms N] [--max-load L (exit 75 without work while the 1-min load average is above L)]
+//        [--max-minutes N] [--run] [--retest] [--site-pool N (default 12; a loaded host needs 3)] [--host-delay-ms N] [--max-load L (exit 75 without work while the 1-min load average is above L)]
 //
+// Dry run is the default: without --run the tool prints its plan and exits before any request or write; `--help` prints this header.
 // --seed takes a JSON array of { name | unitName, website | companyWebsite | domain } or one name per line.
 // Without --seed the space boards are harvested (the harvest stage is specific to those boards; --seed works for any list).
 // State (positive/negative probe cache, harvest cache) is kept in <data>/ats-resolve-cache.json so reruns and later seed lists are incremental.
@@ -29,6 +30,12 @@ import { configurePolicy, policyFromProfile, installGuard } from './policy.mjs';
 const args = process.argv.slice(2);
 const opt = (n) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : undefined);
 const flag = (n) => args.includes(`--${n}`);
+if (flag('help') || flag('h')) {   // --help exits here, before the profile, the data dir, any file or any request is touched
+  const head = readFileSync(new URL(import.meta.url), 'utf8').split('\n').filter((l) => l.startsWith('//')).slice(0, 25).map((l) => l.replace(/^\/\/ ?/, ''));
+  console.log(head.join('\n') + '\n\nDry run is the default: without --run nothing is fetched or written, the plan is printed. Add --run to do the work.');
+  process.exit(0);
+}
+const RUN = flag('run') || process.env.JOBCRAWL_ATS_RESOLVE_RUN === '1';   // dry run (no network, no writes) unless --run
 let PROFILE;
 try { PROFILE = loadProfile(profileDirFromArgs(args)); } catch (e) { console.error(`ats-resolve: ${e.message}`); process.exit(2); }
 if (!PROFILE) { console.error('ats-resolve: no profile. Pass --profile <dir> (or set JOBCRAWL_PROFILE).'); process.exit(2); }
@@ -52,6 +59,13 @@ if (MAX_LOAD) {   // load gate: a batch started on a busy host only times out an
   if (l1 > MAX_LOAD) { console.log(`ats-resolve: postponed, 1-min load ${l1.toFixed(1)} is above --max-load ${MAX_LOAD}`); process.exit(75); }
 }
 const cfg = JSON.parse(readFileSync(PROFILE.companiesFile, 'utf8'));
+if (!RUN) {   // dry run: print the plan and stop before the harvest, the site scan or any probe (no network, no file written)
+  let seedN = 'none (the space boards would be harvested)';
+  const sf = opt('seed');
+  if (sf) { try { const t = readFileSync(sf, 'utf8'); seedN = (t.trim().startsWith('[') ? JSON.parse(t).length : t.split('\n').filter(Boolean).length) + ` entries in ${sf}`; } catch (e) { seedN = `unreadable (${e.message})`; } }
+  console.log(`ats-resolve DRY RUN (add --run to execute): profile ${profileDirFromArgs(args)}, data ${DATA}, label ${LABEL}, seed ${seedN}, tiers ${MAX_TIER}, concurrency ${CONC}, site-pool ${SITE_POOL}, host-delay ${HOST_DELAY} ms, fuzz ${flag('no-fuzz') ? 'off' : 'on'}, harvest ${flag('no-harvest') ? 'off' : 'on'}, site scan ${flag('no-site') ? 'off' : 'on'}, limit ${LIMIT || 'none'}, max-minutes ${opt('max-minutes') ?? 'none'}`);
+  process.exit(0);
+}
 
 // ---------- text helpers ----------
 const fold = (s) => String(s ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ß/g, 'ss').toLowerCase();
