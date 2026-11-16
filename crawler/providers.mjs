@@ -421,6 +421,47 @@ export function reachmeeRows(html, origin) {
 
 const csodShared = new Map();   // site URL -> { at, p }: one read per career site per cycle
 const CSOD_SHARE_MS = 20 * 60 * 1000;
+// space-careers.com listing parser. A job is an <h3><a href="/job_display/..."> followed, in the same card, by div.companyName and
+// div.location (the two may sit directly after the h3 or inside their own rows: the site has used both layouts) and a
+// div.postedDate ("Posted 6 days ago"). Exported for the fixture test.
+export function parseSpaceCareers(html = '', now = new Date()) {
+  const heads = [...html.matchAll(/<h3><a href="(\/job_display\/[^"]+)">([^<]+)<\/a><\/h3>/g)];
+  const jobs = [];
+  heads.forEach((m, i) => {
+    const seg = html.slice(m.index, heads[i + 1]?.index ?? m.index + 6000);
+    const company = seg.match(/class="companyName">([^<]*)</)?.[1];
+    if (!company || !decode(company)) return;
+    const posted = seg.match(/class="postedDate">\s*Posted\s+([^<&]*?)\s*(?:&nbsp;|<)/i)?.[1] ?? '';
+    jobs.push({
+      title: decode(m[2]),
+      company: decode(company),
+      location: decode(seg.match(/class="location">([^<]*)</)?.[1] ?? ''),
+      url: `https://www.space-careers.com${m[1]}`,
+      postedAt: spaceCareersDate(posted, now),
+    });
+  });
+  return jobs;
+}
+export function spaceCareersDate(label = '', now = new Date()) {
+  const t = label.trim().toLowerCase();
+  let days = null;
+  if (/^(today|just now|\d+ (second|minute|hour)s? ago)/.test(t)) days = 0;
+  else if (t === 'yesterday') days = 1;
+  else {
+    const m = t.match(/^(\d+|an?) (day|week|month|year)s? ago/);
+    if (m) days = (m[1][0] === 'a' ? 1 : Number(m[1])) * { day: 1, week: 7, month: 30, year: 365 }[m[2]];
+  }
+  return days == null ? '' : new Date(now.getTime() - days * 86400000).toISOString().slice(0, 10);
+}
+// The "Jobs by Location" sidebar block: /jobs/<country> paths.
+export function spaceCareersLocationLinks(html = '') {
+  const from = html.indexOf('Jobs by Location');
+  if (from < 0) return [];
+  const to = html.indexOf('Jobs by Type', from);
+  const block = html.slice(from, to > from ? to : from + 8000);
+  return [...new Set([...block.matchAll(/href="(\/jobs\/[^"]+)"/g)].map((m) => m[1]))];
+}
+
 export const providers = {
   greenhouse: {
     detect: (u) => u.match(/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([\w-]+)/)?.[1],
@@ -945,23 +986,40 @@ export const providers = {
 
   spacecareers: {
     detect: (u) => (/space-careers\.com/.test(u) ? 'global' : null),
-    // entry.queries: employer watch. The listing shows only the newest ~30 jobs and the site has no query-string search or paging, so
-    // the watch keeps the jobs whose company matches one of the terms; read it often enough and nothing from that employer is missed.
+    // The board's listing page shows only the newest ~24 jobs and has no paging. The whole board is reachable through the sidebar's
+    // "Jobs by Location" pages (/jobs/<country>, every job of that country, no cap), so the board entry reads the listing plus every
+    // location page (1 s apart) and joins them by URL. entry.queries (an employer watch) uses the site's path search
+    // (/job_search/keyword/<term>) instead, one request per term, and keeps the jobs whose company matches a term.
+    // A page that parses to nothing logs a warning with the HTTP status, URL and size: an empty answer is never silent.
     async fetch(slug, entry = {}) {
-      const html = await get('https://www.space-careers.com/job_search', { json: false });
-      const want = entry.queries?.length ? new RegExp(entry.queries.map((q) => q.replace(/[^\w ]/g, '.')).join('|'), 'i') : null;
-      const regex = /<h3><a href="(\/job_display\/[^"]+)">([^<]+)<\/a><\/h3>\s*<div class="companyName">([^<]+)<\/div>\s*<div class="location">([^<]+)<\/div>/g;
-      const jobs = [];
-      for (const m of html.matchAll(regex)) {
-        if (want && !want.test(decode(m[3]))) continue;
-        jobs.push({
-          title: decode(m[2]),
-          company: `${decode(m[3])} (via Space-Careers)`,
-          location: decode(m[4]),
-          url: `https://www.space-careers.com${m[1]}`,
-          postedAt: '',
-        });
+      const base = 'https://www.space-careers.com';
+      const page = async (url) => {
+        const res = await request(url, { headers: { 'user-agent': UA, accept: 'text/html,*/*' } });
+        const html = await res.text();
+        const jobs = parseSpaceCareers(html);
+        if (!jobs.length) console.warn(`spacecareers: 0 jobs parsed from ${url} (HTTP ${res.status}, ${html.length} bytes, ${(html.match(/\/job_display\//g) ?? []).length} job_display links)`);
+        return { html, jobs };
+      };
+      const byUrl = new Map();
+      const add = (jobs) => { for (const j of jobs) if (!byUrl.has(j.url)) byUrl.set(j.url, j); };
+      if (entry.queries?.length) {
+        const want = new RegExp(entry.queries.map((q) => q.replace(/[^\w ]/g, '.')).join('|'), 'i');
+        for (const [i, q] of entry.queries.entries()) {
+          if (i) await sleep(entry.pauseMs ?? 1000);
+          add((await page(`${base}/job_search/keyword/${encodeURIComponent(q.toLowerCase().replace(/ /g, '_'))}`)).jobs.filter((j) => want.test(j.company)));
+        }
+      } else {
+        const first = await page(`${base}/job_search`);
+        add(first.jobs);
+        const links = spaceCareersLocationLinks(first.html);
+        if (!links.length) console.warn(`spacecareers: no "Jobs by Location" links found on ${base}/job_search; only the newest ${first.jobs.length} jobs are listed`);
+        for (const path of links) {
+          await sleep(entry.pauseMs ?? 1000);
+          try { add((await page(`${base}${path}`)).jobs); } catch (e) { console.warn(`spacecareers: ${base}${path}: ${e.message}`); }
+        }
       }
+      const jobs = [...byUrl.values()].map((j) => ({ ...j, company: `${j.company} (via Space-Careers)` }));
+      if (!jobs.length) console.warn(`spacecareers: ${slug}: 0 jobs in total${entry.queries?.length ? ` for the watch terms ${entry.queries.join(', ')}` : ''}`);
       return jobs;
     },
     async fetchDescription(job) {
