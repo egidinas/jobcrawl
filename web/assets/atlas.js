@@ -774,8 +774,9 @@ function paintMap(ctx, P, o) {
 let GEO = null, geoLoading = null;
 const geo = { t: 0.5, to: 0.5, mod: true, raf: 0, morph: false, lays: new Map(), data: new Map(), loading: new Map(), active: '', fade: null, fly: 0, dr: null };   // t: 0 the true map, 0.5 the moderate map, 1 by roles; mod: the file has the moderate map; morph: an animation runs (no labels meanwhile), heading to `to`
 // geography pills and pins (atlas-geo-pills.js, loaded after the first geography draw): while on, the canvas leaves out its own area names, clusters and
-// company dots (the pills, pins, header and list name them); ?pills=0 keeps the classic labels, and so does a module that does not load
-const PILLS = { on: new URLSearchParams(location.search).get('pills') !== '0', mod: null, tried: false };
+// company dots (the pills, pins, header and list name them). On when config.json says geo_pills: true, or on the internal (preview) build; ?pills=1 and
+// ?pills=0 decide for one visit. Off, or a module that does not load, keeps the classic labels.
+const PILLS = { on: ((q) => (q === '1' ? true : q === '0' ? false : cfg.geo_pills === true || !!document.querySelector('.preview-flag')))(new URLSearchParams(location.search).get('pills')), mod: null, tried: false };
 const geoHue = (q) => 240 + 170 * q, hueC = (h) => Math.round(h) / 137.508;   // the density ramp: deep blue (few), magenta, amber (many); hueC: a region index whose hue() is h (for star())
 const STATE_DE = { 'DE-BW': 'Baden-Württemberg', 'DE-BY': 'Bayern', 'DE-BE': 'Berlin', 'DE-BB': 'Brandenburg', 'DE-HB': 'Bremen', 'DE-HH': 'Hamburg', 'DE-HE': 'Hessen', 'DE-MV': 'Mecklenburg-Vorpommern', 'DE-NI': 'Niedersachsen', 'DE-NW': 'Nordrhein-Westfalen', 'DE-RP': 'Rheinland-Pfalz', 'DE-SL': 'Saarland', 'DE-SN': 'Sachsen', 'DE-ST': 'Sachsen-Anhalt', 'DE-SH': 'Schleswig-Holstein', 'DE-TH': 'Thüringen',
   DE1: 'Baden-Württemberg', DE2: 'Bayern', DE3: 'Berlin', DE4: 'Brandenburg', DE5: 'Bremen', DE6: 'Hamburg', DE7: 'Hessen', DE8: 'Mecklenburg-Vorpommern', DE9: 'Niedersachsen', DEA: 'Nordrhein-Westfalen', DEB: 'Rheinland-Pfalz', DEC: 'Saarland', DED: 'Sachsen', DEE: 'Sachsen-Anhalt', DEF: 'Schleswig-Holstein', DEG: 'Thüringen' };   // ISO codes (older files) and NUTS codes
@@ -873,6 +874,7 @@ function paUnit(s) { if (!PA.ready) return null; const lv = paLevelOf(s), u = PA
 function paXY(wx, wy) { const F = geoFrame(); return [sx(0.5 + (wx - F.mx) * F.p / BW), sy(0.5 + (wy - F.my) * F.p / BH)]; }
 function placeLoad() {
   if (PA.loading) return PA.loading;
+  if (PILLS.on && !PILLS.pre) PILLS.pre = import('./atlas-geo-pills.js').catch(() => null);   // beside the place data, so the pills can stand when it is ready
   const lv = geoLevels(), top = GEO.scopes.worldwide ? 'worldwide' : lv[lv.length - 1], eu = GEO.scopes.europe ? 'europe' : lv[lv.length - 2];
   PA.base = dataUrl(cfg.geomap).replace(/[^/]*$/, '');
   PA.loading = Promise.all([import('./place/place.esm.js?v=3b92e864cb'), fetch(PA.base + 'places-v1.json').then((r) => (r.ok ? r.json() : null)).catch(() => null), import('./vendor/supercluster.min.js').catch(() => null)])
@@ -1242,7 +1244,7 @@ const pillsApi = () => ({ stage, PA, L, pick, isDe, dataUrl, coLogo, companyLink
   fly: (lon, lat, deg, instant) => { const F = geoFrame(), r = lat * Math.PI / 180, wx = (lon + 180) / 360, wy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2, z1 = { s: Math.min(maxZoom(), 360 * W / (F.p * deg)), cx: 0.5 + (wx - F.mx) * F.p / BW, cy: 0.5 + (wy - F.my) * F.p / BH };
     cancelAnimationFrame(geo.fly); if (instant) { st.z = z1; draw(); setTimeout(() => { if (st.mode === 'geo') resample(); }, 0); } else geoFly(z1, () => { if (st.mode === 'geo') resample(); }); } });
 function pillsTick(on) { if (!PILLS.on) return; if (PILLS.mod) { PILLS.mod.tick(on); return; } if (!on || !PA.ready || !geo.data.get('worldwide') || PILLS.tried) return; PILLS.tried = true;
-  import('./atlas-geo-pills.js').then((M) => { PILLS.mod = M.init(pillsApi()); PILLS.mod.tick(st.mode === 'geo'); draw(); }).catch((e) => { console.warn('[pills] not loaded, the classic labels stay', e); PILLS.on = false; if (st.mode === 'geo') draw(); }); }
+  (PILLS.pre || import('./atlas-geo-pills.js')).then((M) => { if (!M) throw new Error('module missing'); PILLS.mod = M.init(pillsApi()); PILLS.mod.tick(st.mode === 'geo'); draw(); }).catch((e) => { console.warn('[pills] not loaded, the classic labels stay', e); PILLS.on = false; if (st.mode === 'geo') draw(); }); }
 // the view's painter: the geography, or the atlas's own (roles, companies)
 const paintAny = (ctx, P, o) => (P.geo ? paintGeo(ctx, P, o) : paintMap(ctx, P, o));
 // the area panel in the geography: the shape under the lens, and the places and companies in the lens
