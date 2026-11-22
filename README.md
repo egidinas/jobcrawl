@@ -152,12 +152,12 @@ first provider whose detect() recognises the entry's `careers_url` is used (regi
 | `siigroup` | `sii-group.de` | yes |
 | `hrlab` | `app.hrlab.de/(?:[a-z]{2}/)?jobs/([\w-]+)` | yes |
 | `eso` | `recruitment.eso.org` |  |
-| `adp` | `workforcenow.adp.com[^#]*[?&]cid=([0-9a-f-]{36})`, `[?&]ccId=([\w]+)` |  |
+| `adp` | `workforcenow.adp.com[^#]*[?&]cid=([0-9a-f-]{36})`, `[?&]ccId=([\w]+)` | yes |
 | `ultipro` | `(recruiting\d*.ultipro.(?:com or ca))/([A-Za-z0-9]+)/JobBoard/([0-9...` | yes |
 | `icims` | `([\w-]+.icims.com)` |  |
 | `jibe` | `([\w.-]+)/(?:[\w-]+/)?jobs/[\w-]+\?lang=[a-z-]+` |  |
 | `comeet` | `comeet.(?:com or co)/jobs/([\w-]+)/([0-9A-F.]+)` |  |
-| `gem` | `jobs.gem.com/([\w-]+)` |  |
+| `gem` | `jobs.gem.com/([\w-]+)` | yes |
 | `deel` | `jobs.deel.com/(?:job-boards/)?([\w-]+)` |  |
 | `paylocity` | `recruiting.paylocity.com/recruiting/jobs/(?:All or Details)/([0-9a-...` |  |
 | `zohorecruit` | `([\w.-]+)/jobs/Careers` |  |

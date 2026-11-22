@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
 import { UA } from './useragent.mjs';
 import { entryTimeoutMs } from './profile.mjs';
+import { PolicyError } from './policy.mjs';
 
 export const EURES_API = 'https://europa.eu/eures/api';
 export const EURES_PORTAL = 'https://europa.eu/eures/portal/jv-se';
@@ -147,8 +148,8 @@ export function retryAfterMs(header, now = Date.now()) {
 const decode = (s = '') =>
   String(s)
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, n) => { const c = Number(n); return c <= 0x10ffff ? String.fromCodePoint(c) : ''; })
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => { const c = parseInt(h, 16); return c <= 0x10ffff ? String.fromCodePoint(c) : ''; })
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&');
 /** HTML (the description is HTML for most vacancies, entity-escaped plain text for others) to readable plain text. */
@@ -296,7 +297,7 @@ async function api(path, body) {
     try {
       res = await fetch(url, { ...init, signal: AbortSignal.timeout(tuning.timeoutMs) });
     } catch (err) {
-      if (attempt) throw err;
+      if (err instanceof PolicyError || attempt) throw err;
       await sleep(tuning.retryDelayMs);
       continue;
     }

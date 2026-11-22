@@ -262,7 +262,7 @@ const entryFor = (provider, slug, name, probe) => {
     workable: `https://apply.workable.com/${slug}`, teamtailor: `https://${slug}.teamtailor.com`, softgarden: `https://${slug}.softgarden.io`,
     bamboohr: `https://${slug}.bamboohr.com/careers`, breezy: `https://${slug}.breezy.hr`, pinpoint: `https://${slug}.pinpointhq.com`,
     smartrecruiters: `https://careers.smartrecruiters.com/${slug}`,
-  }[provider] ?? '';
+  }[base] ?? '';
   return { name, careers_url: careers, provider: base, slug: base === 'softgarden' ? `${slug}.softgarden.io` : slug, ...(provider === 'lever-eu' ? { region: 'eu' } : {}), enabled: true };
 };
 
@@ -468,7 +468,7 @@ async function siteScan(r) {
       for (const m of p.text.matchAll(/href="(\/[^"#?]*|https?:\/\/[^"#?]*)"/gi)) if (CAREER_HREF.test(m[1]) && !/\.(png|jpe?g|svg|css|js|pdf|webp)$/i.test(m[1])) hops.add(m[1].startsWith('/') ? `https://${d}${m[1]}` : m[1]);
       if (r.links.size > before) break;
     }
-    if (r.links.size === before) for (const h of [...hops].filter((h) => domainOf(h).endsWith(d)).slice(0, 3)) {
+    if (r.links.size === before) for (const h of [...hops].filter((h) => { const dh = domainOf(h); return dh === d || dh.endsWith('.' + d); }).slice(0, 3)) {
       const p = await req(h);
       if (p.status !== 200) continue;
       for (const m of p.text.matchAll(/(?:https?:)?\/\/[\w.-]+\.[a-z]{2,}[^\s"'<>)\\]*/gi)) link(r, m[0].startsWith('//') ? 'https:' + m[0] : m[0]);

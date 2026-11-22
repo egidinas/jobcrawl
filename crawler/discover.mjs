@@ -139,7 +139,11 @@ if (opt('sites')) {
     const first = await page(b);
     if (!first) return notes.push(`${a || b}: not reachable`);
     const pages = [first];
-    const hops = urlsIn(first.html).filter((u) => new URL(u).host === new URL(first.url).host && /career|karriere|jobs?\b|stellen|join/i.test(u) && !/\.(png|jpe?g|svg|css|js|pdf)(\?|$)/i.test(u)).slice(0, 4);
+    const firstHost = new URL(first.url).host;
+    const hops = urlsIn(first.html).filter((u) => {
+      try { if (new URL(u).host !== firstHost) return false; } catch { return false; }
+      return /career|karriere|jobs?\b|stellen|join/i.test(u) && !/\.(png|jpe?g|svg|css|js|pdf)(\?|$)/i.test(u);
+    }).slice(0, 4);
     for (const h of hops) { const p = await page(h); if (p) pages.push(p); }
     const before = found.size;
     for (const p of pages) for (const u of urlsIn(p.html)) consider(u, a);
@@ -159,7 +163,7 @@ console.log(`${found.size} candidate boards not yet tracked; probing...`);
 const norm = (s) => (s ?? '').toLowerCase();
 const pass = (j) => {
   const f = cfg.title_filter, l = cfg.location_filter;
-  const hit = (list = [], t) => list.some((k) => (k.startsWith('word:') ? new RegExp(`\\b${norm(k.slice(5))}\\b`).test(norm(t)) : norm(t).includes(norm(k))));
+  const hit = (list = [], t) => list.some((k) => (k.startsWith('word:') ? new RegExp(`\\b${norm(k.slice(5)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(norm(t)) : norm(t).includes(norm(k))));
   return !hit(f.negative, j.title) && hit(f.positive, j.title) && (!j.location || hit(l.allow, j.location));
 };
 const rows = [];

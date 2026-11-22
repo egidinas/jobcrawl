@@ -80,7 +80,7 @@ const REGION_WORDS = new Set(["europe", "emea", "worldwide", "global", "anywhere
 const MODE_WORDS = new Set(["remote", "hybrid", "onsite", "on site"]);
 // Countries and regions say little on their own: Berlin and Munich are both "Germany" but are different postings.
 const GENERIC = new Set(["germany", "deutschland", "bavaria", "bayern", "united states", "usa", "us", "united kingdom", "uk", "netherlands", "france", "italy", "spain", "portugal", "finland", "switzerland", "austria", "slovenia", "poland", "greece", "belgium", "luxembourg", "denmark", "sweden", "norway", "uae", "united arab emirates", "japan", "taiwan", "china", "australia", "new zealand", "india", "canada"]);
-const CITY_ALIAS = { munchen: "munich", muenchen: "munich", koln: "cologne", nurnberg: "nuremberg" };
+const CITY_ALIAS = { munchen: "munich", muenchen: "munich", koln: "cologne", koeln: "cologne", nurnberg: "nuremberg", nuernberg: "nuremberg" };
 function placeSegments(loc) {
   return norm(loc).split(/[,;/|]|\band\b/).map((p) => p.replace(/\b(?:greater|area|region|metropolitan|bei|near)\b/g, ' ').replace(/[^a-z? ]+/g, ' ').trim().replace(/ {2,}/g, ' ')).filter(Boolean).map((p) => CITY_ALIAS[p] ?? p);
 }

@@ -232,6 +232,7 @@ export function pageBudget(entry = {}, started = Date.now()) {
   };
 }
 /** Marks a provider result as an incomplete fill (pages left for the next cycle); crawl.mjs makes the board due again. */
+const gemBoards = new Map();   // board slug -> { at, p }: the Gem job board API answers once per board for all its roles
 export function markIncomplete(jobs, left, note = '') {
   if (left > 0 || note) Object.defineProperty(jobs, 'incomplete', { value: { left, note }, enumerable: false });
   return jobs;
@@ -261,7 +262,7 @@ export function parseJobPage(html, url) {
     const nodes = [].concat(data, data?.['@graph'] ?? []).flat();
     const jp = nodes.find((n) => n && [].concat(n['@type']).includes('JobPosting'));
     if (!jp) continue;
-    const loc = [].concat(jp.jobLocation ?? []).map((l) => [l.address?.addressLocality, l.address?.addressCountry?.name ?? l.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
+    const loc = [].concat(jp.jobLocation ?? []).map((l) => [l?.address?.addressLocality, l?.address?.addressCountry?.name ?? l?.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
     const org = [].concat(jp.hiringOrganization ?? []).map((o) => (typeof o === 'string' ? o : o?.name ?? o?.legalName ?? '')).find(Boolean) ?? '';
     // A JSON-LD title can carry markup (mpg.de: "...Biology<br>"): tags go, whitespace collapses.
     return { title: plain(jp.title ?? '').replace(/\s+/g, ' ').trim(), url, location: loc, postedAt: dateOnly(jp.datePosted), description: plain(jp.description ?? ''), ...(org ? { organization: decode(String(org)) } : {}) };
@@ -565,7 +566,7 @@ export const providers = {
             meta: metaOf({ departments: [j.department?.label], function: j.function?.label, industry: j.industry?.label, employment: j.typeOfEmployment?.label, level: j.experienceLevel?.label, remote: j.location?.remote, hybrid: j.location?.hybrid, ref: j.refNumber }),
           });
         }
-        if (out.length >= d.totalFound) break;
+        if (!d.content?.length || out.length >= d.totalFound) break;
       }
       return out;
     },
@@ -646,13 +647,13 @@ export const providers = {
     async fetch(slug, entry = {}) {
       const started = Date.now();
       let xml = await get(slug, { json: false, timeoutMs: 30000 });
-      let capped = 0;
+      let capped = 0, failedKids = 0;   // failedKids: child sitemaps that did not load: the answer is partial, nothing is marked gone for it
       if (/<sitemapindex/i.test(xml)) {   // an index: read its child sitemaps (all of them, at most SITEMAP_CHILDREN_CAP)
         const all = [...xml.matchAll(/<sitemap>\s*<loc>([^<]+)<\/loc>/g)].map((m) => decode(m[1]));
         const kids = all.slice(0, SITEMAP_CHILDREN_CAP);
         capped = all.length - kids.length;
         const parts = [];
-        for (let k = 0; k < kids.length; k += 4) parts.push(...await Promise.all(kids.slice(k, k + 4).map((u) => get(u, { json: false, timeoutMs: 30000 }).catch(() => ''))));
+        for (let k = 0; k < kids.length; k += 4) parts.push(...await Promise.all(kids.slice(k, k + 4).map((u) => get(u, { json: false, timeoutMs: 30000 }).catch(() => { failedKids++; return ''; }))));
         xml = parts.join(' ');
       }
       const pat = entry.url_pattern ? new RegExp(entry.url_pattern) : /./;
@@ -691,7 +692,7 @@ export const providers = {
         const board = String(entry.name).replace(/\s*\(via [^)]*\)\s*$/i, '');
         for (const [k, j] of out.entries()) if (j.organization && !/^(?:confidential|anonymous|n\/a|-)$/i.test(j.organization.trim())) out[k] = { ...j, company: `${j.organization.trim()} (via ${board})` };
       }
-      return markIncomplete(out, Math.max(0, todo.length - i), capped ? `${capped} child sitemaps past the ${SITEMAP_CHILDREN_CAP} cap` : '');
+      return markIncomplete(out, Math.max(0, todo.length - i), [capped ? `${capped} child sitemaps past the ${SITEMAP_CHILDREN_CAP} cap` : '', failedKids ? `${failedKids} child sitemaps failed to load` : ''].filter(Boolean).join('; '));
     },
   },
 
@@ -719,6 +720,7 @@ export const providers = {
       const siteId = Number(u.pathname.match(/careersite\/(\d+)/)[1]);
       const corp = u.searchParams.get('c') || u.host.split('.')[0];
       const home = await fetch(`${u.origin}/ux/ats/careersite/${siteId}/home?c=${encodeURIComponent(corp)}`, { headers: { 'user-agent': UA }, redirect: 'error', signal: AbortSignal.timeout(20000) });
+      if (!home.ok) throw new Error(`HTTP ${home.status} ${home.url}`);
       const token = (await home.text()).match(/"token"\s*:\s*"([\w.-]+)"/)?.[1];
       if (!token) throw new Error(`no anonymous token on ${u.origin}`);
       const cookie = (home.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
@@ -899,8 +901,28 @@ export const providers = {
       })).json();
       // Facets can nest (a group holding facets); flatten to { facetParameter, values }. Date buckets overlap, so never split on them.
       const flat = (fs = []) => fs.flatMap((f) => (f.facetParameter ? [f] : flat(f.values))).filter((f) => f.values?.length && f.facetParameter !== 'startDate');
+      // entry.server_countries (["Germany", "Deutschland", "Austria", ...]): the board's country facet (locationMainGroup > locationCountry) is
+      // applied server-side, so a worldwide board is not walked page by page only to be dropped for its place afterwards. Only for boards
+      // whose roles are filtered by place anyway (an entry with any_location keeps every country and must not set this). A tenant without a
+      // country facet, or none of the names matching, is read unfiltered (said in the board's incomplete note: never a silent loss).
+      const findFacet = (fs = [], re) => { for (const f of fs) { if (f.facetParameter && re.test(f.facetParameter)) return f; const d = findFacet(f.values?.some?.((v) => v.values || v.facetParameter) ? f.values : [], re); if (d) return d; } return null; };
+      const fold = (x) => String(x ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      // entry.max_pages (opt-in): stop after this many list pages of 20 per slice; what is cut off is named in the note and the answer is partial
+      const MAXP = Number(entry.max_pages) > 0 ? Number(entry.max_pages) : Infinity;
+      let cutOff = 0, facetNote = '';
       async function crawl(applied, depth = 0) {
         let first = await post(applied, 0), total = first.total ?? 0;
+        if (depth === 0 && Array.isArray(entry.server_countries) && entry.server_countries.length) {
+          const want = entry.server_countries.map(fold);
+          const f = findFacet(first.facets, /country/i);
+          const ids = (f?.values ?? []).filter((v) => v.id && want.some((w) => fold(v.descriptor).includes(w))).map((v) => v.id);
+          if (f && ids.length && !(f.facetParameter in applied)) {
+            applied = { ...applied, [f.facetParameter]: ids };
+            const before = total;
+            first = await post(applied, 0); total = first.total ?? 0;
+            facetNote = `country filter ${f.facetParameter} (${ids.length} of ${f.values.length} countries): ${total} of ${before} roles`;
+          } else facetNote = f ? 'country facet has none of the wanted countries: read unfiltered' : 'no country facet: read unfiltered';
+        }
         if (total >= CLAMP && depth < 2) {
           // Split on a facet that covers (nearly) the whole board, not a partial one such as a national grade list, and among
           // those on the one whose largest slice is smallest. Facets already applied are skipped.
@@ -927,11 +949,15 @@ export const providers = {
             });
           }
           if (!rows.length || offset + 20 >= Math.min(total, CLAMP)) break;
+          if (offset / 20 + 1 >= MAXP) { cutOff += Math.max(0, Math.min(total, CLAMP) - offset - 20); break; }
           await sleep(120);
         }
       }
       await crawl(entry.facets ?? {});
-      return [...out.values()];
+      const list = [...out.values()];
+      if (facetNote) console.log(`[workday] ${tenant}/${site}: ${facetNote}`);
+      if (cutOff) list.incomplete = { left: 0, note: `page cap ${MAXP}: ${cutOff} roles not read` };   // partial: nothing is marked gone for it this cycle
+      return list;
     },
     async fetchDescription(job, slug) {
       const [tenant, wd, site] = slug.split('|');
@@ -1463,6 +1489,7 @@ export const providers = {
       const origin = entry.api || (slug.startsWith('http') ? new URL(slug).origin : `https://${slug}`);
       const jobs = [];
       const seen = new Set();
+      let tilesBroke = false;   // the tile walk failed after some pages: what C and D do not complete is a partial answer, not the whole board
 
       // Strategy A: If an RSS feed exists (e.g. Rohde & Schwarz, Frequentis /SearchJobs/feed/)
       const feedCandidates = entry.feed_url
@@ -1499,7 +1526,12 @@ export const providers = {
       // strategy: jobs.bmwgroup.com answers with a bare "<!DOCTYPE html>" (16 bytes, 2026-11-01), which is no listing.
       try {
         let startrow = 0;
-        for (let p = 0; p < PAGE_CAP; p++) {
+        // entry.max_pages (opt-in, default PAGE_CAP): page cap of the tile walk, 25 tiles a page. Hitting it is a partial answer (marked incomplete,
+        // nothing is marked gone for the roles past it). The biggest SuccessFactors board here has 623 roles (2026-11-21), so no entry needs it yet.
+        const sfPages = Number(entry.max_pages) > 0 ? Number(entry.max_pages) : PAGE_CAP;
+        let sfCapped = false;
+        for (let p = 0; p < Math.min(PAGE_CAP, sfPages); p++) {
+          if (p === sfPages - 1 && Number(entry.max_pages) > 0) sfCapped = true;
           const page = successfactorsTileJobs(await get(`${origin}/tile-search-results/?startrow=${startrow}`, { json: false, timeoutMs: 15000 }), origin);
           if (!page.length) break;
           const before = seen.size;
@@ -1508,8 +1540,8 @@ export const providers = {
           startrow += page.length;
           await new Promise((r) => setTimeout(r, 200));
         }
-        if (jobs.length) return jobs;
-      } catch {}
+        if (jobs.length) return sfCapped ? markIncomplete(jobs, 0, `page cap ${sfPages} reached`) : jobs;
+      } catch { if (jobs.length) tilesBroke = true; }
 
       // Strategy C: Career Site Builder (CSB) unified JSON search (e.g. MTU Aero Engines, BMW Group)
       try {
@@ -1556,7 +1588,7 @@ export const providers = {
           }
           if (jobs.length) break;
         }
-        if (jobs.length) return jobs;
+        if (jobs.length) return tilesBroke ? markIncomplete(jobs, 0, 'tile walk failed part-way') : jobs;
       } catch {}
 
       // Strategy D: the site's sitemap.xml lists every job page (jobs.bmwgroup.com: 762 <url>s with lastmod, 2026-11-01). The
@@ -2244,7 +2276,7 @@ export const providers = {
         if (!title || title.length < 3) {
           title = slugName.replace(/-/g, ' ').trim();
         }
-        const jobUrl = `https://jobpage.cvwarehouse.com/${rawHref.startsWith('?') ? rawHref : rawHref}`;
+        const jobUrl = new URL(rawHref, 'https://jobpage.cvwarehouse.com/').href;
         out.push({
           title,
           url: jobUrl,
@@ -2745,10 +2777,10 @@ export const providers = {
       const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/g)];
       return items.map((m) => {
         const item = m[1];
-        const title = item.match(/<title>([\s\S]*?)<\/title>/)?.[1]?.trim() ?? '';
-        const link = item.match(/<link>([\s\S]*?)<\/link>/)?.[1]?.trim() ?? '';
-        const pubDate = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/)?.[1]?.trim();
-        const desc = item.match(/<description>([\s\S]*?)<\/description>/)?.[1]?.trim() ?? '';
+        const title = tag(item, 'title');
+        const link = tag(item, 'link');
+        const pubDate = tag(item, 'pubDate');
+        const desc = tag(item, 'description');
         return {
           title,
           url: link,
@@ -2789,6 +2821,17 @@ export const providers = {
         if (reqs.length < 100) break;
       }
       return out.filter((j) => j.title);
+    },
+    // The list carries no text. The detail endpoint wants the full itemID ("<jobId>_1"); the role URL only keeps the part before "_"
+    // (measured 2026-11-21: jobId alone answers an empty shell, "<jobId>_1" the requisitionDescription).
+    async fetchDescription(job) {
+      const cid = job.url.match(/[?&]cid=([0-9a-f-]{36})/i)?.[1], ccId = job.url.match(/[?&]ccId=(\w+)/i)?.[1] ?? '19000101_000001', id = job.url.match(/[?&]jobId=(\d+)/)?.[1];
+      if (!cid || !id) return '';
+      for (const item of [`${id}_1`, id]) {
+        const d = await get(`https://workforcenow.adp.com/mascsr/default/careercenter/public/events/staffing/v1/job-requisitions/${item}?cid=${cid}&ccId=${ccId}&lang=en_US&locale=en_US`);
+        if (d?.requisitionDescription) return plain(d.requisitionDescription);
+      }
+      return '';
     },
   },
 
@@ -2922,6 +2965,16 @@ export const providers = {
         department: j.job?.department?.name ?? '',
         postedAt: '',
       })).filter((j) => j.title);
+    },
+    // The GraphQL list has no text; the public Gem job board API (api.gem.com/job_board/v0/<board>/job_posts/) lists every post with its content.
+    async fetchDescription(job, slug) {
+      const hit = gemBoards.get(slug);
+      let posts;
+      if (hit && Date.now() - hit.at < 10 * 60 * 1000) posts = await hit.p;
+      else { const p = get(`https://api.gem.com/job_board/v0/${encodeURIComponent(slug)}/job_posts/`); gemBoards.set(slug, { at: Date.now(), p }); p.catch(() => gemBoards.delete(slug)); posts = await p; }
+      const id = job.url.split('/').pop();
+      const post = (Array.isArray(posts) ? posts : []).find((x) => String(x.absolute_url ?? '').split('/').pop() === id || String(x.id ?? '') === id);
+      return post?.content ? plain(post.content) : '';
     },
   },
 

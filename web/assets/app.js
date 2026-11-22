@@ -25,9 +25,12 @@ export const dataUrl = (path = '') => new URL(path, DATA_BASE).href;
 export const pageUrl = (file) => { const d = PARAMS.get('data'); return d ? `${file}?data=${encodeURIComponent(d)}` : file; };
 const fill = (tpl, key, v) => tpl.split(`{${key}}`).join(encodeURIComponent(v));
 /** The detail view of one role: config role_url ("job.html?id={id}"), else the index page with the role's id as its hash. */
-export const roleLink = (id) => (cfg && cfg.role_url ? fill(cfg.role_url, 'id', id) : `${pageUrl('index.html')}#${encodeURIComponent(id)}`);
+// A data folder may list the roles the site has NO role page for (config role_pages_missing) and the employers that HAVE a page (config company_pages):
+// those roles link to the posting's own apply URL (url, the 4th field of a jobs-index row) and the other employers get no company link.
+let rolesNoPage = null, companyPages = null;
+export const roleLink = (id, url) => (rolesNoPage && url && rolesNoPage.has(id) ? url : cfg && cfg.role_url ? fill(cfg.role_url, 'id', id) : `${pageUrl('index.html')}#${encodeURIComponent(id)}`);
 /** The page of an employer (config company_url, e.g. "company-{slug}.html"), or null when the site has none. */
-export const companyLink = (slug) => (cfg && cfg.company_url && slug ? fill(cfg.company_url, 'slug', slug) : null);
+export const companyLink = (slug) => (cfg && cfg.company_url && slug && (!companyPages || companyPages.has(slug)) ? fill(cfg.company_url, 'slug', slug) : null);
 /** Index (in config scopes) of the scope a page starts with: config default_scope (an id), else the first. */
 export const defaultScope = () => { const k = cfg && cfg.default_scope ? cfg.scopes.findIndex((s) => s.id === cfg.default_scope) : -1; return k < 0 ? 0 : k; };
 
@@ -38,7 +41,12 @@ export function loadConfig() {
     cfgPromise = fetch(dataUrl('config.json')).then((r) => {
       if (!r.ok) throw new Error(`config.json not found in ${DATA_BASE} (HTTP ${r.status}). Run jobcrawl publish, or open this page with ?data=<folder>.`);
       return r.json();
-    }).then((c) => { cfg = c; store = c.storage || {}; prefix = store.prefix || c.storage_prefix || DEFAULT_PREFIX; return c; });
+    }).then(async (c) => {
+      cfg = c; store = c.storage || {}; prefix = store.prefix || c.storage_prefix || DEFAULT_PREFIX;
+      const list = async (f) => { if (!f) return null; try { const r = await fetch(dataUrl(f)); return r.ok ? new Set(await r.json()) : null; } catch (e) { return null; } };
+      [rolesNoPage, companyPages] = await Promise.all([list(c.role_pages_missing), list(c.company_pages)]);
+      return c;
+    });
   }
   return cfgPromise;
 }

@@ -137,7 +137,7 @@ export function jobsFromJsonLd(html, pageUrl, { ownPage = false } = {}) {
     for (const jp of nodes) {
       const url = jp.url ?? jp.sameAs ?? jp['@id'] ?? (ownPage ? pageUrl : '');
       if (!url || !/^https?:/.test(url)) continue;
-      const loc = [].concat(jp.jobLocation ?? []).map((l) => [l.address?.addressLocality, l.address?.addressCountry?.name ?? l.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
+      const loc = [].concat(jp.jobLocation ?? []).map((l) => [l?.address?.addressLocality, l?.address?.addressCountry?.name ?? l?.address?.addressCountry].filter(Boolean).join(', ')).filter(Boolean).join(' | ');
       const org = [].concat(jp.hiringOrganization ?? []).map((o) => (typeof o === 'string' ? o : o?.name ?? '')).find(Boolean) ?? '';
       out.push({ title: text(jp.title ?? ''), url, location: loc, department: '', postedAt: isoDate(jp.datePosted ?? ''), description: plainText(jp.description ?? ''), ...(org ? { organization: text(org) } : {}) });
     }
@@ -165,7 +165,8 @@ export const genericProviders = {
     async fetch(_slug, entry = {}) {
       const list = entry.list;
       if (!list?.url || !/^(json|html)$/.test(list.kind ?? '')) throw new Error(`paginated_list: entry.list needs url and kind.\n${paginatedListConfig}`);
-      const first = num(list.first_page, 1), size = num(list.page_size, 20), maxPages = num(list.max_pages, 200), delay = num(list.delay_ms, 500);
+      const first = list.first_page !== undefined && list.first_page !== null && list.first_page !== '' && Number.isFinite(Number(list.first_page)) && Number(list.first_page) >= 0 ? Number(list.first_page) : 1;
+      const size = num(list.page_size, 20), maxPages = num(list.max_pages, 200), delay = num(list.delay_ms, 500);
       const sub = (s, page) => String(s).replace(/\{page\}/g, page).replace(/\{offset\}/g, (page - first) * size);
       const out = new Map();
       let lastKeys = '';
@@ -176,7 +177,7 @@ export const genericProviders = {
         try {
           body = await fetchText(url, { method: list.method ?? 'GET', headers: list.headers ?? {}, body: list.body ? sub(list.body, page) : undefined });
         } catch (e) {
-          if (n && /^HTTP 4\d\d /.test(e.message)) break;   // a 404/410 past the last page ends the walk; on the first page it is the board's error
+          if (n && /^HTTP 4(?:04|10) /.test(e.message)) break;   // a 404/410 past the last page ends the walk; on the first page it is the board's error
           throw e;
         }
         const { items, total } = itemsOf(body, { ...list, url_base: list.url_base ?? url });
@@ -229,7 +230,7 @@ export const genericProviders = {
             const html = await fetchText(u, { timeoutMs: budget.pageTimeout(25000) });
             const job = jobsFromJsonLd(html, u, { ownPage: true })[0] ?? (entry.jsonld_only ? null : parseJobPage(html, u));   // jsonld_only: pages without JobPosting markup are not postings
             cache[u] = { t: now, job: job?.title ? { ...job, url: u } : null };
-          } catch { if (!cache[u]) cache[u] = { t: now - ttl + RETRY_AFTER_FAILURE_MS, job: null }; }   // a failed fetch is retried in ~6 h, not after the whole TTL
+          } catch { if (!cache[u]?.job) cache[u] = { t: now - ttl + RETRY_AFTER_FAILURE_MS, job: null }; }   // a failed fetch is retried in ~6 h, not after the whole TTL
           await sleep(300);
         }
       }));

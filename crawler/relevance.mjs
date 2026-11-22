@@ -60,7 +60,7 @@ export function makeEmployerIndex(names = []) {
 }
 
 // Company names that the industry aggregators carry (the "protected" set): the suffix "(via X)" the providers add, per aggregator.
-export const INDUSTRY_VIA = /\(via (?:Space Individuals|Space-Careers|Space Capital|SpaceJobSearch|Jobs-in-Photonics)\)\s*$/i;
+export const INDUSTRY_VIA = /\(via (?:Space Individuals|Space-Careers|Space Capital|SpaceJobSearch|Jobs-in-Photonics|EuroEngineerJobs|Find a Space Job|Darwin Space|HE Space vacancies|SpaceNews Job Exchange)\)\s*$/i;
 export const INDUSTRY_AGGREGATOR_PROVIDERS = new Set(['spacecareers', 'spacecapital', 'spaceindividuals', 'jobsinphotonics']);
 
 /** Names from the history's company column that came through an industry aggregator. MyCareersFuture is deliberately not one. */

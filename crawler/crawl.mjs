@@ -3,7 +3,7 @@
 // filter, dedups and tracks liveness in <data>/scan-history.tsv, and (with --jd) saves the full job description of every tracked
 // role to <data>/jd/. New postings of a run go to <data>/last-new.json. Reads public job feeds only; nothing in here knows about
 // any candidate. Run `node crawler/crawl.mjs --help` for the options.
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, appendFileSync, statSync } from 'node:fs';
 import { loadLabels, saveLabels, merge as mergeLabel } from './board-labels.mjs';
 import { createHash } from 'node:crypto';
 import { resolve as pathResolve } from 'node:path';
@@ -19,6 +19,7 @@ import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
+import { classifyError, makeBreaker, hostOf, livenessGuard } from './resilience.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
 const args = process.argv.slice(2);
@@ -41,6 +42,7 @@ options:
   --refresh-only      update known roles only, never add new ones
   --force-due         fetch every enabled board now, ignoring interval_hours (a full refresh; one progress line per 50 boards)
   --dry-run           print the summary, write nothing
+  --triage-out <file> also write one JSON line per board outcome (triage class, code, host, jobs) to this file, even with --dry-run
   --jd-cleanup-only   no crawl: remove the descriptions of roles not seen for more than jd_keep_days days, then exit
                       (with --dry-run it only counts them)
   --help              show this text
@@ -50,7 +52,9 @@ options:
 (profile key crawl.history_prune_days: gone/filtered rows not seen for more than this many days leave scan-history.tsv and move to
  scan-history-archive.tsv; default 0 = never prune, every row stays in the working history)
 (companies-file key collect_only on an entry: the board is collected but never published; its roles are kept as status 'extra',
- never 'open' or NEW, even when the title passes; other keys of an entry are listed in profiles/schema.md)`;
+ never 'open' or NEW, even when the title passes; other keys of an entry are listed in profiles/schema.md)
+(companies-file key title_release {enabled, employers_file, max_per_cycle, max_per_board_per_cycle, window {tz, from, to}}: at the listed boards a role that
+ fails only the title rules is kept 'open' instead of 'extra', within the caps; --no-title-release or JOBCRAWL_TITLE_RELEASE=0 turns it off)`;
 
 if (flag('help')) { console.log(USAGE); process.exit(0); }
 
@@ -165,6 +169,55 @@ function titleVerdictCompiled(filters, normTitle, company) {
   return null;
 }
 
+// Title-rule release (coordinator 2026-11-21, owner "Agree with your recommendation"): at the boards of employers that are clearly in scope
+// (companies-file key "title_release": { enabled, employers_file, max_per_cycle, max_per_board_per_cycle }; the list is written by the
+// site's tools/title_release_employers.py), a role that fails ONLY the title rules is kept as a normal 'open' posting instead of 'extra',
+// so the board's own per-posting cut and relevance flag decide whether it is shown. Location, probation, relevance, collect-only and
+// aggregator verdicts are unchanged. A newly released role counts against the per-cycle and per-board caps (the description fetch and
+// the nightly grading take them in batches); the rest stay 'extra' and are released on a later cycle. Every released url is written with
+// its release date to <data>/title-released.tsv: the board build keeps a released role hidden until it is graded (tools/update_jobs.py).
+// Off ("enabled": false, a missing list, --no-title-release or JOBCRAWL_TITLE_RELEASE=0) = the former behaviour: a released role that
+// fails the title rules turns 'extra' again on its next fetch.
+function loadTitleRelease(cfg, configPath) {
+  const c = cfg.title_release;
+  if (!c || c.enabled !== true || flag('no-title-release') || process.env.JOBCRAWL_TITLE_RELEASE === '0') return null;
+  const file = c.employers_file ? pathResolve(configPath, '..', c.employers_file) : '';
+  if (!file || !existsSync(file)) { console.log(`title release: on, but the employers file ${file || '(none)'} is missing; off for this cycle`); return null; }
+  let boards;
+  try { boards = new Set((JSON.parse(readFileSync(file, 'utf8')).boards ?? []).map((b) => b.name)); } catch (e) { console.log(`title release: ${file} unreadable (${e.message}); off for this cycle`); return null; }
+  const num = (v, d) => (Number.isFinite(Number(v)) && Number(v) >= 0 ? Number(v) : d);
+  // window {tz, from, to} ("HH:MM", cycle start time; from > to wraps midnight): new releases only inside it, so they reach the nightly
+  // grading the same night; outside it the cap is 0 (roles released before stay open, nothing new is released)
+  let outside = '';
+  if (c.window?.from && c.window?.to) {
+    const now = process.env.JOBCRAWL_TITLE_RELEASE_NOW ? new Date(process.env.JOBCRAWL_TITLE_RELEASE_NOW) : new Date();
+    const hm = new Intl.DateTimeFormat('en-GB', { timeZone: c.window.tz || 'Europe/Berlin', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
+    const { from, to } = c.window;
+    const inside = from <= to ? hm >= from && hm < to : hm >= from || hm < to;
+    if (!inside) outside = `outside the release window ${from}-${to} ${c.window.tz || 'Europe/Berlin'} (now ${hm})`;
+  }
+  // one-off extra shift (owner 2026-11-22 "include extra shift"): <data>/title-release-extra.json {until: ISO, max_total, released}
+  // opens the window until `until` for at most max_total roles in all; it expires by itself (time or total) and is never needed again
+  let extra = null, maxCycle = num(c.max_per_cycle, 1000);
+  const extraFile = pathResolve(OUT_DIR, 'title-release-extra.json');
+  if (outside && existsSync(extraFile)) {
+    try {
+      const x = JSON.parse(readFileSync(extraFile, 'utf8'));
+      const now = process.env.JOBCRAWL_TITLE_RELEASE_NOW ? Date.parse(process.env.JOBCRAWL_TITLE_RELEASE_NOW) : Date.now();
+      const left = num(x.max_total, 0) - num(x.released, 0);
+      if (Date.parse(x.until) > now && left > 0) { extra = { file: extraFile, data: x }; maxCycle = Math.min(maxCycle, left); outside = ''; }
+    } catch (e) { console.log(`title release: ${extraFile} unreadable (${e.message}); ignored`); }
+  }
+  return { boards, maxCycle: outside ? 0 : maxCycle, maxBoard: num(c.max_per_board_per_cycle, 150), outside, extra, used: 0, deferred: 0, released: 0, kept: 0 };
+}
+const RELEASED_HEADER = 'url\treleased';
+function loadReleased(file) {
+  const m = new Map();
+  if (!existsSync(file)) return m;
+  for (const l of readFileSync(file, 'utf8').split(/\r?\n/).slice(1)) { const [u, d] = l.split('\t'); if (u && d) m.set(u, d); }
+  return m;
+}
+
 // The verdicts that drop a role for its place (the per-entry site whitelist, block_hard, location_only and the allow list).
 const LOCATION_VERDICTS = new Set(['location (site whitelist)', 'blocked-location', 'location-not-allowed', 'unknown-location']);
 
@@ -271,6 +324,13 @@ function writeJobMeta(history, seen) {
 }
 
 // ---------- concurrency ----------
+function formatErr(e) {
+  const msg = e?.message || String(e);
+  const c = e?.cause;
+  if (!c) return msg;
+  const detail = c.message && c.code && !c.message.includes(c.code) ? `${c.code}: ${c.message}` : (c.message || c.code || String(c));
+  return detail && detail !== msg ? `${msg} (${detail})` : msg;
+}
 async function pool(items, worker) {
   const results = new Array(items.length);
   let i = 0;
@@ -278,7 +338,7 @@ async function pool(items, worker) {
     Array.from({ length: Math.min(CONCURRENCY, items.length) }, async () => {
       while (i < items.length) {
         const idx = i++;
-        results[idx] = await worker(items[idx]).catch((e) => ({ error: e.message }));
+        results[idx] = await worker(items[idx]).catch((e) => ({ error: formatErr(e), triage: e.triage ?? classifyError(e), host: e.host, provider: e.provider }));
       }
     }),
   );
@@ -342,6 +402,9 @@ async function scan() {
   const companies = interleaveByProvider(enabled.filter(due));
   const skipped = enabled.length - companies.length;
   const compiledFilters = prepareFilters(cfg);
+  const titleRel = loadTitleRelease(cfg, CONFIG);
+  const RELEASED_FILE = pathResolve(OUT_DIR, 'title-released.tsv');
+  const releasedAt = loadReleased(RELEASED_FILE);
   const date = today();
   const fresh = [];
   const problems = [];
@@ -357,6 +420,9 @@ async function scan() {
     if (LOCATION_VERDICTS.has(why) && !titleVerdictCompiled(compiledFilters, normTitle, board)) locationDrops[board] = (locationDrops[board] ?? 0) + 1;
   };
   // Source health: a board that errors or silently returns 0 jobs for 3 cycles in a row is reported, so a broken decoder does not go unnoticed.
+  const GUARD_FILE = pathResolve(OUT_DIR, 'liveness-guard.json');
+  let guardState = {};
+  try { if (existsSync(GUARD_FILE)) guardState = JSON.parse(readFileSync(GUARD_FILE, 'utf8')); } catch {}
   const HEALTH_FILE = pathResolve(OUT_DIR, 'source-health.json');
   let health = {};
   try { if (existsSync(HEALTH_FILE)) health = JSON.parse(readFileSync(HEALTH_FILE, 'utf8')); } catch {}
@@ -445,6 +511,8 @@ async function scan() {
   const findOriginal = (fp, row) => openIndex.find((e) => e.row.status === 'open' && e.row.url !== row.url && isCrossListing(fp, row, e.fp, e.row, boardNames));
 
   const boardLabels = loadLabels(OUT_DIR);
+  const breaker = makeBreaker({ dataDir: OUT_DIR, dryRun: flag('dry-run') });
+  const triageRows = [];   // one row per board outcome, for the triage log and the class counts
   let labelsDirty = false;
   let boardsDone = 0;
   const crawlStarted = Date.now();
@@ -454,6 +522,8 @@ async function scan() {
   async function crawlOne(entry) {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');
+    const host = hostOf(entry, r.slug);
+    if (breaker.shouldSkip(r.provider, host)) return { entry, r, skipped: true, error: 'skipped: provider circuit breaker open', triage: { cls: 'SKIPPED', code: '', detail: 'circuit breaker open' } };
     let timer;
     const ms = entryTimeoutMs(entry);   // entry.timeout_ms, default 35 s
     const timeoutPromise = new Promise((_, reject) => {
@@ -463,7 +533,20 @@ async function scan() {
     try {
       const fetchPromise = providers[r.provider].fetch(r.slug, entry);
       const jobs = await Promise.race([fetchPromise, timeoutPromise]);
+      breaker.record(r.provider, host, true);
       return { entry, r, jobs };
+    } catch (e) {
+      const triage = classifyError(e);
+      const cand = breaker.record(r.provider, host, false, triage);
+      if (cand) {   // enough failures of one class: look again before the rest of the provider is skipped (resilience.mjs commit)
+        await new Promise((res) => setTimeout(res, 15000));
+        let again = true;
+        try { await Promise.race([providers[r.provider].fetch(r.slug, entry), new Promise((_, rej) => setTimeout(() => rej(new Error('Timed out (retry)')), 30000))]); again = false; }
+        catch (e2) { again = classifyError(e2).cls === triage.cls || ['TIMEOUT_TLS', 'HTTP_5XX', 'DNS'].includes(classifyError(e2).cls); }
+        breaker.commit(cand, again);
+      }
+      e.triage = triage; e.host = host; e.provider = r.provider;
+      throw e;
     } finally {
       clearTimeout(timer);
       boardMs.push([entry.name, r.provider, Date.now() - t0]);
@@ -486,15 +569,35 @@ async function scan() {
       const p = companies[i].provider ?? res?.r?.provider ?? '?';
       const x = (ph[p] ??= { n: 0, fail: 0, zero: 0 });
       x.n++;
-      if (!res || res.error) x.fail++;
+      if (res?.skipped) { x.skip = (x.skip ?? 0) + 1; x.n--; }
+      else if (!res || res.error) x.fail++;
       else if (!res.jobs?.length) x.zero++;
     });
-    const parts = Object.entries(ph).sort((a, b) => b[1].n - a[1].n).map(([p, x]) => `${p} ${x.n}${x.fail ? ` (${x.fail} failed)` : ''}${x.zero ? ` (${x.zero} empty)` : ''}`);
+    const parts = Object.entries(ph).sort((a, b) => b[1].n - a[1].n).map(([p, x]) => `${p} ${x.n}${x.fail ? ` (${x.fail} failed)` : ''}${x.zero ? ` (${x.zero} empty)` : ''}${x.skip ? ` (${x.skip} skipped by breaker)` : ''}`);
     if (parts.length) problems.push(`provider health: ${parts.join(', ')}`);
+  }
+  // The open rows of each board, grouped once (a role belongs to board X when its company is X or ends with "(via X)"): the liveness check
+  // below used to scan the whole history (about 600,000 rows) for every board, about 500 boards a cycle.
+  const openByBoard = new Map();
+  for (const row of history.values()) {
+    if (row.status !== 'open' || !row.company) continue;
+    const keys = new Set([row.company]);
+    for (let at = row.company.indexOf('(via '); at >= 0; at = row.company.indexOf('(via ', at + 1)) if (row.company.endsWith(')')) keys.add(row.company.slice(at + 5, -1));
+    for (const k of keys) (openByBoard.get(k) ?? openByBoard.set(k, []).get(k)).push(row);
   }
   results.forEach((res, i) => {
     const name = companies[i].name;
-    if (!res || res.error) { noteHealth(name, false, 0); return problems.push(`${name}: ${res?.error ?? 'failed'}`); }
+    const tr = (extra) => { const row = { ts: new Date().toISOString(), board: name, provider: res?.provider ?? res?.r?.provider ?? companies[i].provider ?? '?', host: res?.host ?? hostOf(companies[i], res?.r?.slug), ...extra }; triageRows.push(row); return row; };
+    if (res?.skipped) { tr({ cls: 'SKIPPED', code: '', detail: 'circuit breaker open' }); return; }   // not fetched: no health change, nothing marked gone
+    if (!res || res.error) {
+      const t = res?.triage ?? { cls: 'OTHER', code: '', detail: 'failed' };
+      tr({ cls: t.cls, code: t.code, detail: t.detail });
+      noteHealth(name, false, 0);
+      return problems.push(`${name}: ${res?.error ?? 'failed'} [${t.cls}${t.code ? ' ' + t.code : ''}]`);
+    }
+    const trow = tr({ cls: res.jobs.length ? 'OK' : 'EMPTY_OK', code: '', detail: '', jobs: res.jobs.length, kept: 0 });
+    let boardKept = 0;   // roles of this board that pass every filter (the in-scope yield)
+    let boardReleased = 0;   // roles of this board newly released from the title rules this cycle (title_release cap)
     noteHealth(name, true, res.jobs.length);
     // Relevance: "relevance": "strict" | "broad" | "off" on an entry; the MyCareersFuture provider defaults to strict, everything else to off.
     const relMode = companies[i].relevance ?? (res.r.provider === 'mycareersfuture' ? 'strict' : 'off');
@@ -542,17 +645,27 @@ async function scan() {
       const normTitle = norm(j.title);
       const normLocation = norm(j.location);
       const broadWhy = flag('all') ? null : siteVerdict(j) ?? staleVerdict(j, name) ?? shadowVerdict(j) ?? titleVerdictCompiled(compiledFilters, normTitle, name) ?? locationVerdictCompiled(compiledFilters, normLocation, name);
+      if (!broadWhy) boardKept++;
       const probWhy = probVerdict(j);   // always evaluated: counts relevant/irrelevant roles for the pruning rule
-      const why = broadWhy ?? (flag('all') ? null : sgVerdict(j) ?? probWhy);
+      let why = broadWhy ?? (flag('all') ? null : sgVerdict(j) ?? probWhy);
       // A role at an in-scope employer that only fails the title filter (technician, IT, finance, admin...) is kept as status 'extra':
       // it is never alerted as new or fed to the classifiers by default, but the board can offer it behind a "more roles" switch and
       // it serves as a coverage check against other boards. Location, probation and relevance verdicts still drop it as before.
       // On a collect-only board a role that passes every filter is kept as 'extra' too (the other verdicts drop it as before).
-      const extraOnly = (collectOnly && !why) || ((broadWhy === 'no-positive-title' || broadWhy === 'negative-title')
+      let extraOnly = (collectOnly && !why) || ((broadWhy === 'no-positive-title' || broadWhy === 'negative-title')
         && !(sgVerdict(j) ?? probWhy) && !locationVerdictCompiled(compiledFilters, normLocation, name));
       if (why === PROBATION_VERDICT) gatedProbation++;
       if (why === SHADOWED) stats.shadowed++;
       const prior = history.get(j.url);
+      // title_release (loadTitleRelease above): a title-only 'extra' at a listed board becomes a normal posting, within the caps
+      if (titleRel && extraOnly && !collectOnly && !fromAggregator && titleRel.boards.has(name) && (prior || !flag('refresh-only'))) {
+        const already = prior?.status === 'open';
+        if (already || (titleRel.used < titleRel.maxCycle && boardReleased < titleRel.maxBoard)) {
+          if (!already) { titleRel.used++; boardReleased++; titleRel.released++; } else titleRel.kept++;
+          if (!releasedAt.has(j.url)) releasedAt.set(j.url, date);
+          why = null; extraOnly = false;
+        } else titleRel.deferred++;
+      }
       if (prior) {
         if (!prior.posted) prior.posted = postedDate(j.postedAt);
         if (/^insert title of the position/i.test(prior.title) && j.title && !/^insert title of the position/i.test(j.title)) prior.title = j.title;   // csod template titles seen before the German view was read
@@ -651,8 +764,9 @@ async function scan() {
         if (j.description) saveJd(row, j);
         else needLazyJd.push({ row, j, r: res.r });
       }
-      fresh.push({ ...row, seniority: compiledFilters.seniorityMatcher(normTitle), posted: (j.postedAt ?? '').slice(0, 10) });
+      fresh.push({ ...row, seniority: compiledFilters.seniorityMatcher(normTitle) });
     }
+    trow.kept = boardKept;
     if (isProb && !flag('dry-run')) {
       const employerMismatch = companies[i].employer_mismatch ? String(companies[i].employer_mismatch) : '';
       probationCycle(pst, { ok: true, total: res.jobs.length, relevant: pc.relevant, irrelevant: pc.irrelevant, samples: pc.samples, protectedNow, now: date, employerMismatch });
@@ -665,8 +779,21 @@ async function scan() {
     // budget ended the walk: res.jobs.incomplete) proves nothing about the roles it did not reach: they keep their status, and the
     // 3-day sweep below still retires a role that no answer confirms.
     if (res.jobs.incomplete) return;
-    for (const row of history.values()) {
-      if ((row.company === name || row.company?.endsWith(`(via ${name})`)) && row.status === 'open' && !live.has(row.url)) {
+    // Liveness guard (resilience.mjs livenessGuard): a board that had more than 5 open roles and now shows under half of them, or none,
+    // without a positive empty-OK signal is a suspect fetch (a provider that swallowed an error looks exactly like this): the roles stay
+    // open for this cycle and only the 3rd such fetch in a row closes them.
+    const openRows = (openByBoard.get(name) ?? []).filter((row) => row.status === 'open'), missing = openRows.filter((row) => !live.has(row.url));
+    if (missing.length) {
+      const gd = livenessGuard(guardState, name, openRows.length, openRows.length - missing.length, { emptyOk: res.jobs.emptyOk === true, date });
+      if (gd.hold) {
+        trow.cls = 'SUSPECT_DROP'; trow.detail = `${openRows.length - missing.length} of ${openRows.length} open roles still listed; kept open (${gd.n} of 3)`;
+        problems.push(`GUARD ${name}: ${trow.detail}`);
+        return;
+      }
+      if (gd.confirmed) problems.push(`GUARD ${name}: ${gd.n} fetches in a row with under half of its ${openRows.length} open roles listed; closing ${missing.length}`);
+    } else delete guardState[name];
+    for (const row of openRows) {
+      if (!live.has(row.url)) {
         row.status = 'gone';
         problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
       }
@@ -689,7 +816,7 @@ async function scan() {
     const generic = needLazyJd.filter((x) => !providers[x.r.provider].fetchDescription && !NO_SCRAPE.test(x.row.url) && due(x)).slice(0, GENERIC_JD_PER_CYCLE);
     await pool([...native, ...generic], async ({ row, j, r }) => {
       const own = providers[r.provider].fetchDescription;
-      j.description = own ? await own(j, r.slug) : await pageDescription(j);
+      j.description = own ? await own(j, r.slug).catch(() => '') : await pageDescription(j);
       if (j.description) saveJd(row, j);
       else failed[row.url] = Date.now();
     });
@@ -712,11 +839,11 @@ async function scan() {
     const cand = [];
     for (const row of history.values()) {
       if (row.status !== 'open' || SKIP.test(row.url)) continue;
+      const st = roll[row.url];
+      if (st && st.next > now) continue;
       const f = jdFile(row.url);
       let len = -1;
       if (existsSync(f)) { len = jdBody(readFileSync(f, 'utf8')).length; if (len >= THIN) continue; }
-      const st = roll[row.url];
-      if (st && st.next > now) continue;
       cand.push({ row, len, st });
     }
     cand.sort((a, b) => (a.st?.t ?? 0) - (b.st?.t ?? 0) || a.len - b.len);
@@ -770,7 +897,7 @@ async function scan() {
   }
 
   fresh.sort((a, b) => Number(b.seniority) - Number(a.seniority) || a.company.localeCompare(b.company));
-  console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}`);
+  console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}${titleRel ? ` | title release: ${titleRel.released} released, ${titleRel.kept} kept open, ${titleRel.deferred} deferred (caps ${titleRel.maxCycle}/cycle, ${titleRel.maxBoard}/board${titleRel.outside ? `; ${titleRel.outside}` : ''}${titleRel.extra ? `; extra shift until ${titleRel.extra.data.until}` : ''})` : ''}${results.some((r) => r?.skipped) ? ` | ${results.filter((r) => r?.skipped).length} skipped by the provider breaker` : ''}`);
   const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
@@ -779,6 +906,17 @@ async function scan() {
     const slow = [...boardMs].sort((a, b) => b[2] - a[2]);
     const total = boardMs.reduce((t, b) => t + b[2], 0);
     if (slow.length) problems.unshift(`board fetch time: ${(total / 60000).toFixed(1)} board-minutes over ${slow.length} boards (${CONCURRENCY} in parallel); slowest ${slow.slice(0, 8).map(([n, p, ms]) => `${n} (${p}) ${(ms / 1000).toFixed(0)} s`).join(', ')}`);
+  }
+  {
+    // triage: one line per class, then the worst providers per class (cycle notes), one JSON line per board in <data>/crawl-triage.jsonl
+    const byCls = {}, byProv = {};
+    for (const t of triageRows) { byCls[t.cls] = (byCls[t.cls] ?? 0) + 1; if (!['OK', 'EMPTY_OK', 'SKIPPED'].includes(t.cls)) { const k = `${t.provider}:${t.cls}${t.code ? ' ' + t.code : ''}`; byProv[k] = (byProv[k] ?? 0) + 1; } }
+    const top = Object.entries(byProv).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, v]) => `${k} ${v}`);
+    console.log(`triage: ${Object.entries(byCls).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}${top.length ? ` | by provider: ${top.join(', ')}` : ''}`);
+    const out = opt('triage-out') ?? (flag('dry-run') ? '' : pathResolve(OUT_DIR, 'logs', 'crawl-triage.jsonl'));
+    if (out && triageRows.length) { mkdirSync(pathResolve(out, '..'), { recursive: true }); try { if (statSync(out).size > 20e6) renameSync(out, `${out}.1`); } catch { /* none yet */ } appendFileSync(out, triageRows.map((t) => JSON.stringify(t)).join('\n') + '\n'); }
+    const b = breaker.finish();
+    if (b.open.length) problems.unshift(`provider breaker open: ${b.open.map(([k, v]) => `${k} (${v.cls}${v.code ? ' ' + v.code : ''}, until cycle ${v.open_until})`).join(', ')}${b.skipped ? `; skipped this cycle: ${b.skipped}` : ''}`);
   }
   await policySettled();
   for (const line of policySummary().reverse()) problems.unshift(line);
@@ -808,11 +946,25 @@ async function scan() {
     console.log('history: pruning off (crawl.history_prune_days 0)');
   }
   saveHistory(history);
+  // the released urls that are still open (a role that closed or turned 'extra' again, e.g. with the switch off, leaves the file)
+  if (titleRel?.extra) {   // the extra shift counts what it released, so its max_total holds across cycles
+    const x = titleRel.extra.data;
+    x.released = Number(x.released || 0) + titleRel.released;
+    x.cycles = [...(x.cycles ?? []), { at: new Date().toISOString(), released: titleRel.released }];
+    writeFileSync(titleRel.extra.file, JSON.stringify(x, null, 1) + '\n');
+  }
+  if (titleRel || releasedAt.size) {
+    const keep = [...releasedAt].filter(([u]) => history.get(u)?.status === 'open');
+    writeFileSync(RELEASED_FILE + '.tmp', [RELEASED_HEADER, ...keep.map(([u, d]) => `${u}\t${d}`)].join('\n') + '\n');
+    renameSync(RELEASED_FILE + '.tmp', RELEASED_FILE);
+  }
   if (existsSync(JD_DIR) && jdRows.size) jdCleanup(jdRows, false);
   if (labelsDirty) saveLabels(OUT_DIR, boardLabels);
   writeFileSync(STATE_FILE, JSON.stringify(crawlState, null, 1) + '\n');
   for (const k of Object.keys(health)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete health[k];
   writeFileSync(HEALTH_FILE, JSON.stringify(health, null, 1) + '\n');
+  for (const k of Object.keys(guardState)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete guardState[k];
+  writeFileSync(GUARD_FILE, JSON.stringify(guardState, null, 1) + '\n');
   if (probationDirty || Object.keys(probation).length) {
     if (probationDirty) writeFileSync(PROB_FILE, JSON.stringify(probation, null, 1) + '\n');
     // Review list: companies disabled by the pruning rule. The companies file is never touched.

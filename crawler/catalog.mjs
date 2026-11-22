@@ -5,7 +5,7 @@
 //   node crawler/catalog.mjs [--profile <dir>] [--data <dir>]      writes <data>/catalog.json
 //   (--data: else the profile's data_dir, else ./data)
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProfile, profileDirFromArgs, resolveDataDir } from './profile.mjs';
 
@@ -65,19 +65,20 @@ const metaFields = (m) => {
 const items = [];
 for (const line of readFileSync(HISTORY, 'utf8').split(/\r?\n/).slice(1)) {
   if (!line.trim()) continue;
-  const [url, company, title, location, first_seen, last_seen, status, posted] = line.split('\t');
+  const [rawUrl, rawCompany = '', rawTitle = '', rawLocation = '', first_seen = '', last_seen = '', status = '', posted = ''] = line.split('\t');
+  const url = (rawUrl ?? '').trim(), company = rawCompany.trim(), title = rawTitle.trim(), location = rawLocation.trim();
   if (status !== 'open' || !url || !title) continue;
   items.push({
-    title: title.trim(),
-    url: url.trim(),
-    company: company.trim(),
-    location: location.trim() || 'Unspecified',
+    title,
+    url,
+    company,
+    location: location || 'Unspecified',
     source: via(company),
     posted: posted || '',   // original publish date when the source gives one
     first_seen,             // when the crawler first saw the role
     last_seen,
     description: summarize(jdText(url)),
-    ...metaFields(JOBMETA[url.trim()]),
+    ...metaFields(JOBMETA[url]),
   });
 }
 
@@ -86,5 +87,5 @@ const seen = new Set();
 const unique = items.filter((i) => (seen.has(i.url) ? false : seen.add(i.url)));
 const next = JSON.stringify(unique) + '\n';
 const changed = !existsSync(OUT) || readFileSync(OUT, 'utf8') !== next;
-if (changed) writeFileSync(OUT, next, 'utf8');   // unchanged: keep the mtime so the board and the private rebuild can skip
+if (changed) { const tmp = `${OUT}.tmp`; writeFileSync(tmp, next, 'utf8'); renameSync(tmp, OUT); }   // unchanged: keep the mtime so the board and the private rebuild can skip
 console.log(`[catalog] ${unique.length} open jobs (${unique.filter((i) => i.description).length} with a description) ${changed ? '->' : 'unchanged,'} ${OUT}`);
