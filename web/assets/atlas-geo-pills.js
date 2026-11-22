@@ -39,6 +39,7 @@ const CSS = `
 .gp-row{all:unset;box-sizing:border-box;display:flex;gap:10px;align-items:center;width:100%;padding:7px 14px;cursor:pointer;font-size:13px}.gp-row:hover,.gp-row:focus-visible{background:color-mix(in srgb,var(--accent) 12%,transparent);outline:none}
 .gp-row .gp-rn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gp-row b{color:var(--accent-text);font-variant-numeric:tabular-nums}.gp-row .gp-rs{display:block;font-size:11.5px;color:var(--muted);white-space:normal}
 .gp-row .atlas-co-logo{width:24px;height:24px;margin:0;flex:none}
+.gp-gh{padding:8px 14px 3px;font:700 11px/1.3 'Martian Mono',ui-monospace,monospace;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .gp-foot{padding:8px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);line-height:1.45}
 .gp-grab{display:none}.gp-panel[hidden],.gp-layer[hidden]{display:none}
 @media(max-width:1099px){.gp-wrap{display:block}
@@ -92,7 +93,7 @@ export function init(api) {
   const grid = new Map(); cityList.forEach((c, k) => { const g = Math.floor(c.lon) + ',' + Math.floor(c.lat); (grid.get(g) || grid.set(g, []).get(g)).push(k); });
   const roleCity = new Int32Array(N).fill(-1);
   for (let i = 0; i < N; i++) { if (D.cat[i] !== 1) continue; const lo = D.lon[i], la = D.lat[i], gx = Math.floor(lo), gy = Math.floor(la); let bk = -1, bd = CITY_KM;
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const k of grid.get((gx + dx) + ',' + (gy + dy)) || []) { const c = cityList[k], d = kmBetween(lo, la, c.lon, c.lat); if (d < bd) { bd = d; bk = k; } }
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const k of grid.get((gx + dx) + ',' + (gy + dy)) || []) { const c = cityList[k]; if (c.cc !== D.cc[i]) continue; const d = kmBetween(lo, la, c.lon, c.lat); if (d < bd) { bd = d; bk = k; } }
     roleCity[i] = bk; }
   const inEurope = (c) => c.lon >= EUROPE[0] && c.lon <= EUROPE[2] && c.lat >= EUROPE[1] && c.lat <= EUROPE[3];
   const countryAt = (lon, lat) => { const x = (lon + 180) / 360, r = lat * Math.PI / 180, y = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2;
@@ -100,16 +101,21 @@ export function init(api) {
       for (let i = 0, j = q.length - 1; i < q.length; j = i++) if ((q[i][1] > y) !== (q[j][1] > y) && x < (q[j][0] - q[i][0]) * (y - q[i][1]) / (q[j][1] - q[i][1]) + q[i][0]) ins = !ins; if (ins) return c; }
     return null; };
 
+  // a pin whose point lies in a country where the company has under a tenth of its open roles may be a head office (Thales, Paris) or a site-table row of another
+  // company of the same name ('Aero' in Helsinki for a US company); both are drawn, the doubtful ones are listed in state().pinsFlagged for the data owner
+  const coCc = new Map(); for (let i = 0; i < N; i++) { const sl = D.coName[D.co[i]]; let m = coCc.get(sl); if (!m) coCc.set(sl, m = { n: 0 }); m.n++; if (D.cc[i]) m[D.cc[i]] = (m[D.cc[i]] || 0) + 1; }
+  const pinOk = (p) => { const m = coCc.get(p.slug), c = countryAt(p.lon, p.lat); if (!m || !c) return true; return (m[c.cc] || 0) >= 0.1 * m.n; };
+
   // ---- the selection's counts (the field chips; PA.key changes with them)
-  function recount() { const R = { cc: new Map(), city: new Int32Array(cityList.length), co: new Map(), world: { n: 0, e: new Set() }, europe: { n: 0, e: new Set() }, bav: { n: 0, e: new Set() }, none: 0, located: 0 };
+  function recount() { const R = { cc: new Map(), city: new Int32Array(cityList.length), co: new Map(), world: { n: 0, e: new Set() }, europe: { n: 0, lo: 0, e: new Set() }, bav: { n: 0, e: new Set() }, none: 0, located: 0 };
     for (let i = 0; i < N; i++) { if (!D.sel[i]) continue; const cc = D.cc[i]; R.world.n++; R.world.e.add(D.co[i]); if (!cc) { R.none++; continue; }
       let o = R.cc.get(cc); if (!o) R.cc.set(cc, o = { n: 0, e: new Set(), lo: 0 }); o.n++; o.e.add(D.co[i]); const c = countries.get(cc); if (c && inEurope(c)) { R.europe.n++; R.europe.e.add(D.co[i]); }
-      if (D.cat[i] === 1) { o.lo++; R.located++; if (roleCity[i] >= 0) R.city[roleCity[i]]++; if (D.n3code && D.n3code[i] && String(D.n3code[i]).startsWith('DE2')) { R.bav.n++; R.bav.e.add(D.co[i]); } }
+      if (D.cat[i] === 1) { o.lo++; R.located++; if (c && inEurope(c)) R.europe.lo++; if (roleCity[i] >= 0) R.city[roleCity[i]]++; if (D.n3code && D.n3code[i] && String(D.n3code[i]).startsWith('DE2')) { R.bav.n++; R.bav.e.add(D.co[i]); } }
       const sl = D.coName[D.co[i]]; R.co.set(sl, (R.co.get(sl) || 0) + 1); }
     return R; }
 
   // ---- pins and status (small files, read once; the status file only when a status is shown)
-  const pinsP = fetch(api.dataUrl('side/company-pins.json')).then((r) => (r.ok ? r.json() : null)).then((j) => { S.pins = j && Array.isArray(j.pins) ? j.pins.filter((p) => p.precision === 'site' && p.verified === true && Number.isFinite(p.lat) && Number.isFinite(p.lon)) : []; }).catch(() => {});
+  const pinsP = fetch(api.dataUrl('side/company-pins.json')).then((r) => (r.ok ? r.json() : null)).then((j) => { const all = j && Array.isArray(j.pins) ? j.pins.filter((p) => p.precision === 'site' && p.verified === true && Number.isFinite(p.lat) && Number.isFinite(p.lon)) : []; S.pins = all; S.pinsFlagged = all.filter((p) => !pinOk(p)).map((p) => p.slug); }).catch(() => {});
   const needStatus = () => { if (!S.statusP) S.statusP = fetch(api.dataUrl('side/company-status.json')).then((r) => (r.ok ? r.json() : null)).then((j) => { S.status = j && j.companies ? j.companies : {}; schedule(); }).catch(() => { S.status = {}; }); return S.statusP; };
   const statusText = (slug, n) => { const s = S.status && S.status[slug]; if (!s) return null;
     if (s.k === 'hiring') { const m = n > 0 ? n : s.n; return { k: 'hiring', t: de() ? `Stellen offen · ${m} ${m === 1 ? 'offene Stelle' : 'offene Stellen'}` : `Hiring · ${m} open ${m === 1 ? 'role' : 'roles'}` }; }
@@ -118,12 +124,12 @@ export function init(api) {
   // ---- the view
   const level = (deg) => (deg >= CITY_DEG ? 'country' : deg >= PIN_DEG ? 'city' : 'pin');
   function region(R, ctr, deg) {   // the named set the header counts: worldwide, Europe, one country, Bavaria (located roles, NUTS1 DE2)
-    if (deg >= 95) return { name: api.pick('Worldwide', 'Weltweit'), n: R.world.n, e: R.world.e.size, set: 'all' };
+    if (deg >= 95) return { name: api.pick('Worldwide', 'Weltweit'), n: R.world.n, lo: R.located, none: R.none, e: R.world.e.size, set: 'all' };
     const c = countryAt(ctr[0], ctr[1]);
-    if (deg >= 14 || !c) { const inEu = ctr[0] >= EUROPE[0] && ctr[0] <= EUROPE[2] && ctr[1] >= EUROPE[1] && ctr[1] <= EUROPE[3]; if (inEu && deg >= 12 || (!c && inEu)) return { name: api.pick('Europe', 'Europa'), n: R.europe.n, e: R.europe.e.size, set: 'europe' };
-      if (!c) return { name: api.pick('Worldwide', 'Weltweit'), n: R.world.n, e: R.world.e.size, set: 'all' }; }
-    if (c.cc === 'DE' && deg < 7 && ctr[0] >= BAV[0] && ctr[0] <= BAV[2] && ctr[1] >= BAV[1] && ctr[1] <= BAV[3] && D.n3code) return { name: api.pick('Bavaria', 'Bayern'), n: R.bav.n, e: R.bav.e.size, set: 'bavaria', note: api.pick('roles with a place in Bavaria', 'Stellen mit Ort in Bayern') };
-    const o = R.cc.get(c.cc) || { n: 0, e: new Set() }; return { name: nameOf(c.cc, c.name), n: o.n, e: o.e.size, set: 'country:' + c.cc }; }
+    if (deg >= 14 || !c) { const inEu = ctr[0] >= EUROPE[0] && ctr[0] <= EUROPE[2] && ctr[1] >= EUROPE[1] && ctr[1] <= EUROPE[3]; if (inEu && deg >= 12 || (!c && inEu)) return { name: api.pick('Europe', 'Europa'), n: R.europe.n, lo: R.europe.lo, e: R.europe.e.size, set: 'europe' };
+      if (!c) return { name: api.pick('Worldwide', 'Weltweit'), n: R.world.n, lo: R.located, none: R.none, e: R.world.e.size, set: 'all' }; }
+    if (c.cc === 'DE' && deg < 7 && ctr[0] >= BAV[0] && ctr[0] <= BAV[2] && ctr[1] >= BAV[1] && ctr[1] <= BAV[3] && D.n3code) return { name: api.pick('Bavaria', 'Bayern'), n: R.bav.n, lo: R.bav.n, e: R.bav.e.size, set: 'bavaria', note: api.pick('roles with a place in Bavaria; roles known only as Germany are counted under Germany', 'Stellen mit Ort in Bayern; Stellen nur mit Land Deutschland zählen unter Deutschland') };
+    const o = R.cc.get(c.cc) || { n: 0, lo: 0, e: new Set() }; return { name: nameOf(c.cc, c.name), n: o.n, lo: o.lo, e: o.e.size, set: 'country:' + c.cc }; }
   const dn = {}, nameOf = (cc, fb) => { try { const l = de() ? 'de' : 'en'; return (dn[l] || (dn[l] = new Intl.DisplayNames([l], { type: 'region' }))).of(cc) || fb || cc; } catch (e) { return fb || cc; } };
   const cityName = (c) => c.name;
 
@@ -166,30 +172,52 @@ export function init(api) {
     syncHash();
   }
 
+  // the region's own roles, counted once per selection: P.n = P.ccN (every role with a country) + P.none; P.n = P.cityN (a real place, nearest city in its own country)
+  // + P.noCity (a real place but no city within reach) + P.countryOnly + P.none. The header, the list rows and the check all read these.
+  function partsOf(rg) { const k = rg.set + '|' + S.key; if (S.pk === k) return S.pv;
+    const P = { n: 0, located: 0, withCity: 0, noCity: 0, countryOnly: 0, none: 0, e: new Set(), ccN: new Map(), cityN: new Map() };
+    for (let i = 0; i < N; i++) { if (!D.sel[i]) continue; const cc = D.cc[i]; let inR;
+      if (rg.set === 'all') inR = true; else if (rg.set === 'europe') { const c = countries.get(cc); inR = !!c && inEurope(c); }
+      else if (rg.set === 'bavaria') inR = D.cat[i] === 1 && !!D.n3code && !!D.n3code[i] && String(D.n3code[i]).startsWith('DE2'); else inR = cc === rg.set.slice(8);
+      if (!inR) continue; P.n++; P.e.add(D.co[i]);
+      if (!cc) P.none++; else if (D.cat[i] === 1) { P.located++; if (roleCity[i] >= 0) { P.withCity++; P.cityN.set(roleCity[i], (P.cityN.get(roleCity[i]) || 0) + 1); } else P.noCity++; } else if (D.cat[i] === 2) P.countryOnly++; if (cc) P.ccN.set(cc, (P.ccN.get(cc) || 0) + 1); }
+    S.pk = k; S.pv = P; return P; }
+
   function header(R, ctr, deg, lv, items, pins) {
-    const rg = region(R, ctr, deg), f = (n) => fmt(n, de());
-    S.region = rg; $t.textContent = `${rg.name} · ${f(rg.e)} ${api.pick(rg.e === 1 ? 'employer' : 'employers', rg.e === 1 ? 'Arbeitgeber' : 'Arbeitgeber')} · ${f(rg.n)} ${api.pick(rg.n === 1 ? 'open role' : 'open roles', rg.n === 1 ? 'offene Stelle' : 'offene Stellen')}`;
-    const place = R.located, none = R.none, cOnly = R.world.n - R.located - R.none;
-    $s.innerHTML = api.pick(`Public board, ${f(R.world.n)} open roles in all: ${f(place)} with a place on the map, ${f(cOnly)} known by country only, ${f(none)} without a place.`,
-      `Öffentliches Board, insgesamt ${f(R.world.n)} offene Stellen: ${f(place)} mit Ort auf der Karte, ${f(cOnly)} nur mit Land, ${f(none)} ohne Ort.`) + (rg.note ? ` ${esc(api.pick('Region count: ', 'Zahl der Region: '))}${esc(rg.note)}.` : '');
-    // the list: what the view shows at this level, biggest first (a pill hidden for room is still here)
-    const rows = []; const inView = (lon, lat) => { const [x, y] = api.project(lon, lat); return x >= -20 && y >= -20 && x <= api.W() + 20 && y <= api.H() + 20; };
-    if (lv === 'country') for (const [cc, o] of R.cc) { const c = countries.get(cc); rows.push({ n: o.n, name: nameOf(cc, c && c.name), sub: o.n - o.lo > 0 && o.lo ? api.pick(`${f(o.lo)} with a place`, `${f(o.lo)} mit Ort`) : '', lon: c && c.lon, lat: c && c.lat, deg: c ? flyDeg(c) : 6, cc }); }
-    else { cityList.forEach((c, k) => { if (R.city[k] > 0 && inView(c.lon, c.lat)) rows.push({ n: R.city[k], name: c.name, sub: nameOf(c.cc), lon: c.lon, lat: c.lat, deg: 0.8 }); });
-      if (lv === 'pin') for (const { p, n } of pins) if (inView(p.lon, p.lat)) rows.push({ n, name: p.name, sub: '', lon: p.lon, lat: p.lat, deg: 0.05, pin: p }); }
-    rows.sort((a, b) => b.n - a.n); S.listSum = rows.reduce((t, r) => t + r.n, 0); S.listN = rows.length; const top = rows.slice(0, 80);
-    const key = lv + '|' + top.map((r) => r.name + r.n).join(',');
-    if (S.listKey !== key) { S.listKey = key; $l.innerHTML = ''; top.forEach((r) => { const li = document.createElement('li'), b = document.createElement('button'); b.type = 'button'; b.className = 'gp-row';
+    const rg = region(R, ctr, deg), f = (n) => fmt(n, de()), P = partsOf(rg);
+    rg.n = P.n; rg.e = P.e.size; S.region = rg; S.parts = { n: P.n, located: P.located, withCity: P.withCity, noCity: P.noCity, countryOnly: P.countryOnly, none: P.none, ccSum: [...P.ccN.values()].reduce((t, v) => t + v, 0), citySum: [...P.cityN.values()].reduce((t, v) => t + v, 0) };
+    $t.textContent = `${rg.name} · ${f(rg.e)} ${api.pick(rg.e === 1 ? 'employer' : 'employers', 'Arbeitgeber')} · ${f(rg.n)} ${api.pick(rg.n === 1 ? 'open role' : 'open roles', rg.n === 1 ? 'offene Stelle' : 'offene Stellen')}`;
+    $s.innerHTML = rg.set === 'bavaria' ? esc(api.pick(`${f(rg.n)} open roles with a place in Bavaria (NUTS region DE2). Roles known only as Germany count under Germany.`, `${f(rg.n)} offene Stellen mit Ort in Bayern (NUTS-Region DE2). Stellen nur mit Land Deutschland zählen unter Deutschland.`))
+      : esc(api.pick(`${f(P.n)} open roles in the public board: ${f(P.located)} with a place on the map, ${f(P.countryOnly)} known by country only${P.none ? `, ${f(P.none)} without a place` : ''}.`,
+        `${f(P.n)} offene Stellen im öffentlichen Board: ${f(P.located)} mit Ort auf der Karte, ${f(P.countryOnly)} nur mit Land${P.none ? `, ${f(P.none)} ohne Ort` : ''}.`));
+    // the list: the region's places at this level, biggest first, then what is not at a place (so the rows add up to the header); the pinned companies are a group of their own
+    const rows = [], info = [];
+    if (lv === 'country') { for (const [cc, n] of P.ccN) { const c = countries.get(cc); rows.push({ n, name: nameOf(cc, c && c.name), sub: '', lon: c && c.lon, lat: c && c.lat, deg: c ? flyDeg(c) : 6 }); }
+      if (P.none) info.push({ n: P.none, name: api.pick('No country given', 'Ohne Länderangabe') }); }
+    else { for (const [k, n] of P.cityN) { const c = cityList[k]; rows.push({ n, name: c.name, sub: nameOf(c.cc), lon: c.lon, lat: c.lat, deg: 0.8 }); }
+      if (P.noCity) info.push({ n: P.noCity, name: api.pick('Placed, but no city nearby', 'Mit Ort, aber ohne Stadt in der Nähe') });
+      if (P.countryOnly) info.push({ n: P.countryOnly, name: api.pick('Known by country only (no city)', 'Nur mit Land bekannt (ohne Stadt)') });
+      if (P.none) info.push({ n: P.none, name: api.pick('Without a place', 'Ohne Ort') }); }
+    rows.sort((a, b) => b.n - a.n); S.listSum = rows.reduce((t, r) => t + r.n, 0) + info.reduce((t, r) => t + r.n, 0); S.listN = rows.length;
+    const inView = (lon, lat) => { const [x, y] = api.project(lon, lat); return x >= -20 && y >= -20 && x <= api.W() + 20 && y <= api.H() + 20; };
+    const pinRows = lv === 'pin' ? pins.filter(({ p }) => inView(p.lon, p.lat)).map(({ p, n }) => ({ n, name: p.name, lon: p.lon, lat: p.lat, pin: p })) : [];
+    const top = rows.slice(0, 80), key = lv + '|' + rg.set + '|' + top.map((r) => r.name + r.n).join(',') + '|' + info.map((r) => r.n).join(',') + '|' + pinRows.map((r) => r.name + r.n).join(',');
+    if (S.listKey !== key) { S.listKey = key; $l.innerHTML = '';
+      const head = (t) => { const li = document.createElement('li'); li.className = 'gp-gh'; li.textContent = t; $l.appendChild(li); };
+      const add = (r) => { const li = document.createElement('li'), b = document.createElement(r.lon == null && !r.pin ? 'div' : 'button'); if (b.tagName === 'BUTTON') b.type = 'button'; b.className = 'gp-row';
         b.innerHTML = `${r.pin ? api.coLogo(r.pin.slug, r.pin.name) : ''}<span class="gp-rn">${esc(r.name)}${r.sub ? `<span class="gp-rs">${esc(r.sub)}</span>` : ''}</span><b>${f(r.n)}</b>`;
-        b.onclick = () => { if (r.pin) { api.fly(r.lon, r.lat, 0.08); setTimeout(() => { const [x, y] = api.project(r.lon, r.lat); openCard(r.pin, r.n, x, y); }, 700); } else if (r.lon != null) api.fly(r.lon, r.lat, r.deg); };
-        li.appendChild(b); $l.appendChild(li); }); }
-    $f.textContent = api.pick(`Pills sum to ${f(S.pillSum)}${S.hidden ? `; ${f(S.hidden)} more are listed here and appear as you zoom` : ''}. Company pins mark verified exact sites only; every other employer stays in its city's number.`,
-      `Die Pillen ergeben ${f(S.pillSum)}${S.hidden ? `; ${f(S.hidden)} weitere stehen hier und erscheinen beim Zoomen` : ''}. Firmen-Pins zeigen nur geprüfte genaue Standorte; alle anderen Arbeitgeber stehen in der Zahl ihrer Stadt.`);
+        if (b.tagName === 'BUTTON') b.onclick = () => { if (r.pin) { api.fly(r.lon, r.lat, 0.08); setTimeout(() => { const [x, y] = api.project(r.lon, r.lat); openCard(r.pin, r.n, x, y); }, 700); } else api.fly(r.lon, r.lat, r.deg); };
+        li.appendChild(b); $l.appendChild(li); };
+      if (pinRows.length) { head(api.pick('Companies with a verified site (all their open roles)', 'Firmen mit geprüftem Standort (alle ihre offenen Stellen)')); pinRows.forEach(add); head(api.pick(lv === 'country' ? 'Countries' : 'Places', lv === 'country' ? 'Länder' : 'Orte')); }
+      top.forEach(add); if (rows.length > top.length) { const li = document.createElement('li'); li.className = 'gp-gh'; li.textContent = api.pick(`+ ${rows.length - top.length} more places with fewer roles`, `+ ${rows.length - top.length} weitere Orte mit weniger Stellen`); $l.appendChild(li); }
+      info.forEach(add); }
+    $f.textContent = api.pick(`${f(S.drawn ? S.drawn.filter((d) => d.kind !== 'pin').length : 0)} pills drawn${S.hidden ? `, ${f(S.hidden)} more kept off the map for room (all are in the list)` : ''}. Pins mark verified exact sites only and show a company's open roles in all; every other employer stays in its city's number.`,
+      `${f(S.drawn ? S.drawn.filter((d) => d.kind !== 'pin').length : 0)} Pillen gezeichnet${S.hidden ? `, ${f(S.hidden)} weitere aus Platzgründen nur in der Liste` : ''}. Pins zeigen nur geprüfte genaue Standorte und alle offenen Stellen der Firma; jeder andere Arbeitgeber steht in der Zahl seiner Stadt.`);
     if (mq.matches) panel.style.height = api.H() + 'px'; else { const sc = stage.querySelector('.atlas-scrub:not([hidden])'); panel.style.bottom = (sc ? sc.offsetHeight : 0) + 'px'; }
   }
 
   // ---- the company card
-  function openCard(p, n, x, y) { S.pin = p.slug; S.card = { p, n }; needStatus().then(() => { if (S.card && S.card.p === p) fillCard(); }); fillCard(); schedule(); }
+  function openCard(p, n, x, y) { if (!mq.matches) { panel.classList.remove('gp-open'); sync(); } S.pin = p.slug; S.card = { p, n }; needStatus().then(() => { if (S.card && S.card.p === p) fillCard(); }); fillCard(); schedule(); }
   function fillCard() { const { p, n } = S.card, s = statusText(p.slug, n), link = api.companyLink(p.slug), cat = `atlas-companies.html#company=${encodeURIComponent(p.slug)}`;
     const roles = n > 0 ? `${f(n)} ${api.pick(n === 1 ? 'open role' : 'open roles', n === 1 ? 'offene Stelle' : 'offene Stellen')} →` : '';
     card.innerHTML = `<button type="button" class="gp-x" aria-label="${esc(api.pick('Close', 'Schließen'))}">×</button><div class="gp-ch">${api.coLogo(p.slug, p.name)}<span class="gp-cn">${esc(p.name)}</span></div>`
@@ -198,7 +226,7 @@ export function init(api) {
     card.hidden = false; card.querySelector('.gp-x').onclick = closeCard; positionCard(); }
   const f = (n) => fmt(n, de());
   function positionCard() { if (!S.card) return; const [x, y] = api.project(S.card.p.lon, S.card.p.lat), Wd = api.W(), Hd = api.H(), w = card.offsetWidth || 260, h = card.offsetHeight || 120;
-    if (Wd < 600) { card.style.left = '8px'; card.style.top = Math.max(8, Math.min(Hd - h - 8, y - h - 30)) + 'px'; return; }
+    if (Wd < 600) { card.style.left = '8px'; card.style.top = '8px'; return; }   // a phone: the card at the top, the pin stays in sight below it
     let cx = x + 26, cy = y - h / 2; if (cx + w > Wd - 8) cx = x - 26 - w; cx = Math.max(8, cx); cy = Math.max(8, Math.min(Hd - h - 8, cy)); card.style.left = cx + 'px'; card.style.top = cy + 'px'; }
   function closeCard() { S.card = null; S.pin = null; card.hidden = true; schedule(); }
   addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.card) closeCard(); });
@@ -224,9 +252,9 @@ export function init(api) {
   addEventListener('hashchange', () => { if (S.on && location.hash !== S.lastHash) applyHash(); });
   place(); S.on = false;
   const api2 = { tick(on) { S.on = !!on; layer.hidden = !on; panel.hidden = !on; wrap.classList.toggle('gp-off', !on); if (on) { if (!S.hashApplied) { applyHash(); } schedule(); } },
-    state() { const rg = S.region || {}; return { level: S.level, deg: S.deg, region: rg.name, set: rg.set, employers: rg.e, roles: rg.n, pills: (S.drawn || []).filter((d) => d.kind !== 'pin'), pins: (S.drawn || []).filter((d) => d.kind === 'pin'), pillSum: S.pillSum, hidden: S.hidden, listSum: S.listSum, listN: S.listN,
+    state() { const rg = S.region || {}; return { level: S.level, deg: S.deg, region: rg.name, set: rg.set, employers: rg.e, roles: rg.n, pills: (S.drawn || []).filter((d) => d.kind !== 'pin'), pins: (S.drawn || []).filter((d) => d.kind === 'pin'), pillSum: S.pillSum, hidden: S.hidden, listSum: S.listSum, listN: S.listN, parts: S.parts,
       world: S.rec ? { roles: S.rec.world.n, employers: S.rec.world.e.size, located: S.rec.located, none: S.rec.none, countrySum: [...S.rec.cc.values()].reduce((t, o) => t + o.n, 0), citySum: [...S.rec.city].reduce((t, n) => t + n, 0) } : null,
-      hiringNow: S.hn, logos: S.logos, card: S.card ? S.card.p.slug : null, pinsLoaded: S.pins.length, ms: Math.round(performance.now() - S.t0), renders: S.renders }; },
+      hiringNow: S.hn, logos: S.logos, card: S.card ? S.card.p.slug : null, pinsLoaded: S.pins.length, pinsFlagged: S.pinsFlagged || [], ms: Math.round(performance.now() - S.t0), renders: S.renders }; },
     fly: api.fly, openPin(slug) { const p = S.pins.find((x) => x.slug === slug); if (p) openCard(p, (S.rec || (S.rec = recount())).co.get(slug) || 0); },
     toggleHiring(v) { S.hn = !!v; sync(); schedule(); } };
   return api2;
