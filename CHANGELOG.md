@@ -3,6 +3,16 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-22: geography pills and pins
+
+- **`web/assets/atlas-geo-pills.js`** (loaded by `atlas.js` beside the place data): country pills zoomed out, city pills zoomed in (only roles with a real
+  place, each to its nearest city of its own country), company pins for verified exact sites only (`side/company-pins.json`) at street level; counts follow
+  the field chips. A region header (worldwide, Europe, one country, Bavaria) and a list beside the map (a bottom sheet on a phone) whose rows add up to the
+  header. "Hiring now" shows or hides the pinned companies without open roles; the status words come from `side/company-status.json`. The view, the chips,
+  the toggles and an open card live in the address (`#v=lat,lon,deg&f=..&hn=0&pin=slug`).
+- On when `config.json` has `geo_pills: true` or on the internal (preview) build; `?pills=1` / `?pills=0` decide one visit. Off, or a module that does not
+  load, keeps the classic labels. While on, the canvas leaves out its own area names, clusters and company dots.
+
 ## 2026-11-12: aggregator follow-ups
 
 - **`aggregator: true`** on a registry entry makes a board on a generic provider (sitemap, paginated_list, jsonld_direct) an aggregator
