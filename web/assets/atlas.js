@@ -8,13 +8,13 @@ import { makeIndex, tasteScores, tasteWeight } from './match.js';
 import * as PF from './profile.js';
 // company tile: the stored logo (via company-index.json when available, avoiding 404s), else the site's monogram tile
 // (same letters and the same hue formula as mono_hue), so a missing logo never leaves a gap or a broken image
-let coIdx = null;
-const coIdxP = fetch('/company-index.json').then((r) => (r.ok ? r.json() : null)).then((d) => { coIdx = d; }).catch(() => null);
+let coIdx = null, coIdxP = null;   // null: not loaded yet (monogram); false: not available (the stored logo by its slug)
+const coIdxLoad = () => coIdxP || (coIdxP = fetch('/company-index.json').then((r) => (r.ok ? r.json() : false)).then((d) => { coIdx = d || false; }).catch(() => { coIdx = false; }));   // after the first paint
 function coLogo(slug, name) {
   const letters = ((String(name || '').match(/[A-Za-z0-9]+/g) || []).slice(0, 2).map((w) => w[0]).join('').toUpperCase()) || '?';
   const key = String(slug || name || ''); let hue = 0; for (const ch of key) hue += ch.codePointAt(0); hue = (hue * 37) % 360;
   const mono = `<span class="atlas-co-logo mono" style="--h:${hue}" aria-hidden="true">${esc(letters)}</span>`;
-  if (!slug) return mono;
+  if (!slug || coIdx === null) return mono;
   if (coIdx) {
     const entry = coIdx[slug];
     if (!entry || !entry[1]) return mono;
@@ -23,7 +23,7 @@ function coLogo(slug, name) {
   }
   return `<span class="atlas-co-logo" aria-hidden="true"><img src="assets/company/${esc(slug)}.png" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;const s=this.parentElement;s.className='atlas-co-logo mono';s.style.setProperty('--h','${hue}');s.textContent='${esc(letters).replace(/'/g, '')}'"></span>`;
 }
-const [cfg] = await Promise.all([loadConfig(), coIdxP]);
+const cfg = await loadConfig();
 PF.setPersonas(cfg.personas);
 const K = PF.keys();
 const mount = document.getElementById('atlas-mount'); if (!mount) throw new Error('no #atlas-mount');
@@ -125,6 +125,8 @@ mount.innerHTML = `<div class="atlas-bar">
 <ul class="atlas-list" id="atlas-list"></ul>
 <p class="atlas-note">${L('Big employers do not crowd the sample: roles are drawn with a weight that falls with the number of roles the employer has in the lens.' + (SHAPE ? ' ▲ more like this, ● ignore, ▼ less like this. Marks stay on this device and carry over to Match me.' : ''), 'Große Arbeitgeber verdrängen die Stichprobe nicht: Die Auswahl gewichtet nach der Zahl der Stellen des Arbeitgebers in der Lupe.' + (SHAPE ? ' ▲ mehr davon, ● ignorieren, ▼ weniger davon. Markierungen bleiben auf diesem Gerät und gelten auch in „Passende Stellen für mich“.' : ''))}</p></div></div>`;
 const $ = (id) => mount.querySelector('#' + id);
+const hookEv = new EventTarget(), hk = { filter: null, mask: null, ownLabels: false, own: false };   // the module hook's events and settings (see hook below)
+function emit(t, d) { hookEv.dispatchEvent(new CustomEvent(t, { detail: d })); }
 if (window.matchMedia && window.matchMedia('(max-width: 720px)').matches) $('atlas-fieldbox').open = false;
 
 // ---- data
@@ -133,13 +135,21 @@ if (!(await fetch(dataUrl('match/match-vec.json'), { method: 'HEAD' }).catch(() 
 // The role vectors (match-vec.bin) are the biggest file and the map does not need them to appear: they are fetched after the first paint
 // (loadVectors below); until then the vector-based parts (nearest-role labels, marks, the lens centre) see zeros.
 const fetchVectors = () => Promise.all([fetch(dataUrl('match/match-vec.bin')).then((r) => r.arrayBuffer()), fetch(dataUrl('match/company-vec.json')).then((r) => r.json()).then((j) => fetch(dataUrl('match/company-vec.bin')).then((r) => r.arrayBuffer()).then((b) => ({ slugs: j.slugs, vec: new Int8Array(b) }))).catch(() => null)]);   // started after the first paint
-const [vj, at, rows] = await Promise.all(['match-vec.json', 'match-attrs.json'].map((f) => fetch(dataUrl('match/' + f)).then((r) => r.json())).concat([fetch(dataUrl('jobs-index.json')).then((r) => r.json())]));
-// neighbours: 32 bits per slot when the graph says so (nb_bits 32, role-nb32.bin, empty slot 0xFFFFFFFF), else the 16-bit file (empty slot 65535)
-const graph = await fetch(dataUrl('match/role-graph.json')).then((r) => r.json()).then(async (g0) => {
+// First paint first: config paint_file (match/atlas-paint.json, when the builder writes it) holds the roles' ids in board order and their
+// employers' slugs, so jobs-index.json (titles, links) comes after the first paint (lateData below); without it, as before
+const [vj, at, pk] = await Promise.all([fetch(dataUrl('match/match-vec.json')).then((r) => r.json()), fetch(dataUrl('match/match-attrs.json')).then((r) => r.json()),
+  cfg.paint_file ? fetch(dataUrl(cfg.paint_file)).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null]);
+const packed = !!(pk && pk.ids && pk.ids.length === at.a.length);
+const rows = packed ? pk.ids.map((id, i) => [id, '', '', '', pk.co[i] >= 0 ? pk.cos[pk.co[i]] : '']) : await fetch(dataUrl('jobs-index.json')).then((r) => r.json());
+let rowsReady = !packed;
+const loadRows = () => (rowsReady ? null : fetch(dataUrl('jobs-index.json')).then((r) => r.json()).then((full) => { const by = new Map(full.map((r) => [r[0], r])); rows.forEach((r, i) => { const f = by.get(r[0]); if (f) rows[i] = f; }); rowsReady = true; }));
+const ix = makeIndex({ n: rows.length, avgdl: 1, ids: rows.map((r) => r[0]), len: [], idf: {}, post: {} }, vj, at, new Int8Array(vj.ids.length * vj.dim), null);   // zero vectors until loadVectors, neighbours until loadGraph
+// neighbours (after the first paint): 32 bits per slot when the graph says so (nb_bits 32, role-nb32.bin, empty slot 0xFFFFFFFF), else the 16-bit file (empty slot 65535)
+const loadGraph = () => fetch(dataUrl('match/role-graph.json')).then((r) => r.json()).then(async (g0) => {
   const w32 = g0.nb_bits === 32, b = await fetch(dataUrl('match/' + (w32 ? (g0.nb_file || 'role-nb32.bin') : 'role-nb.bin'))).then((r) => r.arrayBuffer());
-  return { ...g0, nb: w32 ? new Uint32Array(b) : new Uint16Array(b), nbEmpty: w32 ? 0xFFFFFFFF : 65535 };
+  const g2 = makeIndex({ n: rows.length, ids: rows.map((r) => r[0]) }, vj, at, ix.vec, { ...g0, nb: w32 ? new Uint32Array(b) : new Uint16Array(b), nbEmpty: w32 ? 0xFFFFFFFF : 65535 });
+  for (const k of ['dupKey', 'dupSize', 'nbOf', 'dupsOf']) ix[k] = g2[k];
 }).catch(() => null);
-const ix = makeIndex({ n: rows.length, avgdl: 1, ids: rows.map((r) => r[0]), len: [], idf: {}, post: {} }, vj, at, new Int8Array(vj.ids.length * vj.dim), graph);   // zero vectors until loadVectors
 const D = ix.dim, N = ix.n, have = []; for (let i = 0; i < N; i++) if (ix.vrow[i] >= 0) have.push(i);
 const X = new Float32Array(have.length * D);
 let vecReady = false; const vecHooks = [];
@@ -152,15 +162,19 @@ function fillVectors(vb) {
 
 // ---- layers from the network layout
 // optional company texts for the cards: config company_texts, a file in the data folder ({slug: [text, ...]})
-const coRows = cfg.company_texts ? await fetch(dataUrl(cfg.company_texts)).then((r) => r.json()).catch(() => ({})) : {};
+// the role page loads the company texts and types after the first paint (cards and the other views); the company and geography pages before it (they filter and colour by them)
+const ROLE_PAGE = (mount.dataset.mode || 'roles') === 'roles';
+let coRows = {}; const loadCoRows = () => (cfg.company_texts ? fetch(dataUrl(cfg.company_texts)).then((r) => r.json()).then((d) => { coRows = d || {}; }).catch(() => null) : null);
+if (!ROLE_PAGE) await loadCoRows();
 // each role's function (family.function), second function, domain and level (jobcrawl functions), with the names and colours of config.json:
 // the same labels and colours as the job board
-const RF = cfg.functions ? await fetch(dataUrl(cfg.functions.file || 'match/role-functions.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
+let RF = null; const loadRF = () => (cfg.functions ? fetch(dataUrl(cfg.functions.file || 'match/role-functions.json')).then((r) => (r.ok ? r.json() : null)).then((d) => { RF = d; }).catch(() => null) : null);   // the cards' tags: after the first paint
 const FN = new Map(((cfg.functions || {}).functions || []).concat((cfg.functions || {}).families || []).map((f) => [f.id, f]));
 const DOM = new Map((cfg.domains || []).map((d) => [d.id, d]));
 // each company's type (what it does: the company counterpart of a role's function), domain, stage and the family it hires for (jobcrawl
 // companies); the geography's dots take their colour from it, by the chosen axis
-const CT = cfg.company_types ? await fetch(dataUrl(cfg.company_types.file || 'match/company-types.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
+let CT = null; const loadCT = () => (cfg.company_types ? fetch(dataUrl(cfg.company_types.file || 'match/company-types.json')).then((r) => (r.ok ? r.json() : null)).then((d) => { CT = d; }).catch(() => null) : null);
+if (!ROLE_PAGE) await loadCT();
 const CTYPE = new Map(((cfg.company_types || {}).types || []).map((t) => [t.id, t]));
 const CSTAGE = new Map(((cfg.company_types || {}).stages || []).map((t) => [t.id, t]));
 const UNCLASSIFIED = { key: '', label: { en: 'Not classified yet', de: 'Noch nicht eingeordnet' }, color: '#94a3b8' };
@@ -262,7 +276,7 @@ const getJ = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || 'nul
 const setJ = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* this page only */ } };
 let prefVals = getJ(K.prefs, {}), cvEmb = getJ(K.cv, null);
 let taste = null;
-const personaVecs = PF.personaVectors(ix, rows);
+let personaVecs = PF.personaVectors(ix, rows);   // again when the titles and vectors are in
 function computeTaste() {
   if (!SHAPE) { taste = null; return; }   // no profile on this page
   const items = [], extra = [], bad = new Map(), empStars = new Map();
@@ -325,7 +339,7 @@ fitView();
 function sizeCanvas() { const k = Math.min(3, window.devicePixelRatio || 1), w = Math.round(W * k), h = Math.round(H * k); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0); }
 sizeCanvas();
 const lay = () => { const Ly = st.mode === 'geo' ? geoLay() : st.mode === 'roles' && TL && scrub.tm < TL.end ? tlLayer(scrub.tm) : layers[st.mode]; if (Ly) { HR = Ly.regions || null; HD = Ly; } return Ly; };
-const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1));
+const roleVisible = (i) => (ix.attrs[i][0] >> st.scope & 1) === 1 && (!st.fields.size || [...st.fields].some((f) => ix.attrs[i][4] >> ix.fields.indexOf(f) & 1)) && (!hk.filter || hk.filter(i));
 const visibleRoles = (e) => e.idx.filter(roleVisible);
 function tw(r) { if (r.vote !== undefined) return r.vote; const v = []; if (r.role) v.push((r.role - 3) / 2); if (r.interest) v.push((r.interest - 3) / 2); if (r.apply !== undefined) v.push(r.apply); return v.length ? Math.sign(v.reduce((a, b) => a + b, 0)) : null; }
 const voteOf = (id) => (ratings[id] ? tw(ratings[id]) : null);
@@ -676,7 +690,7 @@ function paintMap(ctx, P, o) {
   // area names first: they win over any single role or company label
   const areaInk = (sub) => (T.areaInk ? (sub ? T.subInk : T.areaInk) : ink);
   const areaNames = new Set();   // a name is drawn once: a neighbourhood called like a region shown already is left out
-  for (const { r, n, xy, sub } of areas) {
+  for (const { r, n, xy, sub } of (screen && hk.ownLabels && !Ly.past ? [] : areas)) {   // a module draws its own area names (hook setLabels)
     if (sub && areaNames.has(nameOf(r).toLowerCase())) continue;
     if (counts.areas >= Math.round((many ? 400 : 44) * ks) || (!r.words.length && !r.label)) continue;
     const fs = sub ? Math.round(Math.max(9, Math.min(12, 6 + Math.sqrt(n) * 0.22))) : Math.round(Math.max(11, Math.min(18, 7 + Math.sqrt(n) * 0.33)));
@@ -711,7 +725,7 @@ function paintMap(ctx, P, o) {
     const pool = []; Ly.ents.forEach((e, k) => { if (rL > 0 && vis[k] && !(e.hidden && !st.all) && d2(k) <= rL * rL) pool.push(k); }); pool.sort(byAge);
     for (const k of pool) { if (counts.lens >= lensCap) break; const e = Ly.ents[k], row = rows[e.idx[0]], title = cleanTitle(row[1]), tk = title.toLowerCase() + '|' + row[2];
       if (!title || !inMap(sx(e.x), sy(e.y)) || seenC.has(tk)) continue; if (roleLab(k, true)) { seenC.add(tk); counts.lens++; } }
-    if (screen) { const fresh = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && wOf(e.idx[0]) > 0 && !labelled.has(k) && inMap(sx(e.x), sy(e.y))) fresh.push(k); }); fresh.sort(byAge);
+    if (screen && !hk.ownLabels) { const fresh = []; Ly.ents.forEach((e, k) => { if (vis[k] && !(e.hidden && !st.all) && wOf(e.idx[0]) > 0 && !labelled.has(k) && inMap(sx(e.x), sy(e.y))) fresh.push(k); }); fresh.sort(byAge);
       for (const k of fresh) { if (counts.fresh >= newCap) break; const t = cleanTitle(rows[Ly.ents[k].idx[0]][1]).toLowerCase(); if (!t || seenT.has(t)) continue; if (roleLab(k, false)) counts.fresh++; } }
   } else if (!roles) {
     // the companies in the lens, with their open roles in brackets (a company with none: its name only)
@@ -724,7 +738,7 @@ function paintMap(ctx, P, o) {
   // roles (roles map): one representative role per neighbourhood, the most typical first, in rounds across the neighbourhoods
   // (the first of every neighbourhood, then the second of each, ...) so the labels spread over the map; each label is the role's
   // title and its company in brackets, beside a small dot marker at the role's own position. A title is used once.
-  if (roles && !Ly.past && (many || zoomed)) {
+  if (roles && !Ly.past && (many || zoomed) && !(screen && hk.ownLabels && st.z.s < 6)) {   // with a module's labels: role titles only when zoomed in far
     const cap = Math.round((many ? 120 : 14) * ks), lists = roleRounds(Ly, lw), order = [...Ly.hoods.keys()].sort((x, y) => (stat ? stat.hood[y].n - stat.hood[x].n : Ly.hoods[y].n - Ly.hoods[x].n));
     rounds: for (let r = 0; ; r++) { let any = false;
       for (const h of order) { const list = lists[h]; if (r >= list.length) continue; any = true;
@@ -1265,6 +1279,7 @@ function draw() {
   const strip = $('atlas-strip'); if (strip) { strip.hidden = !P.geo || !geoUni(); if (P.geo && geoUni() && !geo.morph) strip.innerHTML = paStrip(); }
   if (P.geo) { if (!geo.morph) $('atlas-status').innerHTML = geoStatus(res, P); return; }
   const fr = P.fresh, legend = P.roles && fr.t + fr.w + fr.m ?`  ✦ ${L('new today', 'neu heute')} ${fr.t} · ${L('this week', 'diese Woche')} ${fr.w} · ${L('this month', 'diesen Monat')} ${fr.m}` : '';
+  emit('draw', { mode: st.mode });
   $('atlas-status').innerHTML = L(`${res.shown.toLocaleString()} ${unitEn} shown${P.roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
     `${res.shown.toLocaleString('de-DE')} ${unitDe} gezeigt${P.roles && Ly.placed ? ` (${Ly.placed} neuere Stellen neben ihren nächsten Nachbarn platziert)` : ''}. Farben sind Regionen eng verbundener ${unitDe}; Linien verbinden Nachbarschaften mit vielen gemeinsamen Verbindungen. Die gestrichelte Lupe ziehen, um einen Bereich zu sehen, daneben ziehen, um die Karte zu verschieben, mit + und − oder dem Mausrad zoomen.${showTaste ? '  Die Helligkeit zeigt, wie gut ein Bereich zu Ihrem Profil passt; solange wenig bekannt ist, ist der Kontrast gering.' : ''}`) + legend;
 }
@@ -1305,7 +1320,7 @@ function tweenStep(now) {
 // a frame of the tween: the old bitmap, then the new one fading in over it, each under the current view (a bitmap made at zoom q is drawn
 // at the scale and the offset that take its zoom and centre to the current ones)
 function tweenDraw() { const A = anim; g.setTransform(1, 0, 0, 1, 0, 0); g.globalAlpha = 1; g.clearRect(0, 0, cv.width, cv.height); g.setTransform(cv.width / W, 0, 0, cv.height / H, 0, 0);
-  blit(A.old, 1); if (A.nw && A.f > 0) blit(A.nw, A.f); g.globalAlpha = 1; }
+  blit(A.old, 1); if (A.nw && A.f > 0) blit(A.nw, A.f); g.globalAlpha = 1; emit('draw', { mode: st.mode, tween: true }); }
 function blit(S, alpha) { const a = st.z.s / S.z.s, ox = W / 2 * (1 - a) + (S.z.cx - st.z.cx) * st.z.s * BW, oy = H / 2 * (1 - a) + (S.z.cy - st.z.cy) * st.z.s * BH;
   g.globalAlpha = alpha; g.imageSmoothingEnabled = true; g.drawImage(S.c, ox, oy, a * W, a * H); }
 // the current view as a PNG Blob, on the theme's background with a margin of 4 % of the width on every side; the logical W x H
@@ -1499,7 +1514,8 @@ function linkNew(from, to, src) { const Ly = lay(); if (Ly.past || !src.keys.len
   if (f === 'companies' && to === 'roles' && !o.src.some((c) => coBy.has(c) && visibleRoles(coBy.get(c)).length)) { o.to = 'companies'; o.sim = true; }
   return linkBuild(o); }
 // the weight of each visible point of the target view (0: dimmed); null when no link applies here
-function linkWeights(Ly) { if (!lnk || lnk.empty || Ly.past || lnk.to !== st.mode) return null; const lw = new Float32Array(Ly.n), roles = st.mode === 'roles';
+function linkWeights(Ly) { if (hk.mask && !Ly.past && st.mode !== 'geo') { const lw = new Float32Array(Ly.n); Ly.ents.forEach((e, k) => { lw[k] = vis[k] && hk.mask.has(e.id) ? 1 : 0; }); return lw; }   // a module's focus (hook setMask)
+  if (!lnk || lnk.empty || Ly.past || lnk.to !== st.mode) return null; const lw = new Float32Array(Ly.n), roles = st.mode === 'roles';
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; if (e.place) { lw[k] = -1; return; } const w = roles ? lnk.wRole.get(e.idx[0]) : lnk.wCo.get(e.slug); lw[k] = w || 0; }); return lw; }
 // the view on the linked points: the 2nd to 98th percentile by weight (6 % padding as fitTo), the lens on the linked point nearest their centre
 function fitLinked() { if (st.mode === 'geo') return fitGeo(); const P = prepare(THEMES[themeFor()]), Ly = P.Ly, lw = P.lw; if (!lw) return fitOrWhole();
@@ -1568,13 +1584,13 @@ function cardHtml(k) {
 
   return `<li class="atlas-item${open ? ' open' : ''}" data-k="${k}" data-id="${e.id}">`
     + `<button type="button" class="hd" aria-expanded="${open}">${coLogo(e.slug, e.name)}${esc(e.name)}${archName ? ` <span class="atlas-tag-tier" style="background:${archCol}">${esc(archName)}</span>` : ''}${tracked ? ` <span class="atlas-badge-tracked">● ${L('Tracked', 'Überwacht')}</span>` : ''}</button>`
-    + `<div class="m">${loc ? esc(loc) + ' · ' : ''}${lk ? `<span class="co-has-roles">${lk.n} ${L('of', 'von')} ${lk.N} ${L('roles in the selection', 'Stellen in der Auswahl')}</span>` : vr.length ? `<span class="co-has-roles">${vr.length} ${L('open roles', 'offene Stellen')}</span>` : `<span class="co-no-roles">${L('No current vacancies', 'Keine aktuellen Vakanzen')}</span>`}${flds.length ? ' · ' + esc(flds.join(', ')) : (e.field ? ' · ' + esc(e.field) : '')}</div>`
+    + `<div class="m">${loc ? esc(loc) + ' · ' : ''}${lk ? `<span class="co-has-roles">${lk.n} ${L('of', 'von')} ${lk.N} ${L('roles in the selection', 'Stellen in der Auswahl')}</span>` : vr.length ? `<span class="co-has-roles">${vr.length} ${L('open roles', 'offene Stellen')}</span>` : `<span class="co-no-roles">${L('No open roles found', 'Keine offenen Stellen gefunden')}</span>`}${flds.length ? ' · ' + esc(flds.join(', ')) : (e.field ? ' · ' + esc(e.field) : '')}</div>`
     + `<div class="snip">${esc(snip(desc, 170))}</div>`
     + `<div class="more">`
     + (facts.length ? `<div class="facts">${facts.map((f) => `<span>${esc(f)}</span>`).join('')}</div>` : '')
     + (desc ? `<div class="txt" tabindex="0">${esc(desc)}</div>` : '')
     + `<div class="links">${companyLink(e.slug) ? `<a class="link" href="${companyLink(e.slug)}">${L('Company page →', 'Firmenseite →')}</a>` : ''}${carUrl ? `<a class="link" href="${esc(carUrl)}" target="_blank" rel="noopener">${L('Careers page ↗', 'Karriereseite ↗')}</a>` : (webUrl ? `<a class="link" href="${esc(webUrl)}" target="_blank" rel="noopener">${L('Website ↗', 'Webseite ↗')}</a>` : '')}</div>`
-    + (vr.length ? `<div class="atlas-note" style="margin-top:6px;"><strong>${L('Open roles here:', 'Offene Stellen hier:')}</strong><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i], rows[i][3])}">${esc(rows[i][1])}</a>${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12} ${L('more roles', 'weitere Stellen')}</li>` : ''}</ul></div>` : `<p class="atlas-note" style="margin-top:6px;">${L('No open roles on the board right now.', 'Derzeit keine offenen Stellen auf dem Board.')}</p>`)
+    + (vr.length ? `<div class="atlas-note" style="margin-top:6px;"><strong>${L('Open roles here:', 'Offene Stellen hier:')}</strong><ul class="co-roles">${vr.slice(0, 12).map((i) => `<li><a class="link" href="${roleLink(ix.ids[i], rows[i][3])}">${esc(rows[i][1])}</a>${ix.attrs[i][1] ? ' · ' + esc(levelName(ix.attrs[i][1])) : ''}</li>`).join('')}${vr.length > 12 ? `<li class="atlas-note">+ ${vr.length - 12} ${L('more roles', 'weitere Stellen')}</li>` : ''}</ul></div>` : `<p class="atlas-note" style="margin-top:6px;">${L('No open roles found.', 'Keine offenen Stellen gefunden.')}</p>`)
     + `</div>${voteHtml(e.id)}</li>`;
 }
 async function fillRole(li) {
@@ -1590,6 +1606,7 @@ async function fillRole(li) {
     + `<div class="links"><a class="link" href="${roleLink(id, rows[i][3])}">${cfg.role_url ? L('Full role page →', 'Ganze Stellenseite →') : L('Details in the job list →', 'Details in der Stellenliste →')}</a>${d && companyLink(d.cs) ? `<a class="link" href="${companyLink(d.cs)}">${L('About ' + row[2] + ' →', 'Über ' + row[2] + ' →')}</a>` : ''}<a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply ↗', 'Bewerben ↗')}</a></div>`;
 }
 function renderList() {
+  if (!rowsReady && st.mode === 'roles') { $('atlas-list').innerHTML = `<li class="atlas-note">${L('Loading the roles…', 'Lade die Stellen …')}</li>`; return; }
   $('atlas-list').innerHTML = st.sample.map(cardHtml).join('') || `<li class="atlas-note">${L('Nothing in the lens with these filters. Move it or make it larger.', 'Nichts in der Lupe mit diesen Filtern. Verschieben oder vergrößern Sie sie.')}</li>`;
   $('atlas-list').querySelectorAll('.atlas-item').forEach(fillRole);
 }
@@ -1707,7 +1724,7 @@ function popHtml(k) { const e = lay().ents[k], close = `<button type="button" cl
   return close
     + (link ? `<a class="t link" href="${link}">${esc(e.name)}</a>` : `<div class="t">${esc(e.name)}</div>`)
     + (archName || loc ? `<div class="m" style="margin-top:2px;">${archName ? `<span style="color:${archCol};font-weight:600;">${esc(archName)}</span>` : ''}${loc ? (archName ? ' · ' : '') + esc(loc) : ''}</div>` : '')
-    + `<div class="m">${lk ? `<span class="co-has-roles">${lk.n} ${L('of', 'von')} ${lk.N} ${L('roles in the selection', 'Stellen in der Auswahl')}</span>` : e.idx.length ? `<span class="co-has-roles">${vr.length} ${L('open roles here', 'offene Stellen hier')}</span>` : `<span class="co-no-roles">${L('No open roles on the board right now', 'Derzeit keine offenen Stellen auf der Börse')}</span>`}</div>`
+    + `<div class="m">${lk ? `<span class="co-has-roles">${lk.n} ${L('of', 'von')} ${lk.N} ${L('roles in the selection', 'Stellen in der Auswahl')}</span>` : e.idx.length ? `<span class="co-has-roles">${vr.length} ${L('open roles here', 'offene Stellen hier')}</span>` : `<span class="co-no-roles">${L('No open roles found', 'Keine offenen Stellen gefunden')}</span>`}</div>`
     + (desc ? `<div class="m" style="margin-top:4px;">${esc(snip(desc, 150))}</div>` : '')
     + `<div class="links" style="margin-top:6px;display:flex;gap:12px;font-size:12.5px;">${link ? `<a class="link" href="${link}">${L('Company page →', 'Firmenseite →')}</a>` : ''}${carUrl ? `<a class="link" href="${esc(carUrl)}" target="_blank" rel="noopener">${L('Careers ↗', 'Karriere ↗')}</a>` : (webUrl ? `<a class="link" href="${esc(webUrl)}" target="_blank" rel="noopener">${L('Website ↗', 'Webseite ↗')}</a>` : '')}</div>`
     + `<button type="button" class="atlas-pop-go">${L('Show its roles', 'Ihre Stellen zeigen')}</button>` + voteHtml(e.id); }
@@ -1718,7 +1735,7 @@ function placePop(X, Y) { const sr = stage.getBoundingClientRect(), cr = cv.getB
   const x = ox + X * f, y = oy + Y * f, pw = pop.offsetWidth, ph = pop.offsetHeight, sw = stage.clientWidth, sh = stage.clientHeight;
   let l = x + 14; if (l + pw > sw - 6) l = x - 14 - pw; l = Math.max(6, Math.min(l, sw - pw - 6)); const t = Math.max(6, Math.min(y - ph / 2, sh - ph - 6));
   pop.style.left = l + 'px'; pop.style.top = t + 'px'; }
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sel) { hidePop(); draw(); } });
+document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; emit('escape', {}); if (sel) { hidePop(); draw(); } });
 cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); stopAnim(); touches.set(e.pointerId, ptr(e));
   if (touches.size === 2) { const [a1, b1] = [...touches.values()]; pinch = { d: Math.hypot(a1[0] - b1[0], a1[1] - b1[1]), s: st.z.s }; drag = null; return; }
   const [px, py] = ptr(e), dx = px - sx(st.lens.x), dy = py - sy(st.lens.y);
@@ -1731,7 +1748,8 @@ cv.addEventListener('pointermove', (e) => { if (!touches.has(e.pointerId)) { if 
 const endPtr = (e) => { touches.delete(e.pointerId); if (pinch) { if (touches.size < 2) { pinch = null; resample(); } return; }
   if (!drag) return; const [px, py] = ptr(e), tap = drag.moved < 5, k = tap ? hitAt(px, py) : -1, kind = drag.kind; drag = null;
   if (k >= 0 && st.mode === 'geo' && lay().ents[k].grp) { const vd = geoUni() ? 360 * geoView().w : 360 / Math.max(1, st.z.s); zoomTo(st.z.s * Math.max(2, vd / 1.9), px, py); return; }   // a place point: zoom in until it splits
-  if (k >= 0) { showPop(k); draw(); return; }   // a tap on a point opens its card; the lens stays where it is
+  if (k >= 0) { const id = lay().ents[k].id; if (hk.own) { emit('tap', { id, mode: st.mode }); return; } showPop(k); draw(); emit('tap', { id, mode: st.mode }); return; }   // a tap on a point opens its card (or the module's focus); the lens stays where it is
+  if (tap) emit('tap', { id: null, mode: st.mode });
   if (tap) hidePop();
   const moved = kind === 'lens' || (tap && lensOn()); if (kind === 'pan' && tap && lensOn()) { st.lens.x = ux(px); st.lens.y = uy(py); }
   if (moved) PF.bumpExplored(); resample(); if (moved) { computeTaste(); renderPersonas(); draw(); } };
@@ -1862,11 +1880,31 @@ if (PAGES) {   // the views have pages: the page links switch the view (in place
 if (['companies', 'geo'].includes(mount.dataset.mode) && mount.dataset.mode !== st.mode) setView({ mode: mount.dataset.mode });   // this page's view
 else updateModeHeader();
 // the first paint is done: now the vectors (role and company), then the views that use them are drawn again
+// ---- the hook for a site module (config atlas_links.module, imported after the first paint next to this file, with its version): events
+// 'draw' (after every frame, also the frames of a change of view), 'tap' (a point, or id null for the empty map), 'escape', 'data' (late files in);
+// setFilter(fn of a role's board index | null) narrows the roles like a field filter; setMask(Set of entity ids | null) lights those and dims the rest
+// (as a link does); setLabels(true) leaves the area names to the module; own(true) gives the taps to the module (no card)
+const hook = { on: (t, fn) => hookEv.addEventListener(t, (e) => fn(e.detail)), cfg, ix, rows, at, LAY, mount, stage, canvas: cv, dataUrl, roleLink, companyLink, L, esc, pick, isDe,
+  ready: () => rowsReady, st: () => ({ mode: st.mode, scope: st.scope, fields: [...st.fields], z: { ...st.z }, W, H, BW, BH }), layer: () => lay(), vis: () => vis, coN: () => coN,
+  toScreen: (x, y) => [sx(x), sy(y)], toMap: (px, py) => [ux(px), uy(py)], visibleRoles: (e) => visibleRoles(e), coRow: (slug) => coRows[slug] || null, coLogo,
+  setFilter: (fn) => { hk.filter = fn || null; if (lnk) linkBuild(lnk); }, setMask: (ids) => { hk.mask = ids || null; }, setLabels: (on) => { hk.ownLabels = !!on; }, own: (on) => { hk.own = !!on; },
+  redraw: () => resample(), paint: () => draw(), fit: () => { fitOrWhole(); }, setZoom: (z, anim = true) => { const f = () => { st.z = { s: Math.max(1, Math.min(maxZoom(), z.s)), cx: z.cx, cy: z.cy }; resample(); }; if (anim) viewChange(f); else f(); },
+  change: (fn) => viewChange(() => { fn(); resample(); }), setScope: (k) => { st.scope = k; $('atlas-scope').value = String(k); layers.roles = roleMapFor(k); if (lnk) linkBuild(lnk); },
+  card: (id) => { const Ly = lay(), k = Ly.ents.findIndex((e) => e.id === id); if (k < 0) { hidePop(); return; } showPop(k); draw(); }, closeCard: () => { hidePop(); draw(); } };
+if (cfg.atlas_links && cfg.atlas_links.module) {   // the module's address: next to this file, with this file's version and the data's build
+  const u = new URL(cfg.atlas_links.module, import.meta.url); u.search = new URL(import.meta.url).search; if (cfg.atlas_links.v) u.searchParams.set('b', cfg.atlas_links.v);
+  import(u.href).then((m) => (m && m.default ? m.default(hook) : null)).catch((e) => console.warn('[atlas] module not loaded', e)); }
+// first the titles, neighbours, tags and company files (the cards and labels), then the vectors; a view, a link or a selection set
+// meanwhile (a deep link) stays: the layers are refreshed in place, nothing is refitted
 (async () => {
+  coIdxLoad();
+  await Promise.all([loadRows(), loadGraph(), loadRF(), ROLE_PAGE ? loadCoRows() : null, ROLE_PAGE ? loadCT() : null, coIdxP]);
+  personaVecs = PF.personaVectors(ix, rows); emit('data', { rows: true }); renderList(); draw();
   try {
     const [vb, cv] = await fetchVectors();
-    CVEC = cv; fillVectors(vb); vecHooks.splice(0).forEach((f) => f());
-    setView({ mode: st.mode, scope: st.scope });
+    CVEC = cv; fillVectors(vb); vecHooks.splice(0).forEach((f) => f()); personaVecs = PF.personaVectors(ix, rows);
+    if (worldMap) { const before = layers.roles; worldMap = null; roleMaps.clear(); layers.roles = roleMapFor(st.scope); if (sel && sel.ly === before) sel.ly = layers.roles; }
+    computeTaste(); emit('data', { vectors: true }); resample();
   } catch (e) { console.warn('[atlas] vectors not loaded', e); }
 })();
 const CAM = new URLSearchParams(location.search).has('cam');
