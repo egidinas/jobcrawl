@@ -759,6 +759,9 @@ function paintMap(ctx, P, o) {
 // its roles). The shapes' box at t is fitted to the map box (aspect kept, centred); every entity then takes the map units of the other views.
 let GEO = null, geoLoading = null;
 const geo = { t: 0.5, to: 0.5, mod: true, raf: 0, morph: false, lays: new Map(), data: new Map(), loading: new Map(), active: '', fade: null, fly: 0, dr: null };   // t: 0 the true map, 0.5 the moderate map, 1 by roles; mod: the file has the moderate map; morph: an animation runs (no labels meanwhile), heading to `to`
+// geography pills and pins (atlas-geo-pills.js, loaded after the first geography draw): while on, the canvas leaves out its own area names, clusters and
+// company dots (the pills, pins, header and list name them); ?pills=0 keeps the classic labels, and so does a module that does not load
+const PILLS = { on: new URLSearchParams(location.search).get('pills') !== '0', mod: null, tried: false };
 const geoHue = (q) => 240 + 170 * q, hueC = (h) => Math.round(h) / 137.508;   // the density ramp: deep blue (few), magenta, amber (many); hueC: a region index whose hue() is h (for star())
 const STATE_DE = { 'DE-BW': 'Baden-Württemberg', 'DE-BY': 'Bayern', 'DE-BE': 'Berlin', 'DE-BB': 'Brandenburg', 'DE-HB': 'Bremen', 'DE-HH': 'Hamburg', 'DE-HE': 'Hessen', 'DE-MV': 'Mecklenburg-Vorpommern', 'DE-NI': 'Niedersachsen', 'DE-NW': 'Nordrhein-Westfalen', 'DE-RP': 'Rheinland-Pfalz', 'DE-SL': 'Saarland', 'DE-SN': 'Sachsen', 'DE-ST': 'Sachsen-Anhalt', 'DE-SH': 'Schleswig-Holstein', 'DE-TH': 'Thüringen',
   DE1: 'Baden-Württemberg', DE2: 'Bayern', DE3: 'Berlin', DE4: 'Brandenburg', DE5: 'Bremen', DE6: 'Hamburg', DE7: 'Hessen', DE8: 'Mecklenburg-Vorpommern', DE9: 'Niedersachsen', DEA: 'Nordrhein-Westfalen', DEB: 'Rheinland-Pfalz', DEC: 'Saarland', DED: 'Sachsen', DEE: 'Sachsen-Anhalt', DEF: 'Schleswig-Holstein', DEG: 'Thüringen' };   // ISO codes (older files) and NUTS codes
@@ -1017,7 +1020,7 @@ function paintGeo(ctx, P, o) {
   if (deg < PA_DETAIL_DEG) placeDetail();
   if (PA.ready) for (const s of Lg.shapes) s.roles = shapeN(s);   // the counts of the place file (the cartogram keeps geomap's)
   // the areas fade to PlaceA's floor as the clusters take over (MapLibre zoom 7.5 to 8.5 on this canvas); clusters only on the true map
-  const clOn = PA.ready && trueMap && zc >= Acfg.clusterFrom, clW = clOn ? Math.max(0, Math.min(1, (zc - Acfg.clusterFrom) / (Acfg.clusterFull - Acfg.clusterFrom))) : 0, areaA = clOn ? Acfg.areaFloor + (1 - Acfg.areaFloor) * paSm(Acfg.clusterFull - zc) : 1;
+  const clOn = !PILLS.on && PA.ready && trueMap && zc >= Acfg.clusterFrom, clW = clOn ? Math.max(0, Math.min(1, (zc - Acfg.clusterFrom) / (Acfg.clusterFull - Acfg.clusterFrom))) : 0, areaA = clOn ? Acfg.areaFloor + (1 - Acfg.areaFloor) * paSm(Acfg.clusterFull - zc) : 1;
   const A0 = (T.glow ? 0.82 : 1) * areaA, fade = geo.fade && geoUni() ? Math.min(1, (performance.now() - geo.fade.t0) / 360) : 1, wOf = (sid) => GEO.scopes[sid].box[2] - GEO.scopes[sid].box[0];
   const vw = geoUni() ? geoView() : null, covers = !!(vw && Lg.box && vw.x - vw.w / 2 >= Lg.box[0] && vw.x + vw.w / 2 <= Lg.box[2] && vw.y - vw.w * H / W / 2 >= Lg.box[1] && vw.y + vw.w * H / W / 2 <= Lg.box[3]);
   const below = !geoUni() || covers ? [] : geo.t < 0.02 ? geoLevels().filter((sid) => sid !== Lg.sid && geo.data.has(sid) && (!Lg.box || wOf(sid) > Lg.box[2] - Lg.box[0])).reverse() : [];   // none when the level covers the view
@@ -1120,7 +1123,7 @@ function paintGeo(ctx, P, o) {
   // the frame is kept for the view tween, except on the one zoomable map (it flies live; a copy of the canvas every frame slows the zoom)
   if (o.keep && !geoUni()) { const kf = base || (base = { c: document.createElement('canvas') }); kf.c.width = ctx.canvas.width; kf.c.height = ctx.canvas.height; kf.c.getContext('2d').drawImage(ctx.canvas, 0, 0); kf.z = { ...st.z }; }
   const counts = { areas: 0, places: pl.length, companies: nCo, lens: 0, fresh: 0, clusters: PA.circles.length, tier: paTier(deg), deg, dotsOn, clOn };
-  if (!light && PA.ready && geoUni()) paNames(ctx, Lg, { deg, zc, areaA, screen, counts, trueMap });
+  if (!light && PA.ready && geoUni()) { if (!PILLS.on) paNames(ctx, Lg, { deg, zc, areaA, screen, counts, trueMap }); }
   else if (!light) {
     const boxes = screen ? [[W - 56, 0, W, 180]] : [], lr = st.size * BW, lcx = sx(st.lens.x), lcy = sy(st.lens.y), inl = (e) => lr > 0 && (sx(e.x) - lcx) ** 2 + (sy(e.y) - lcy) ** 2 <= lr * lr, OPP = screen ? 8 * ts : 0;
     // label scale: a small map (a phone) gets smaller tags
@@ -1218,6 +1221,14 @@ function paNames(ctx, Lg, o) { const M = PA.M, G = M.GEO, D = PA.D, tier = paTie
     ctx.font = `500 ${Math.round(p.fs * 0.85)}px system-ui,sans-serif`; ctx.strokeText(p.cnt, p.x, y + p.fs * 0.6); ctx.fillStyle = ink.text; ctx.fillText(p.cnt, p.x, y + p.fs * 0.6);
     if (p.ctext) { ctx.font = `500 ${p.sm}px system-ui,sans-serif`; ctx.strokeStyle = am.halo; ctx.strokeText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); ctx.fillStyle = am.text; ctx.fillText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); } }
   ctx.restore(); o.counts.areas = items.filter((p) => !p.chip).length; o.counts.chip = items.some((p) => p.chip); PA.lastLabels = items.map((p) => [p.t, p.cnt || '', p.ctext || '']); }
+// the narrow API of the pills module (atlas-geo-pills.js): the stage, the place data, the projection, the view and a fly-to
+const pillsApi = () => ({ stage, PA, L, pick, isDe, dataUrl, coLogo, companyLink, W: () => W, H: () => H, GEO: () => GEO, data: (sid) => geo.data.get(sid) || null, selKey: () => PA.key, deg: () => geoDeg(),
+  project: (lon, lat) => { const r = lat * Math.PI / 180; return paXY((lon + 180) / 360, (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2); },
+  center: () => { const v = geoView(); return [v.x * 360 - 180, 180 / Math.PI * Math.atan(Math.sinh(Math.PI * (1 - 2 * v.y)))]; },
+  fly: (lon, lat, deg, instant) => { const F = geoFrame(), r = lat * Math.PI / 180, wx = (lon + 180) / 360, wy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2, z1 = { s: Math.min(maxZoom(), 360 * W / (F.p * deg)), cx: 0.5 + (wx - F.mx) * F.p / BW, cy: 0.5 + (wy - F.my) * F.p / BH };
+    cancelAnimationFrame(geo.fly); if (instant) { st.z = z1; draw(); setTimeout(() => { if (st.mode === 'geo') resample(); }, 0); } else geoFly(z1, () => { if (st.mode === 'geo') resample(); }); } });
+function pillsTick(on) { if (!PILLS.on) return; if (PILLS.mod) { PILLS.mod.tick(on); return; } if (!on || !PA.ready || !geo.data.get('worldwide') || PILLS.tried) return; PILLS.tried = true;
+  import('./atlas-geo-pills.js').then((M) => { PILLS.mod = M.init(pillsApi()); PILLS.mod.tick(st.mode === 'geo'); draw(); }).catch((e) => { console.warn('[pills] not loaded, the classic labels stay', e); PILLS.on = false; if (st.mode === 'geo') draw(); }); }
 // the view's painter: the geography, or the atlas's own (roles, companies)
 const paintAny = (ctx, P, o) => (P.geo ? paintGeo(ctx, P, o) : paintMap(ctx, P, o));
 // the area panel in the geography: the shape under the lens, and the places and companies in the lens
@@ -1263,6 +1274,7 @@ function draw() {
   if (TL) tlShow(); geoBar(); buildHit(Ly); renderBanner(); if (sel && (sel.ly !== Ly || !vis[sel.k] || (Ly.ents[sel.k].hidden && !st.all))) hidePop();
   if (sel) { const e = Ly.ents[sel.k], X = sx(e.x), Y = sy(e.y); if (X < 0 || Y < 0 || X > W || Y > H) hidePop(); else placePop(X, Y); }
   const strip = $('atlas-strip'); if (strip) { strip.hidden = !P.geo || !geoUni(); if (P.geo && geoUni() && !geo.morph) strip.innerHTML = paStrip(); }
+  pillsTick(!!P.geo);
   if (P.geo) { if (!geo.morph) $('atlas-status').innerHTML = geoStatus(res, P); return; }
   const fr = P.fresh, legend = P.roles && fr.t + fr.w + fr.m ?`  ✦ ${L('new today', 'neu heute')} ${fr.t} · ${L('this week', 'diese Woche')} ${fr.w} · ${L('this month', 'diesen Monat')} ${fr.m}` : '';
   $('atlas-status').innerHTML = L(`${res.shown.toLocaleString()} ${unitEn} shown${P.roles && Ly.placed ? ` (${Ly.placed} newer roles placed next to their nearest neighbours)` : ''}. Colours are regions of closely linked ${unitEn}; lines join neighbourhoods that share many links. Drag the dashed lens to sample an area, drag elsewhere to move the map, zoom with + and − or the mouse wheel.${showTaste ? '  Brightness shows how well an area fits your profile; with little to go on the contrast is low.' : ''}`,
@@ -1876,6 +1888,6 @@ if (CAM) window.jobcrawlPlace = { camera: ({ lon, lat, deg }) => { cancelAnimati
     return { sel: D.nSel, cnt: { ...D.cnt }, coOnlyDE: D.coOnly.DE || 0, inView: paInView(), deg: geoDeg(), zoom: paZoom(geoDeg()), tier: paTier(geoDeg()), detail: PA.detail, missing: D.missing, surface: PA.pv.surface, built: PA.pv.built,
       compare: PA.pv.compare || null, bavaria: u('state', 'DE2'), oberbayern: null, munich: u('county', 'DE212'), munichLand: u('county', 'DE21H'), germany: u('country', 'DE'), singapore: u('country', 'SG'), sgCountryOnly: D.coOnly.SG || 0, clusters: PA.circles.length, labels: PA.lastLabels || [],
       deCountiesInScope: [...geo.lays.values()].flatMap((Lg) => Lg.counties.map((c) => c.id).concat(Lg.shapes.filter((s) => s.kind === 'district').map((s) => s.id))), deCountiesMissing: [...geo.lays.values()].flatMap((Lg) => Lg.counties.map((c) => c.id).concat(Lg.shapes.filter((s) => s.kind === 'district').map((s) => s.id))).filter((id) => PA.detail && !PA.n.has('county:' + id)) }; } };
-window.jobcrawlAtlas = { renderImage, setView, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
+window.jobcrawlAtlas = { renderImage, setView, pills: () => (PILLS.mod ? PILLS.mod.state() : null), pillsApi: () => PILLS.mod, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
   lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; },
   timeline: () => (TL ? { steps: TL.steps.length, kind: TL.kind, idx: scrub.idx, tm: scrub.tm, end: TL.end, records: TLN } : null), scrubTo: (i) => { tlStop(); setScrub(i); }, play: () => tlPlay(), heatMean: (c) => heatMeanOf(c), heatOn: (on) => { $('atlas-heat').checked = !!on; draw(); }, layer: () => { const Ly = lay(); return { n: Ly.ents.length, embers: Ly.ents.filter((e) => e.ember).length }; }, heatCells: () => { if (!lastHeat) return null; let mx = 0, big = 0, pos = 0, neg = 0; for (const v of lastHeat.sc) { const m = Math.abs(v); if (m > mx) mx = m; if (m >= 0.05) { big++; if (v > 0) pos++; else neg++; } } return { cells: lastHeat.sc.length, max: +mx.toFixed(3), warm: pos, cool: neg }; } };
