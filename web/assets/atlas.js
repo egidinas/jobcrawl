@@ -130,12 +130,25 @@ if (window.matchMedia && window.matchMedia('(max-width: 720px)').matches) $('atl
 // ---- data
 const VECTORS_MISSING = L('The atlas needs the match vectors and the map layout: run jobcrawl embed, jobcrawl map and jobcrawl publish.', 'Die Atlas braucht die Bedeutungsvektoren und das Kartenlayout: jobcrawl embed, jobcrawl map und jobcrawl publish ausführen.');
 if (!(await fetch(dataUrl('match/match-vec.json'), { method: 'HEAD' }).catch(() => null))?.ok) { $('atlas-status').innerHTML = VECTORS_MISSING; throw new Error('no match-vec.json in the data folder'); }
-const [vj, at, vb, rows] = await Promise.all(['match-vec.json', 'match-attrs.json'].map((f) => fetch(dataUrl('match/' + f)).then((r) => r.json())).concat([fetch(dataUrl('match/match-vec.bin')).then((r) => r.arrayBuffer()), fetch(dataUrl('jobs-index.json')).then((r) => r.json())]));
-const graph = await Promise.all([fetch(dataUrl('match/role-graph.json')).then((r) => r.json()), fetch(dataUrl('match/role-nb.bin')).then((r) => r.arrayBuffer())]).then(([g0, b]) => ({ ...g0, nb: new Uint16Array(b) })).catch(() => null);
-const ix = makeIndex({ n: rows.length, avgdl: 1, ids: rows.map((r) => r[0]), len: [], idf: {}, post: {} }, vj, at, new Int8Array(vb), graph);
+// The role vectors (match-vec.bin) are the biggest file and the map does not need them to appear: they are fetched after the first paint
+// (loadVectors below); until then the vector-based parts (nearest-role labels, marks, the lens centre) see zeros.
+const fetchVectors = () => Promise.all([fetch(dataUrl('match/match-vec.bin')).then((r) => r.arrayBuffer()), fetch(dataUrl('match/company-vec.json')).then((r) => r.json()).then((j) => fetch(dataUrl('match/company-vec.bin')).then((r) => r.arrayBuffer()).then((b) => ({ slugs: j.slugs, vec: new Int8Array(b) }))).catch(() => null)]);   // started after the first paint
+const [vj, at, rows] = await Promise.all(['match-vec.json', 'match-attrs.json'].map((f) => fetch(dataUrl('match/' + f)).then((r) => r.json())).concat([fetch(dataUrl('jobs-index.json')).then((r) => r.json())]));
+// neighbours: 32 bits per slot when the graph says so (nb_bits 32, role-nb32.bin, empty slot 0xFFFFFFFF), else the 16-bit file (empty slot 65535)
+const graph = await fetch(dataUrl('match/role-graph.json')).then((r) => r.json()).then(async (g0) => {
+  const w32 = g0.nb_bits === 32, b = await fetch(dataUrl('match/' + (w32 ? (g0.nb_file || 'role-nb32.bin') : 'role-nb.bin'))).then((r) => r.arrayBuffer());
+  return { ...g0, nb: w32 ? new Uint32Array(b) : new Uint16Array(b), nbEmpty: w32 ? 0xFFFFFFFF : 65535 };
+}).catch(() => null);
+const ix = makeIndex({ n: rows.length, avgdl: 1, ids: rows.map((r) => r[0]), len: [], idf: {}, post: {} }, vj, at, new Int8Array(vj.ids.length * vj.dim), graph);   // zero vectors until loadVectors
 const D = ix.dim, N = ix.n, have = []; for (let i = 0; i < N; i++) if (ix.vrow[i] >= 0) have.push(i);
 const X = new Float32Array(have.length * D);
-have.forEach((i, k) => { let n = 0; for (let d = 0; d < D; d++) { const x = ix.vec[ix.vrow[i] * D + d]; X[k * D + d] = x; n += x * x; } n = Math.sqrt(n) || 1; for (let d = 0; d < D; d++) X[k * D + d] /= n; });
+let vecReady = false; const vecHooks = [];
+const onVectors = (fn) => { if (vecReady) fn(); else vecHooks.push(fn); };
+function fillVectors(vb) {
+  ix.vec = new Int8Array(vb);
+  have.forEach((i, k) => { let n = 0; for (let d = 0; d < D; d++) { const x = ix.vec[ix.vrow[i] * D + d]; X[k * D + d] = x; n += x * x; } n = Math.sqrt(n) || 1; for (let d = 0; d < D; d++) X[k * D + d] /= n; });
+  vecReady = true;
+}
 
 // ---- layers from the network layout
 // optional company texts for the cards: config company_texts, a file in the data folder ({slug: [text, ...]})
@@ -162,7 +175,7 @@ function roleTags(id) {
   const d = DOM.get(v[3]);
   return `<div class="fn-tags">${fnTag(v[0])}${v[1] ? fnTag(v[1], ' fn-hybrid') : ''}${d ? `<span class="dom-tag" style="--c:${esc(d.color)}">${esc(pick(d.label.en, d.label.de))}</span>` : ''}</div>`;
 }
-const CVEC = await Promise.all([fetch(dataUrl('match/company-vec.json')).then((r) => r.json()), fetch(dataUrl('match/company-vec.bin')).then((r) => r.arrayBuffer())]).then(([j, b]) => ({ slugs: j.slugs, vec: new Int8Array(b) })).catch(() => null);
+let CVEC = null;   // the company vectors (company-vec.*) come with the role vectors, after the first paint
 const LAY = await fetch(dataUrl('match/atlas-layout.json')).then((r) => (r.ok ? r.json() : null)).catch(() => null);
 if (!LAY) { $('atlas-status').innerHTML = L('The map layout is not published yet.', 'Das Kartenlayout ist noch nicht veröffentlicht.'); throw new Error('no atlas-layout.json'); }
 const pos = new Int32Array(N).fill(-1); have.forEach((i, k) => { pos[i] = k; });
@@ -183,7 +196,7 @@ function roleLayer(R = LAY.roles, scope = ANY) {
   // roles that came after the layout: the mean position of their 8 nearest mapped roles, and the most common group among them
   // only roles newer than the whole layout (not in the worldwide map) and inside this map's region are placed here
   const inLayout = new Set(LAY.roles.ids); let placed = 0;
-  for (const i of have) { if (inLayout.has(ix.ids[i]) || (ix.attrs[i][0] >> scope & 1) !== 1) continue; const v = vecOf(i), best = [];
+  for (const i of have) { if (!vecReady || inLayout.has(ix.ids[i]) || (ix.attrs[i][0] >> scope & 1) !== 1) continue; const v = vecOf(i), best = [];
     for (const k of mapped) { const w = ents[k], u = vecOf(w.idx[0]); let s = 0; for (let d = 0; d < D; d++) s += v[d] * u[d]; if (best.length < 8 || s > best[best.length - 1][0]) { best.push([s, k]); best.sort((a, b) => b[0] - a[0]); if (best.length > 8) best.pop(); } }
     const mode = (f) => { const c = new Map(); best.forEach(([, k]) => c.set(ents[k][f], (c.get(ents[k][f]) || 0) + 1)); return [...c].sort((a, b) => b[1] - a[1])[0][0]; };
     ents.push({ id: ix.ids[i], idx: [i], x: best.reduce((t, [, k]) => t + ents[k].x, 0) / best.length, y: best.reduce((t, [, k]) => t + ents[k].y, 0) / best.length, c1: mode('c1'), c2: mode('c2'), late: true }); placed++; }
@@ -193,10 +206,13 @@ function companyLayer() {
   const C = LAY.companies, byCo = new Map(); rows.forEach((r, i) => { if (pos[i] >= 0 && r[4]) { if (!byCo.has(r[4])) byCo.set(r[4], []); byCo.get(r[4]).push(i); } });
   // every catalogue company, also those without open roles (placed from their own profile text); their vector for marks:
   // the centre of their roles, or else their profile vector (company-vec)
-  const cv0 = new Map(); if (CVEC) CVEC.slugs.forEach((slug, k) => { const v = new Float32Array(D); for (let d = 0; d < D; d++) v[d] = CVEC.vec[k * D + d]; cv0.set(slug, unit(v)); });
-  const ents = C.slugs.map((slug, k) => { const idx = byCo.get(slug) || []; let vec;
-    if (idx.length) { const sum = new Float32Array(D); idx.forEach((i) => { const v = vecOf(i); for (let d = 0; d < D; d++) sum[d] += v[d]; }); vec = unit(sum); } else vec = cv0.get(slug) || null;
-    return { id: 'co:' + slug, slug, name: C.names ? C.names[k] : (idx.length ? rows[idx[0]][2] : slug), about: C.about ? C.about[k] : '', field: C.field ? C.field[k] : '', idx, vec, x: C.x[k], y: C.y[k], c1: C.c1[k], c2: C.c1[k] }; });
+  const ents = C.slugs.map((slug, k) => { const idx = byCo.get(slug) || [];
+    return { id: 'co:' + slug, slug, name: C.names ? C.names[k] : (idx.length ? rows[idx[0]][2] : slug), about: C.about ? C.about[k] : '', field: C.field ? C.field[k] : '', idx, vec: null, x: C.x[k], y: C.y[k], c1: C.c1[k], c2: C.c1[k] }; });
+  // the vector of a company: the centre of its roles, or else its profile vector (company-vec); set when the vectors are in
+  onVectors(() => {
+    const cv0 = new Map(); if (CVEC) CVEC.slugs.forEach((slug, k) => { const v = new Float32Array(D); for (let d = 0; d < D; d++) v[d] = CVEC.vec[k * D + d]; cv0.set(slug, unit(v)); });
+    ents.forEach((e) => { if (e.idx.length) { const sum = new Float32Array(D); e.idx.forEach((i) => { const v = vecOf(i); for (let d = 0; d < D; d++) sum[d] += v[d]; }); e.vec = unit(sum); } else e.vec = cv0.get(e.slug) || null; });
+  });
   ents.forEach((e) => { e.f = new Float32Array(ix.fields.length); e.idx.forEach((i) => ix.fields.forEach((f, q) => { if (ix.attrs[i][4] >> q & 1) e.f[q] += 1 / e.idx.length; })); });
   return { kind: 'companies', ents, n: ents.length, regions: C.regions, hoods: C.regions, links: C.links || [] };
 }
@@ -211,7 +227,8 @@ function roleMapFor(scope) {
   return roleLayer();
 }
 const layers = { roles: roleMapFor(defaultScope()), companies: companyLayer() };
-const coEnts = layers.companies.ents.filter((e) => e.vec);
+let coEnts = [];   // companies with a vector; filled when the vectors are in
+onVectors(() => { coEnts = layers.companies.ents.filter((e) => e.vec); });
 const coBy = new Map(layers.companies.ents.map((e) => [e.slug, e]));   // a company's entity by its slug (the link between the views)
 
 // ---- the role timeline (optional): when each role was on the board. match/role-timeline.json and .bin (16-byte records, little
@@ -1844,6 +1861,14 @@ if (PAGES) {   // the views have pages: the page links switch the view (in place
 }
 if (['companies', 'geo'].includes(mount.dataset.mode) && mount.dataset.mode !== st.mode) setView({ mode: mount.dataset.mode });   // this page's view
 else updateModeHeader();
+// the first paint is done: now the vectors (role and company), then the views that use them are drawn again
+(async () => {
+  try {
+    const [vb, cv] = await fetchVectors();
+    CVEC = cv; fillVectors(vb); vecHooks.splice(0).forEach((f) => f());
+    setView({ mode: st.mode, scope: st.scope });
+  } catch (e) { console.warn('[atlas] vectors not loaded', e); }
+})();
 const CAM = new URLSearchParams(location.search).has('cam');
 if (CAM) window.jobcrawlPlace = { camera: ({ lon, lat, deg }) => { cancelAnimationFrame(geo.fly); const F = geoFrame(), r = lat * Math.PI / 180, wx = (lon + 180) / 360, wy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2;
     st.z = { s: 360 * W / (F.p * deg), cx: 0.5 + (wx - F.mx) * F.p / BW, cy: 0.5 + (wy - F.my) * F.p / BH }; draw(); setTimeout(() => { if (st.mode === 'geo') resample(); }, 0); return geoDeg(); },

@@ -20,7 +20,7 @@ export async function loadIndex(base, glossary = [], fetcher = (u) => fetch(u).t
   const [bm, at, vj, vec, graph, nb] = await Promise.all([
     fetcher(base + 'match-bm25.json').then((r) => r.json()), fetcher(base + 'match-attrs.json').then((r) => r.json()),
     fetcher(base + 'match-vec.json').then((r) => r.json()).catch(() => null), fetcher(base + 'match-vec.bin').then((r) => r.arrayBuffer()).then((b) => new Int8Array(b)).catch(() => null),
-    fetcher(base + 'role-graph.json').then((r) => r.json()).catch(() => null), fetcher(base + 'role-nb.bin').then((r) => r.arrayBuffer()).then((b) => new Uint16Array(b)).catch(() => null)]);
+    fetcher(base + 'role-graph.json').then((r) => r.json()).catch(() => null), fetcher(base + 'role-nb.bin').then((r) => r.arrayBuffer()).then((b) => new Uint16Array(b)).catch(() => null)]);   // (the Match page reads the 16-bit file; the Atlas reads nb_bits 32)
   return makeIndex(bm, vec ? vj : null, at, vec, graph && nb ? { ...graph, nb } : null, glossary);
 }
 
@@ -35,7 +35,7 @@ export function makeIndex(bm, vj, at, vec, graph = null, glossary = []) {
     const boardOf = new Int32Array(vj.ids.length).fill(-1); for (let i = 0; i < ix.n; i++) if (vrow[i] >= 0) boardOf[vrow[i]] = i;
     graph.dup.forEach((g, k) => { const bi = g.map((r) => boardOf[r]).filter((i) => i >= 0); for (const i of bi) { ix.dupKey[i] = k; ix.dupSize[i] = bi.length; } });
     const K = graph.k;
-    ix.nbOf = (i) => { const r = vrow[i]; if (r < 0) return []; const out = []; for (let q = 0; q < K; q++) { const j = graph.nb[r * K + q]; if (j === 65535 || boardOf[j] < 0) continue; out.push({ i: boardOf[j], sim: graph.sim[r * K + q] / 100 }); } return out; };
+    ix.nbOf = (i) => { const r = vrow[i]; if (r < 0) return []; const out = []; for (let q = 0; q < K; q++) { const j = graph.nb[r * K + q]; if (j === (graph.nbEmpty === undefined ? 65535 : graph.nbEmpty) || boardOf[j] < 0) continue; out.push({ i: boardOf[j], sim: graph.sim[r * K + q] / 100 }); } return out; };
     ix.dupsOf = (i) => { const k = ix.dupKey[i]; if (k < 0) return []; const out = []; for (const r of graph.dup[k]) { const b = boardOf[r]; if (b >= 0 && b !== i) out.push(b); } return out; };
   }
   return ix;
