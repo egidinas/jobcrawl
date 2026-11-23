@@ -1967,7 +1967,8 @@ const snip = (t, n) => { t = (t || '').replace(/\s+/g, ' ').trim(); return t.len
 // the badge of a new role in the lens list: "new today", "this week", "this month" (none when older or unknown)
 const newBadge = (i) => { const a = AGE[i], t = a < 1 ? L('new today', 'neu heute') : a < 7 ? L('this week', 'diese Woche') : a < 30 ? L('this month', 'diesen Monat') : ''; return t ? ` <span class="atlas-new">${t}</span>` : ''; };
 function cardHtml(k) {
-  const e = lay().ents[k], open = st.open.has(e.id);
+  const e = lay().ents[k]; if (!e) return '';   // an index of another layer (the geography swapped its scope while the list was being built): no card
+  const open = st.open.has(e.id);
   if (e.past) return tlCardHtml(k, e);
   if (e.place) return placeCardHtml(k, e);
   if (st.mode === 'roles') { const i = e.idx[0], r = rows[i], reg = ix.regions[ix.attrs[i][3]] || '';
@@ -2100,7 +2101,8 @@ function buildHit(Ly) { const cs = 24, nx = Math.ceil(W / cs) + 1, ny = Math.cei
   Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all) || e.place || e.noHit) return; const x = sx(e.x) + (e.ox || 0), y = sy(e.y) + (e.oy || 0); if (x < -5 || y < -5 || x > W + 5 || y > H + 5) return; X[k] = x; Y[k] = y;
     cells[Math.max(0, Math.min(ny - 1, Math.floor(y / cs))) * nx + Math.max(0, Math.min(nx - 1, Math.floor(x / cs)))].push(k); });
   hitG = { cs, nx, ny, cells, X, Y, ly: Ly }; }
-function hitAt(px, py) { const h = hitG; if (!h || h.ly !== lay()) return -1;   // the grid of another layer (the geography swapped its scope since the last frame): no hit let best = -1, bd = 100; const cx = Math.floor(px / h.cs), cy = Math.floor(py / h.cs);
+function hitAt(px, py) { const h = hitG; if (!h || h.ly !== lay()) return -1;   // the grid of another layer (the geography swapped its scope since the last frame): no hit
+  let best = -1, bd = 100; const cx = Math.floor(px / h.cs), cy = Math.floor(py / h.cs);
   for (let y = Math.max(0, cy - 1); y <= Math.min(h.ny - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(h.nx - 1, cx + 1); x++) for (const k of h.cells[y * h.nx + x]) { const d = (h.X[k] - px) ** 2 + (h.Y[k] - py) ** 2; if (d < bd) { bd = d; best = k; } }
   return best; }
 // hover: a point within 10 px shows its title (the canvas tooltip) and a hand; inside the lens a move cursor, elsewhere a grab
