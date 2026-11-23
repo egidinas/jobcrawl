@@ -19,7 +19,7 @@ import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
-import { classifyError, makeBreaker, hostOf, livenessGuard } from './resilience.mjs';
+import { classifyError, makeBreaker, hostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
 import { openLifecycle } from './lifecycle.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
@@ -598,6 +598,11 @@ async function scan() {
       return problems.push(`${name}: ${res?.error ?? 'failed'} [${t.cls}${t.code ? ' ' + t.code : ''}]`);
     }
     const trow = tr({ cls: res.jobs.length ? 'OK' : 'EMPTY_OK', code: '', detail: '', jobs: res.jobs.length, kept: 0 });
+    // an answer of exactly a page cap is partial (resilience.mjs CAPPED_COUNTS): never evidence that what it lacks is gone
+    if (!res.jobs.incomplete && isCappedAnswer(res.jobs.length)) {
+      Object.defineProperty(res.jobs, 'incomplete', { value: { left: 0, note: `answer of exactly ${res.jobs.length}: a page cap, read as partial` }, enumerable: false });
+      trow.detail = 'capped answer';
+    }
     let boardKept = 0;   // roles of this board that pass every filter (the in-scope yield)
     let boardReleased = 0;   // roles of this board newly released from the title rules this cycle (title_release cap)
     noteHealth(name, true, res.jobs.length);

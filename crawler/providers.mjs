@@ -216,6 +216,7 @@ export const SITEMAP_CHILDREN_CAP = 500;    // child sitemaps read from one site
 // Pagination is followed to the end: every paging loop stops at an empty page, a page without new postings or the stated total;
 // PAGE_CAP is only a safety stop against a server that never ends (the loops had fixed caps of 10 to 150 pages before).
 export const PAGE_CAP = 500;
+export const SR_MAX_PAGES = 100;              // SmartRecruiters: 100 postings a page, so up to 10,000 postings per board
 const posIntOr = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
 /**
  * The page budget of one board fetch: page requests stop starting once it is spent, so the fetch returns (and saves its cache) inside
@@ -552,9 +553,13 @@ export const providers = {
   smartrecruiters: {
     detect: (u) => u.match(/(?:jobs|careers)\.smartrecruiters\.com\/([\w-]+)/)?.[1],
     async fetch(slug) {
+      // the whole board: offset pages up to the stated totalFound (was a fixed 500, which cut large boards such as Bosch and made the
+      // postings beyond it look gone); SR_MAX_PAGES is a safety stop, and reaching it is a partial answer, never a gone signal
       const out = [];
-      for (let offset = 0; offset < 500; offset += 100) {
+      let total = Infinity, page = 0;
+      for (let offset = 0; offset < total && page < SR_MAX_PAGES; offset += 100, page++) {
         const d = await get(`https://api.smartrecruiters.com/v1/companies/${slug}/postings?limit=100&offset=${offset}`);
+        total = Number.isFinite(Number(d.totalFound)) ? Number(d.totalFound) : total;
         for (const j of d.content) {
           out.push({
             id: j.id,
@@ -566,8 +571,9 @@ export const providers = {
             meta: metaOf({ departments: [j.department?.label], function: j.function?.label, industry: j.industry?.label, employment: j.typeOfEmployment?.label, level: j.experienceLevel?.label, remote: j.location?.remote, hybrid: j.location?.hybrid, ref: j.refNumber }),
           });
         }
-        if (!d.content?.length || out.length >= d.totalFound) break;
+        if (!d.content?.length || out.length >= total) break;
       }
+      if (Number.isFinite(total) && out.length < total) markIncomplete(out, 0, `page stop: ${out.length} of ${total} read`);
       return out;
     },
     async fetchDescription(job, slug) {

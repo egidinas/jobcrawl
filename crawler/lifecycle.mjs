@@ -16,6 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { CAPPED_COUNTS } from './resilience.mjs';
 
 export const LIFECYCLE_VERSION = 'lifecycle_obs_v1';
 const PRUNE_MISSES = 6, PRUNE_DAYS = 60;
@@ -24,7 +25,7 @@ const PRUNE_MISSES = 6, PRUNE_DAYS = 60;
 export const MAX_MISS_LINES = 8, EVENT_KEEP_DAYS = 14;
 // An answer of exactly a provider page cap is a truncated listing (live check 2026-11-23: SmartRecruiters boards answering 500 on every
 // fetch while the postings beyond the cap stay live): never a complete answer, so it produces no misses.
-export const PAGE_CAPS = new Set([100, 200, 250, 500, 1000, 2000, 5000, 10000]);
+export const PAGE_CAPS = CAPPED_COUNTS;   // one list for the crawl and its lifecycle lines
 
 export function lifecycleMode(env = process.env) {
   const m = String(env.MADE_LIFECYCLE ?? 'off').trim().toLowerCase();

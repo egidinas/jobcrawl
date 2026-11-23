@@ -144,6 +144,12 @@ export function makeBreaker({ dataDir, healthDir, dryRun = false, log = console.
 // provider that swallows an error cannot make roles vanish. State per board in <data>/liveness-guard.json.
 export const GUARD = { MIN_OPEN: 5, KEEP_RATIO: 0.5, CONFIRM: 3 };
 /** state: { board: { n, at, open, kept } } (mutated). Returns { hold, n, confirmed } for this fetch of `board`. */
+// An answer of exactly one of these sizes is a provider's page or result cap, not a whole board (live check 2026-11-23: SmartRecruiters
+// boards answering exactly 500 on every fetch while the postings beyond it stayed live). crawl.mjs reads such an answer as partial: nothing
+// it does not list is marked gone, and the posting lifecycle records no miss for it.
+export const CAPPED_COUNTS = new Set([500, 1000, 2000, 5000, 10000]);
+export const isCappedAnswer = (n) => CAPPED_COUNTS.has(Number(n));
+
 export function livenessGuard(state, board, openCount, keptCount, { emptyOk = false, date = '' } = {}) {
   const suspect = openCount > GUARD.MIN_OPEN && keptCount < GUARD.KEEP_RATIO * openCount && !emptyOk;
   if (!suspect) { delete state[board]; return { hold: false, n: 0, confirmed: false }; }
