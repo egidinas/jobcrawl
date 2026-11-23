@@ -89,12 +89,15 @@ export function init(api) {
       const ar = (c - a) * (d - b); polys.push({ bb: [a, b, c, d], pts }); if (ar > ba) { ba = ar; best = [a, b, c, d]; } }
     if (!best) continue; const lo = mercLon((best[0] + best[2]) / 2), la = mercLat((best[1] + best[3]) / 2), w = (best[2] - best[0]) * 360, hh = (best[3] - best[1]) * 360;   // width and height in degrees of longitude (Mercator: one scale)
     countries.set(sh.id, { cc: sh.id, name: sh.name, lon: lo, lat: la, w, hh, polys }); }
-  const cityList = (wd.places || []).filter((p) => p.pr === 'city').map((p) => ({ id: p.id, name: p.name, cc: String(p.id).split('|')[0], lon: mercLon(wx(p.x)), lat: mercLat(wy(p.y)), n: 0, size: p.n || 0 }));   // size: the place file's own count (a metro's is large)
+  const cityList = (wd.places || []).filter((p) => p.pr === 'city' || (p.pr === 'county' && p.n3)).map((p) => ({ id: p.id, name: p.name, cc: String(p.id).split('|')[0], lon: mercLon(wx(p.x)), lat: mercLat(wy(p.y)), n: 0, size: p.n || 0, county: p.pr === 'county' ? String(p.n3) : null }));   // size: the place file's own count (a metro's is large); county: a NUTS3 county the source names (no city)
+  const countyIdx = new Map(); cityList.forEach((c, k) => { if (c.county) countyIdx.set(c.county, k); });
+  const isCounty = (i) => !!(D.basisName && D.basisName[i] === 'nuts3_county');   // the place file's basis: placed only by its county
   // the located roles: each to its nearest city within CITY_KM (a one-degree grid keeps it cheap); the rest stay country-level in the pills
-  const grid = new Map(); cityList.forEach((c, k) => { const g = Math.floor(c.lon) + ',' + Math.floor(c.lat); (grid.get(g) || grid.set(g, []).get(g)).push(k); });
+  const grid = new Map(); cityList.forEach((c, k) => { if (c.county) return; const g = Math.floor(c.lon) + ',' + Math.floor(c.lat); (grid.get(g) || grid.set(g, []).get(g)).push(k); });
   const roleCity = new Int32Array(N).fill(-1);
   for (let i = 0; i < N; i++) { if (D.cat[i] !== 1) continue; const lo = D.lon[i], la = D.lat[i], gx = Math.floor(lo), gy = Math.floor(la); let bk = -1, bd = CITY_KM;
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const k of grid.get((gx + dx) + ',' + (gy + dy)) || []) { const c = cityList[k]; if (c.cc !== D.cc[i]) continue; const d = kmBetween(lo, la, c.lon, c.lat); if (d < bd) { bd = d; bk = k; } }
+    if (bk < 0 && isCounty(i) && D.n3code && D.n3code[i] && countyIdx.has(String(D.n3code[i]))) bk = countyIdx.get(String(D.n3code[i]));   // no city within reach: its county's own pill
     roleCity[i] = bk; }
   const inEurope = (c) => c.lon >= EUROPE[0] && c.lon <= EUROPE[2] && c.lat >= EUROPE[1] && c.lat <= EUROPE[3];
   const countryAt = (lon, lat) => { const x = (lon + 180) / 360, r = lat * Math.PI / 180, y = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2;
@@ -200,29 +203,29 @@ export function init(api) {
   // the region's own roles, counted once per selection: P.n = P.ccN (every role with a country) + P.none; P.n = P.cityN (a real place, nearest city in its own country)
   // + P.noCity (a real place but no city within reach) + P.countryOnly + P.none. The header, the list rows and the check all read these.
   function partsOf(rg) { const k = rg.set + '|' + S.key; if (S.pk === k) return S.pv;
-    const P = { n: 0, located: 0, withCity: 0, noCity: 0, countryOnly: 0, none: 0, e: new Set(), ccN: new Map(), cityN: new Map() };
+    const P = { n: 0, located: 0, atCounty: 0, withCity: 0, noCity: 0, countryOnly: 0, none: 0, e: new Set(), ccN: new Map(), cityN: new Map() };
     for (let i = 0; i < N; i++) { if (!D.sel[i]) continue; const cc = D.cc[i]; let inR;
       if (rg.set === 'all') inR = true; else if (rg.set === 'europe') { const c = countries.get(cc); inR = !!c && inEurope(c); }
       else if (rg.set === 'bavaria') inR = D.cat[i] === 1 && !!D.n3code && !!D.n3code[i] && String(D.n3code[i]).startsWith('DE2'); else inR = cc === rg.set.slice(8);
       if (!inR) continue; P.n++; P.e.add(D.co[i]);
-      if (!cc) P.none++; else if (D.cat[i] === 1) { P.located++; if (roleCity[i] >= 0) { P.withCity++; P.cityN.set(roleCity[i], (P.cityN.get(roleCity[i]) || 0) + 1); } else P.noCity++; } else if (D.cat[i] === 2) P.countryOnly++; if (cc) P.ccN.set(cc, (P.ccN.get(cc) || 0) + 1); }
+      if (!cc) P.none++; else if (D.cat[i] === 1) { P.located++; if (isCounty(i)) P.atCounty++; if (roleCity[i] >= 0) { P.withCity++; P.cityN.set(roleCity[i], (P.cityN.get(roleCity[i]) || 0) + 1); } else P.noCity++; } else if (D.cat[i] === 2) P.countryOnly++; if (cc) P.ccN.set(cc, (P.ccN.get(cc) || 0) + 1); }
     S.pk = k; S.pv = P; return P; }
 
   function header(R, ctr, deg, lv, items, pins) {
     const rg = region(R, ctr, deg), f = (n) => fmt(n, de()), P = partsOf(rg);
-    rg.n = P.n; rg.e = P.e.size; S.region = rg; S.parts = { n: P.n, located: P.located, withCity: P.withCity, noCity: P.noCity, countryOnly: P.countryOnly, none: P.none, ccSum: [...P.ccN.values()].reduce((t, v) => t + v, 0), citySum: [...P.cityN.values()].reduce((t, v) => t + v, 0) };
+    rg.n = P.n; rg.e = P.e.size; S.region = rg; S.parts = { n: P.n, located: P.located, atCity: P.located - P.atCounty, atCounty: P.atCounty, withCity: P.withCity, noCity: P.noCity, countryOnly: P.countryOnly, none: P.none, ccSum: [...P.ccN.values()].reduce((t, v) => t + v, 0), citySum: [...P.cityN.values()].reduce((t, v) => t + v, 0) };
     $t.textContent = `${rg.name} · ${f(rg.e)} ${api.pick(rg.e === 1 ? 'employer' : 'employers', 'Arbeitgeber')} · ${f(rg.n)} ${rg.set === 'bavaria' ? api.pick(`roles placed in ${rg.name}`, `in ${rg.name} verortete Stellen`) : rg.set === 'all' ? api.pick(rg.n === 1 ? 'open role' : 'open roles', rg.n === 1 ? 'offene Stelle' : 'offene Stellen') : api.pick(`roles in ${rg.name} (by country)`, `Stellen in ${rg.name} (nach Land)`)}`;
     $s.innerHTML = rg.set === 'bavaria' ? esc(api.pick(`${f(rg.n)} open roles with a place in Bavaria (NUTS region DE2). Roles known only as Germany count under Germany.`, `${f(rg.n)} offene Stellen mit Ort in Bayern (NUTS-Region DE2). Stellen nur mit Land Deutschland zählen unter Deutschland.`))
-      : esc(api.pick(`${f(P.n)} open roles in the public board: ${f(P.located)} with a place on the map, ${f(P.countryOnly)} known by country only${P.none ? `, ${f(P.none)} without a place` : ''}.` +
-          (lv === 'country' ? ' Country pills count every role of their country.' : ` City pills count the ${f(P.withCity)} roles with a place near a city; the rest are rows of the list.`),
-        `${f(P.n)} offene Stellen im öffentlichen Board: ${f(P.located)} mit Ort auf der Karte, ${f(P.countryOnly)} nur mit Land${P.none ? `, ${f(P.none)} ohne Ort` : ''}.` +
-          (lv === 'country' ? ' Länder-Pillen zählen alle Stellen ihres Landes.' : ` Städte-Pillen zählen die ${f(P.withCity)} Stellen mit Ort nahe einer Stadt; der Rest steht als Zeilen in der Liste.`)));
+      : esc(api.pick(`${f(P.n)} open roles in the public board: ${f(P.located)} with a place on the map${P.atCounty ? ` (${f(P.located - P.atCounty)} at city level, ${f(P.atCounty)} at county level)` : ''}, ${f(P.countryOnly)} known by country only${P.none ? `, ${f(P.none)} without a place` : ''}.` +
+          (lv === 'country' ? ' Country pills count every role of their country.' : ` City and county pills count the ${f(P.withCity)} roles with a place near a city or in a named county${P.noCity ? `, ${f(P.noCity)} more are the row "Other places"` : ''}; the rest are rows of the list.`),
+        `${f(P.n)} offene Stellen im öffentlichen Board: ${f(P.located)} mit Ort auf der Karte${P.atCounty ? ` (${f(P.located - P.atCounty)} auf Stadtebene, ${f(P.atCounty)} auf Kreisebene)` : ''}, ${f(P.countryOnly)} nur mit Land${P.none ? `, ${f(P.none)} ohne Ort` : ''}.` +
+          (lv === 'country' ? ' Länder-Pillen zählen alle Stellen ihres Landes.' : ` Städte- und Kreis-Pillen zählen die ${f(P.withCity)} Stellen mit Ort nahe einer Stadt oder in einem genannten Kreis${P.noCity ? `, ${f(P.noCity)} weitere die Zeile „Andere Orte“` : ''}; der Rest steht als Zeilen in der Liste.`)));
     // the list: the region's places at this level, biggest first, then what is not at a place (so the rows add up to the header); the pinned companies are a group of their own
     const rows = [], info = [];
     if (lv === 'country') { for (const [cc, n] of P.ccN) { const c = countries.get(cc); rows.push({ n, name: nameOf(cc, c && c.name), sub: '', lon: c && c.lon, lat: c && c.lat, deg: c ? flyDeg(c) : 6 }); }
       if (P.none) info.push({ n: P.none, name: api.pick('No country given', 'Ohne Länderangabe') }); }
-    else { for (const [k, n] of P.cityN) { const c = cityList[k]; rows.push({ n, name: c.name, sub: nameOf(c.cc), lon: c.lon, lat: c.lat, deg: 0.8 }); }
-      if (P.noCity) info.push({ n: P.noCity, name: api.pick('Placed, but no city nearby', 'Mit Ort, aber ohne Stadt in der Nähe') });
+    else { for (const [k, n] of P.cityN) { const c = cityList[k]; rows.push({ n, name: c.name, sub: c.county ? api.pick(`county · ${nameOf(c.cc)}`, `Kreis · ${nameOf(c.cc)}`) : nameOf(c.cc), lon: c.lon, lat: c.lat, deg: 0.8 }); }
+      if (P.noCity) info.push({ n: P.noCity, name: api.pick('Other places (no city within 40 km)', 'Andere Orte (keine Stadt im Umkreis von 40 km)') });
       if (P.countryOnly) info.push({ n: P.countryOnly, name: api.pick('Known by country only (no city)', 'Nur mit Land bekannt (ohne Stadt)') });
       if (P.none) info.push({ n: P.none, name: api.pick('Without a place', 'Ohne Ort') }); }
     rows.sort((a, b) => b.n - a.n); S.listSum = rows.reduce((t, r) => t + r.n, 0) + info.reduce((t, r) => t + r.n, 0); S.listN = rows.length;

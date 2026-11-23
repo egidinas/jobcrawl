@@ -5,13 +5,14 @@ list of open postings of the surface (the public board's jobs, or a board bundle
 the same rule (owner/coordinator 2026-11-14: "the numbers must come from ONE source").
 
     {"version": 1, "built": iso, "role_sites_built": iso, "surface": "public" | "board:<bundle id>",
-     "precisions": ["site", "postcode", "city", "region", "country"], "bases": [...],
+     "precisions": ["site", "postcode", "city", "region", "country", "county"], "bases": [...],
      "cols": ["id", "co", "cc", "p", "b", "lon", "lat", "n3"],   (n3: the county code of a located row, or null)
      "rows": [[id, company id, country code, precision index, basis index, lon | null, lat | null], ...],
      "counts": {"rows", "located", "country_only", "none", "not_in_role_sites"}}
 
 Category (the pages apply it; written here into "counts" so a build log shows it):
-    located       p in {site, postcode, city} with a point, and the basis is not one of NOT_LOCATED_BASES
+    located       p in {site, postcode, city, county} with a point, and the basis is not one of NOT_LOCATED_BASES (county: a NUTS3 county
+                  the source names, its point a spot inside the county, its code given in the role entry as n3; never a city or a pin)
     country-only  otherwise, with a country code
     none          no country code
 A posting the resolver does not know keeps the surface's own country code (if any) with p = country, basis "surface".
@@ -20,8 +21,8 @@ import datetime as _dt
 import json
 import os
 
-PRECISIONS = ['site', 'postcode', 'city', 'region', 'country']
-LOCATED_P = {'site', 'postcode', 'city'}
+PRECISIONS = ['site', 'postcode', 'city', 'region', 'country', 'county']   # appended last: the indices of the older five stay
+LOCATED_P = {'site', 'postcode', 'city', 'county'}
 # resolver bases whose point is a guess between several places (an ambiguous city name, an employer's default site among several): such a
 # posting counts as country-only, never as a point (the place map shows a figure on its country instead)
 NOT_LOCATED_BASES = ('city_ambiguous', 'single_site_default')
@@ -177,6 +178,7 @@ def build_places(roles, jobs, surface, role_sites_built='', in_country=None, enf
 
     seen = set()
     for jid, co, cc, rk in jobs:
+        n3_given = None
         if jid in seen:
             continue
         seen.add(jid)
@@ -191,6 +193,7 @@ def build_places(roles, jobs, surface, role_sites_built='', in_country=None, enf
         else:
             p, basis, lon, lat = r.get('p') or 'country', r.get('b') or '', r.get('lon'), r.get('lat')
             cc = r.get('cc') or cc
+            n3_given = r.get('n3')                                                                # a county entry names its county itself
         if p not in PRECISIONS:
             p = 'country'
         loc = located(p, basis, lon, lat)
@@ -203,7 +206,9 @@ def build_places(roles, jobs, surface, role_sites_built='', in_country=None, enf
             lon = lat = None
         lon = None if lon is None else round(float(lon), 5)
         lat = None if lat is None else round(float(lat), 5)
-        n3 = counties.code(lon, lat) if counties and loc else None
+        n3 = (n3_given if p == 'county' else None) if loc else None
+        if loc and not n3 and counties:
+            n3 = counties.code(lon, lat)
         if n3:
             counts['with_county'] = counts.get('with_county', 0) + 1
         rows.append([jid, co or '', cc or '', PRECISIONS.index(p), b_of(basis), lon, lat, n3])

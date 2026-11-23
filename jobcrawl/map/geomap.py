@@ -710,6 +710,8 @@ def role_places(index, desc, shapes, keys_of=None, sites=None):
                     ll = (float(pin['lat']), float(pin['lon']))   # the resolver's point: the site, or a city the gazetteer has no point for
                 elif shape is not None:
                     ll = centroid(by_id[shape]['rings'])        # no city point: the state's (or country's) polygon centre
+                    if pr == 'city':
+                        pr = 'region' if state else 'country'   # a city name without a point of its own is not a city on the map (e.g. a NUTS code 'De600')
                 name = city or state or geo.COUNTRY.get(cc, {}).get('en', cc)
                 if key.startswith('site:'):
                     ll, name = (float(pin['lat']), float(pin['lon'])), pin.get('s') or name
@@ -1202,7 +1204,7 @@ def scope_map(scope, box, kx, shapes, table, companies, shape_roles, log=print, 
         for (rec, x, y), (cx, cy), (mx, my) in zip(inside_places, pos, pos_m):
             row = {'id': rec['key'], 'name': rec['name'], 'n': rec['n'], 'x': round(x, DEC), 'y': round(y, DEC),
                    'cx': round(float(cx), DEC), 'cy': round(float(cy), DEC), 'mx': round(float(mx), DEC), 'my': round(float(my), DEC)}
-            row.update({kk: rec[kk] for kk in ('pr', 'sid', 'uid', 'city') if rec.get(kk)})   # precision of the point and, for a site, its id, employer and city
+            row.update({kk: rec[kk] for kk in ('pr', 'sid', 'uid', 'city', 'n3') if rec.get(kk)})   # precision of the point; a site's id, employer and city; a county's NUTS3 code
             out_places.append(row)
     out_rivers = river_rows(frame, rivers, carto, carto_m, log)
     out_counties = overlay_rows(frame, overlay, carto, carto_m) if overlay else []
