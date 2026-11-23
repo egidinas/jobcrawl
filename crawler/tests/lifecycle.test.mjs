@@ -71,3 +71,17 @@ test('dry flush writes nothing', () => {
   lc.flush({ dry: true });
   assert.equal(existsSync(join(dir, 'lifecycle')), false);
 });
+
+test('capped: an answer of exactly a page cap is not complete and misses nothing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-'));
+  const lc = openLifecycle(dir, { mode: 'shadow', now: clock('2026-11-20T08:00:00Z'), log: quiet });
+  const many = Array.from({ length: 520 }, (_, i) => `u${i}`);
+  lc.fetched('B', { ...M, jobs: 520 }, many);
+  lc.fetched('B', { ...M, jobs: 500 }, many.slice(0, 500));
+  lc.flush();
+  const ev = events(dir);
+  const f = ev.filter((e) => e.kind === 'fetch');
+  assert.equal(f[1].complete, false);
+  assert.equal(f[1].capped, 500);
+  assert.equal(ev.filter((e) => e.kind === 'missed').length, 0);
+});

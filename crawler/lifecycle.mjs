@@ -19,6 +19,9 @@ import { resolve } from 'node:path';
 
 export const LIFECYCLE_VERSION = 'lifecycle_obs_v1';
 const PRUNE_MISSES = 6, PRUNE_DAYS = 60;
+// An answer of exactly a provider page cap is a truncated listing (live check 2026-11-23: SmartRecruiters boards answering 500 on every
+// fetch while the postings beyond the cap stay live): never a complete answer, so it produces no misses.
+export const PAGE_CAPS = new Set([100, 200, 250, 500, 1000, 2000, 5000, 10000]);
 
 export function lifecycleMode(env = process.env) {
   const m = String(env.MADE_LIFECYCLE ?? 'off').trim().toLowerCase();
@@ -57,12 +60,16 @@ export function openLifecycle(dataDir, { mode = lifecycleMode(), now = () => new
     /** A board answered. listed = every url of the answer (before any filter); complete = the answer is the whole board. */
     fetched(board, meta, listed, { cls = 'OK', complete = true, emptyOk = false } = {}) {
       const set = listed instanceof Set ? listed : new Set(listed);
+      const n = Number(meta?.jobs ?? set.size);
+      const capped = complete && PAGE_CAPS.has(n);
+      if (capped) complete = false;
       // the crawl's mass-drop guard counts only its 'open' rows; the same test over every url this board listed before marks the fetch
       // suspect (misses still recorded, flagged): the deriver decides how many suspect fetches in a row count (resilience.mjs GUARD)
       const prior = byBoard.get(board) ?? new Set();
       let keptPrior = 0; for (const u of prior) if (set.has(u)) keptPrior++;
       const suspect = complete && prior.size > 5 && keptPrior < 0.5 * prior.size && !emptyOk;
-      const { ts, fetch_id } = fetchLine(board, meta, cls, set.size, complete, suspect ? { suspect: true, prior: prior.size, kept: keptPrior } : {});
+      const { ts, fetch_id } = fetchLine(board, meta, cls, set.size, complete,
+        { ...(suspect ? { suspect: true, prior: prior.size, kept: keptPrior } : {}), ...(capped ? { capped: n } : {}) });
       const day = ts.slice(0, 10);
       for (const u of set) {
         const s = urls[u];
