@@ -905,6 +905,7 @@ function placeLoad() {
       const coIx = new Map(), companies = [], prow = [], galaxy = {};
       for (const r of pv.rows) { let c = coIx.get(r[1]); if (c === undefined) { c = companies.length; coIx.set(r[1], c); companies.push([r[1], r[1]]); } prow.push([r[0], '', c, 0, 0, 0, r[2] || '', 0, 0, 0, 0, '']); galaxy[r[0]] = 1; }
       const D = M.PlaceData.prepareFromPlaces(pv, { postings: { rows: prow, companies }, galaxy }), gi = M.PlaceData.geoInput(D);
+      await Promise.all([geoFetchScope(top), geoFetchScope(eu)]);   // the outline files once: the module's own fetch below then reads the browser cache
       await M.loadGeo([PA.base + GEO.scopes[top].file, PA.base + GEO.scopes[eu].file], gi.counts, gi.pts, { place: (landOf) => { const r = M.PlaceData.snapOwn(D, landOf); gi.refresh(); return r; } });
       Object.assign(PA, { M, D, gi, pv, ctl: M.PlaceA.create({ map: null, D }), ready: true, key: '' });
       M.GEO.onDetail = () => { PA.detail = true; fetch(PA.base + 'countries_hires.json').then((r) => r.json()).then((h) => { PA.hires = new Set(h.shapes.map((x) => x.id).filter((id) => id !== 'DE')); if (st.mode === 'geo') draw(); }).catch(() => {}); PA.key = ''; placeRecount(); if (st.mode === 'geo') draw(); };
@@ -2305,6 +2306,7 @@ if (cfg.atlas_links && cfg.atlas_links.module) {   // the module's address: next
 // first the titles, neighbours, tags and company files (the cards and labels), then the vectors; a view, a link or a selection set
 // meanwhile (a deep link) stays: the layers are refreshed in place, nothing is refitted
 (async () => {
+  if (st.mode === 'geo' || mount.dataset.mode === 'geo') { await geoLoad(); if (PA.loading) await PA.loading; }   // geography: its map and place files first; titles and vectors after
   coIdxLoad();
   await Promise.all([loadRows(), loadGraph(), loadRF(), ROLE_PAGE ? loadCoRows() : null, ROLE_PAGE ? loadCT() : null, coIdxP]);
   personaVecs = PF.personaVectors(ix, rows); emit('data', { rows: true }); renderList(); draw();
