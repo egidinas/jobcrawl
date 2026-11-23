@@ -1709,8 +1709,8 @@ function buildHit(Ly) { const cs = 24, nx = Math.ceil(W / cs) + 1, ny = Math.cei
   // places are not drawn on the geography: not pickable either; a company spread off its point (a stack) is picked where it is drawn
   Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all) || e.place || e.noHit) return; const x = sx(e.x) + (e.ox || 0), y = sy(e.y) + (e.oy || 0); if (x < -5 || y < -5 || x > W + 5 || y > H + 5) return; X[k] = x; Y[k] = y;
     cells[Math.max(0, Math.min(ny - 1, Math.floor(y / cs))) * nx + Math.max(0, Math.min(nx - 1, Math.floor(x / cs)))].push(k); });
-  hitG = { cs, nx, ny, cells, X, Y }; }
-function hitAt(px, py) { const h = hitG; if (!h) return -1; let best = -1, bd = 100; const cx = Math.floor(px / h.cs), cy = Math.floor(py / h.cs);
+  hitG = { cs, nx, ny, cells, X, Y, ly: Ly }; }
+function hitAt(px, py) { const h = hitG; if (!h || h.ly !== lay()) return -1;   // the grid of another layer (the geography swapped its scope since the last frame): no hit let best = -1, bd = 100; const cx = Math.floor(px / h.cs), cy = Math.floor(py / h.cs);
   for (let y = Math.max(0, cy - 1); y <= Math.min(h.ny - 1, cy + 1); y++) for (let x = Math.max(0, cx - 1); x <= Math.min(h.nx - 1, cx + 1); x++) for (const k of h.cells[y * h.nx + x]) { const d = (h.X[k] - px) ** 2 + (h.Y[k] - py) ** 2; if (d < bd) { bd = d; best = k; } }
   return best; }
 // hover: a point within 10 px shows its title (the canvas tooltip) and a hand; inside the lens a move cursor, elsewhere a grab
@@ -1763,7 +1763,8 @@ cv.addEventListener('pointermove', (e) => { if (!touches.has(e.pointerId)) { if 
 const endPtr = (e) => { touches.delete(e.pointerId); if (pinch) { if (touches.size < 2) { pinch = null; resample(); } return; }
   if (!drag) return; const [px, py] = ptr(e), tap = drag.moved < 5, k = tap ? hitAt(px, py) : -1, kind = drag.kind; drag = null;
   if (k >= 0 && st.mode === 'geo' && lay().ents[k].grp) { const vd = geoUni() ? 360 * geoView().w : 360 / Math.max(1, st.z.s); zoomTo(st.z.s * Math.max(2, vd / 1.9), px, py); return; }   // a place point: zoom in until it splits
-  if (k >= 0) { const id = lay().ents[k].id; if (hk.own) { emit('tap', { id, mode: st.mode }); return; } showPop(k); draw(); emit('tap', { id, mode: st.mode }); return; }   // a tap on a point opens its card (or the module's focus); the lens stays where it is
+  const e0 = k >= 0 ? lay().ents[k] : null; if (k >= 0 && !e0) { draw(); return; }
+  if (k >= 0) { const id = e0.id; if (hk.own) { emit('tap', { id, mode: st.mode }); return; } showPop(k); draw(); emit('tap', { id, mode: st.mode }); return; }   // a tap on a point opens its card (or the module's focus); the lens stays where it is
   if (tap) emit('tap', { id: null, mode: st.mode });
   if (tap) hidePop();
   const moved = kind === 'lens' || (tap && lensOn()); if (kind === 'pan' && tap && lensOn()) { st.lens.x = ux(px); st.lens.y = uy(py); }
