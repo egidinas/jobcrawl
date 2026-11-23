@@ -217,6 +217,8 @@ export const SITEMAP_CHILDREN_CAP = 500;    // child sitemaps read from one site
 // PAGE_CAP is only a safety stop against a server that never ends (the loops had fixed caps of 10 to 150 pages before).
 export const PAGE_CAP = 500;
 export const SR_MAX_PAGES = 100;              // SmartRecruiters: 100 postings a page, so up to 10,000 postings per board
+export const DASSAULT_MAX_PAGES = 400;        // 3ds card search: 10 cards a page, up to 4,000
+export const RS_MAX_PAGES = 200;              // Rohde & Schwarz search: 6 jobs a page, up to 1,200
 const posIntOr = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
 /**
  * The page budget of one board fetch: page requests stop starting once it is spent, so the fetch returns (and saves its cache) inside
@@ -1150,8 +1152,10 @@ export const providers = {
     async fetch(slug) {
       const [company, board] = slug.split('|');
       const out = [];
-      for (let offset = 0; offset < 1500; offset += 300) {
+      let more = false;   // the API still offered a next page when the safety stop was reached: a partial answer
+      for (let offset = 0, page = 0; page < PAGE_CAP; offset += 300, page++) {
         const d = await get(`https://app.dover.com/api/v1/careers-page/${board}/jobs?limit=300&offset=${offset}`);
+        more = Boolean(d.next);
         for (const j of d.results ?? []) {
           if (j.is_published === false || j.is_sample === true || !j.title || !j.id) continue;
           const place = (l) => {
@@ -1169,6 +1173,7 @@ export const providers = {
         if (!d.next) break;
         await sleep(200);
       }
+      if (more) markIncomplete(out, 0, 'page stop: the API offered more pages');
       return out;
     },
   },
@@ -1686,12 +1691,15 @@ export const providers = {
   dassault: {
     detect: (u) => (/3ds\.com/i.test(u) ? 'dassault' : null),
     async fetch() {
+      // every page until the search runs dry (was a fixed 500 cards, so the board always answered exactly 500 and looked complete);
+      // DASSAULT_MAX_PAGES is a safety stop, and reaching it is a partial answer
       const out = [], seen = new Set();
-      for (let offset = 0; offset < 500; offset += 10) {
+      let ended = false;
+      for (let offset = 0, page = 0; page < DASSAULT_MAX_PAGES; offset += 10, page++) {
         const url = `https://www.3ds.com/apisearch/card_search_api?lang=en&r=f/card_content_type/career&r=f/card_content_categories_facet/cards%20language/en&start=${offset}`;
         const xml = await get(url, { json: false, timeoutMs: 15000 });
         const hits = xml.split(/<Hit /).slice(1);
-        if (!hits.length) break;
+        if (!hits.length) { ended = true; break; }
         let fresh = 0;
         for (const h of hits) {
           const title = h.match(/<Meta name="content_title"[^>]*>\s*<MetaString[^>]*>([\s\S]*?)<\/MetaString>/i)?.[1];
@@ -1713,9 +1721,10 @@ export const providers = {
             }
           }
         }
-        if (!fresh) break;
+        if (!fresh) { ended = true; break; }
         await new Promise((r) => setTimeout(r, 150));
       }
+      if (!ended) markIncomplete(out, 0, `page stop: ${DASSAULT_MAX_PAGES} pages read`);
       return out;
     },
   },
@@ -1768,11 +1777,12 @@ export const providers = {
       const searchPath = /\/SearchJobs\b/i.test(origin) ? '' : (origin.includes('/careers') ? '/SearchJobs' : '/en_US/careers/SearchJobs');
       const searchUrl = `${origin.replace(/\/+$/, '')}${searchPath}`;
       const out = [], seen = new Set();
-      for (let offset = 0; offset < 300; offset += 6) {
+      let ended = false;   // every page until the list runs dry (was a fixed 300); the safety stop is a partial answer
+      for (let offset = 0, page = 0; page < RS_MAX_PAGES; offset += 6, page++) {
         const url = `${searchUrl}?jobOffset=${offset}`;
         const html = await get(url, { json: false, timeoutMs: 15000 });
         const matches = [...html.matchAll(/<a[^>]+href="([^"]*JobDetail\/[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi)];
-        if (!matches.length) break;
+        if (!matches.length) { ended = true; break; }
         let fresh = 0;
         for (const m of matches) {
           const rawUrl = m[1];
@@ -1788,9 +1798,10 @@ export const providers = {
             postedAt: '',
           });
         }
-        if (!fresh) break;
+        if (!fresh) { ended = true; break; }
         await new Promise((r) => setTimeout(r, 200));
       }
+      if (!ended) markIncomplete(out, 0, `page stop: ${RS_MAX_PAGES} pages read`);
       return out;
     },
   },
