@@ -349,6 +349,21 @@ const ux = (px) => (px - W / 2) / (st.z.s * BW) + st.z.cx, uy = (py) => (py - H 
 // One hue per region. Regions that lie next to each other on the map get neighbouring hues, and the hues are spread evenly over the whole
 // wheel: the regions are put on a closed tour of their centres (nearest neighbour, then 2-opt) and the k-th region of the tour gets hue
 // 360 k / n. Similar areas so read as related colours, and across the map the colours still vary widely. HR is the layout being drawn.
+// the 16 families' colours by their English name (light, dark): OKLCH, lightness 0.55 / 0.66 (light) and 0.70 / 0.80 (dark), chroma 0.13 / 0.12; the hues
+// are spread so that families next to each other on the map differ most (worst neighbouring pair: CVD delta E 10.5 light, 8.4 dark; normal vision 18.8 / 15.6)
+const PRINT_FAMILIES = {
+  'Software & Data': ['#0079b3', '#4fa8e1'], 'IT & Cybersecurity': ['#d57356', '#ffa287'], 'Systems & Mission Engineering': ['#b98917', '#e4b65c'],
+  'Electronics & RF': ['#00a3c2', '#4fd0f1'], 'Optics, Photonics & Quantum': ['#9b5295', '#c882c2'], 'Mechanical & Structures': ['#a87bd0', '#d3a9fa'],
+  'Propulsion & Thermal': ['#008282', '#00b5b5'], 'Manufacturing & Production': ['#a75c00', '#d58b4b'], 'Test & Verification': ['#7c7400', '#aaa23f'],
+  'Quality & Product Assurance': ['#ce6e9a', '#f99dc5'], 'Supply Chain & Procurement': ['#7ca142', '#a8cc76'], 'Facilities & EHS': ['#00ab8a', '#5dd7b6'],
+  'Programmes, Projects & Product': ['#298646', '#63b376'], 'Business, Sales & Communications': ['#6b64ba', '#9793e6'],
+  'Corporate, Finance & People': ['#b04d59', '#df7e86'], 'Research & Academia': ['#6690e1', '#9bbeff'],
+};
+// the screen takes each family's hue from it too (the same hue on the role and the company map and in print; lightness and chroma stay the theme's)
+const FAMILY_HUE = (() => { const o = {}; for (const [nm, [hx]] of Object.entries(PRINT_FAMILIES)) { const [r, g, b] = [1, 3, 5].map((i) => { const c = parseInt(hx.slice(i, i + 2), 16) / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b), q = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  o[nm] = (Math.atan2(0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * q, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * q) * 180 / Math.PI + 360) % 360; } return o; })();
+const famHue = (r) => (r && r.label && Number.isFinite(FAMILY_HUE[r.label[0]]) ? FAMILY_HUE[r.label[0]] : null);
 let HR = null; const hueTabs = new WeakMap();
 let XP = null;   // the print options while a print image is drawn (renderPrint; the geography's colours read it)
 // print geography: one level everywhere, the country: its shade and its number are all its open roles (placed in it, and those known only by the
@@ -368,7 +383,7 @@ function hueTable(regs) {
 }
 // the geography view keeps the plain wheel (c * 137.508): its colours are a density ramp given as a pseudo region index (hueC)
 // a group that carries its own hue (a function map: the functions file's family hue) keeps it, so the board and the map show one colour per family
-const hue = (c) => (HR && HD && HD.kind !== 'geo' && Number.isInteger(c) && c < HR.length ? (Number.isFinite(HR[c].hue) ? HR[c].hue : hueTable(HR)[c]) : (c * 137.508) % 360);
+const hue = (c) => (HR && HD && HD.kind !== 'geo' && Number.isInteger(c) && c < HR.length ? (Number.isFinite(HR[c].hue) ? HR[c].hue : famHue(HR[c]) ?? hueTable(HR)[c]) : (c * 137.508) % 360);
 // Inside a region the hue drifts from one neighbourhood to the next (up to +-45 degrees, by the angle of the neighbourhood around the
 // region's centre), so a large region is a spread of related colours and not one flat area. HD is the layout being drawn.
 let HD = null; const shiftTabs = new WeakMap();
@@ -385,7 +400,8 @@ function hoodShifts(Ly) {
     hs.sort((a, b) => ang(a) - ang(b)); hs.forEach((h, k) => { t[h] = -S + 2 * S * k / (m - 1); }); });
   shiftTabs.set(Ly, t); return t;
 }
-const hueOf = (e) => { const t = HD && !HD.past && HD.kind !== 'geo' ? hoodShifts(HD) : null; return (hue(e.c1) + (t && e.c2 >= 0 && e.c2 < t.length ? t[e.c2] : 0) + 360) % 360; };
+const hueOf = (e) => { const t = HD && !HD.past && HD.kind !== 'geo' && !(HR && famHue(HR[e.c1]) !== null) ? hoodShifts(HD) : null;   // a job family keeps one hue (no drift inside it)
+  return (hue(e.c1) + (t && e.c2 >= 0 && e.c2 < t.length ? t[e.c2] : 0) + 360) % 360; };
 // region colours in OKLCH, one hue per region; at a given lightness a hue takes the largest chroma up to the target that is inside
 // the sRGB gamut (binary search on C). The themes use lightness bands instead (vivid() below)
 const VIVID_C = 0.19;
@@ -448,8 +464,8 @@ function paint(ctx, A, GW, GH, rgb, alphaOf) {
 // vivid()); C: the chroma cap. 'light': vivid colour on the page. 'neon': aggressive colour on near black; a wider, fainter
 // pass is added on top (so overlapping regions glow) and gives a halo. light: the field multiplied on the page (deep hues on white), dark ink labels on a white halo
 const THEMES = {
-  light: { C: 0.27, fieldL: [0.42, 0.62], pointL: 0.40, dimL: 0.65, pointA: 0.8, dimA: 0.35, fieldStrength: 0.9, multiply: true, halo: '#ffffff' },
-  neon: { C: 0.28, fieldL: [0.50, 0.76], pointL: [0.74, 0.93], dimL: [0.50, 0.68], pointA: 0.9, fieldStrength: 0.5, glow: { strength: 0.10, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
+  light: { C: 0.2, fieldL: [0.42, 0.62], pointL: 0.40, dimL: 0.65, pointA: 0.8, dimA: 0.35, fieldStrength: 0.9, multiply: true, halo: '#ffffff' },
+  neon: { C: 0.2, fieldL: [0.50, 0.76], pointL: [0.74, 0.93], dimL: [0.50, 0.68], pointA: 0.9, fieldStrength: 0.36, glow: { strength: 0.06, extra: 3 }, bg: '#05060a', halo: '#05060a', linkInk: '#ffffff', areaInk: '#ffffff', subInk: '#e6e6f0', tintL: 0.92 },
 };
 // the theme on screen: neon on a dark page, light otherwise. The page decides in this order: data-theme="light|dark" on the
 // root element, data-mode="light|dark" on <body> (a site's own light/dark switch), else the system setting
@@ -601,7 +617,7 @@ function paintMap(ctx, P, o) {
   // a company's dot: by its open roles (1.6 + 1.1 sqrt(n), at most 5.5), 1.3 for a company with none
   const rcOf = (k) => (cn[k] ? Math.min(5.5, 1.6 + 1.1 * Math.sqrt(cn[k])) : 1.9) * zf;
   // a star's strength: a role's age weight; a company's log weight against the heaviest company
-  const starOf = (k) => (roles ? wE(Ly.ents[k]) : cw[k] > 0 ? Math.log1p(cw[k]) / Math.log1p(P.cwMax) : 0);
+  const starOf = (k) => (roles ? wE(Ly.ents[k]) : 0);   // companies: plain dots by their open roles, no stars (a star per hiring company made the map a glare)
   // companies with no open role in the filter: small faint dots, drawn first, no rings
   if (!roles) Ly.ents.forEach((e, k) => { if (cn[k] || !vis[k] || (lw && lw[k] > 0)) return; const X0 = sx(e.x), Y0 = sy(e.y); if (X0 < -5 || Y0 < -5 || X0 > W + 5 || Y0 > H + 5) return;
     const rgb = regionRgb(e, T.dimL, T.C); ctx.globalAlpha = T.dimA ?? 0.28; ctx.fillStyle = `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`; ctx.beginPath(); ctx.arc(X0, Y0, rcOf(k), 0, 7); ctx.fill(); });
@@ -615,7 +631,7 @@ function paintMap(ctx, P, o) {
     const sv = starOf(k), lk = lw ? lw[k] : -1;   // lk: the link's weight (-1: no link; 0: dimmed)
     if (sv > 0) { hot.push([k, sv, lk]); return; }   // new roles, and companies with some: drawn after the others, on top (roles: today, this week, this month, in falling intensity)   // new roles, and companies with some: drawn after the others, on top
     // crowded spots get fainter points so a dense cluster does not glare; sparse ones keep full strength
-    const a = lk > 0 ? T.pointA : lk === 0 ? 0.25 * (act[k] ? T.pointA : 0.45) : (act[k] ? T.pointA : roles ? 0.45 : 0.8) * Math.max(0.65, Math.min(1, 1 / Math.sqrt(densAt(X0, Y0)))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
+    const a = lk > 0 ? T.pointA : lk === 0 ? 0.25 * (act[k] ? T.pointA : 0.45) : (act[k] ? T.pointA : roles ? 0.45 : 0.8) * Math.max(0.35, Math.min(1, 1 / Math.pow(densAt(X0, Y0), 0.6))) * (fit ? 0.12 + 0.88 * fit[k] : 1) * (P.heat ? 0.45 : 1);
     if (a <= 0.003) return;
     const rgb = regionRgb(e, act[k] || lk > 0 ? T.pointL : T.dimL, T.C);
     if (roles) {   // the role points go into one path per colour and alpha (a fill each, not one per point)
@@ -1371,16 +1387,6 @@ function blit(S, alpha) { const a = st.z.s / S.z.s, ox = W / 2 * (1 - a) + (S.z.
 //   key        false leaves the key out
 // The export harness (outside this repo) passes inScope from the data folder's side/posting-meta.json member column.
 const PRINT_FONT = "Inter, 'Inter Display', 'Hanken Grotesk', system-ui, sans-serif";
-// the 16 families' colours by their English name (light, dark): OKLCH, lightness 0.55 / 0.66 (light) and 0.70 / 0.80 (dark), chroma 0.13 / 0.12; the hues
-// are spread so that families next to each other on the map differ most (worst neighbouring pair: CVD delta E 10.5 light, 8.4 dark; normal vision 18.8 / 15.6)
-const PRINT_FAMILIES = {
-  'Software & Data': ['#0079b3', '#4fa8e1'], 'IT & Cybersecurity': ['#d57356', '#ffa287'], 'Systems & Mission Engineering': ['#b98917', '#e4b65c'],
-  'Electronics & RF': ['#00a3c2', '#4fd0f1'], 'Optics, Photonics & Quantum': ['#9b5295', '#c882c2'], 'Mechanical & Structures': ['#a87bd0', '#d3a9fa'],
-  'Propulsion & Thermal': ['#008282', '#00b5b5'], 'Manufacturing & Production': ['#a75c00', '#d58b4b'], 'Test & Verification': ['#7c7400', '#aaa23f'],
-  'Quality & Product Assurance': ['#ce6e9a', '#f99dc5'], 'Supply Chain & Procurement': ['#7ca142', '#a8cc76'], 'Facilities & EHS': ['#00ab8a', '#5dd7b6'],
-  'Programmes, Projects & Product': ['#298646', '#63b376'], 'Business, Sales & Communications': ['#6b64ba', '#9793e6'],
-  'Corporate, Finance & People': ['#b04d59', '#df7e86'], 'Research & Academia': ['#6690e1', '#9bbeff'],
-};
 const PRINT_THEMES = {
   light: { dark: false, bg: '#ffffff', ink: '#161a22', sub: '#3b4250', halo: '#ffffff', grey: [148, 163, 184], ring: [120, 126, 138], wash: 0.62, washOp: 'multiply', vignette: 0.9, arc: '#161a22', hub: '#e8590c', border: 'rgba(22,26,34,0.62)' },
   neon: { dark: true, bg: '#0b0d13', ink: '#f3f5fa', sub: '#c6ccd8', halo: '#0b0d13', grey: [120, 130, 150], ring: [130, 137, 152], wash: 0.42, washOp: 'screen', vignette: 0.95, arc: '#f3f5fa', hub: '#ff8a3d', border: 'rgba(243,245,250,0.6)' },
@@ -1784,7 +1790,7 @@ function colourField(ctx, Ly, o) {
   // than either. Each cell then takes the vivid colour of its mixed hue, so borders between regions stay saturated.
   const A = new Float32Array(GW * GH), B = new Float32Array(GW * GH), N = new Float32Array(GW * GH), C0 = new Float32Array(GW * GH), W0 = new Float32Array(GW * GH), WA = o.wt ? new Float32Array(GW * GH) : null;   // W0: the weighted count; WA: the same for all points (linked pass)
   Ly.ents.forEach((e, k) => { if (!vis[k]) return; const X0 = sx(e.x) / W, Y0 = sy(e.y) / H; if (X0 < 0 || X0 >= 1 || Y0 < 0 || Y0 >= 1) return;
-    const q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), wb = Ly.kind === 'companies' ? 0.6 + Math.sqrt(coN[k]) : 1; if (WA) WA[q] += wb;
+    const q = Math.floor(Y0 * GH) * GW + Math.floor(X0 * GW), wb = Ly.kind === 'companies' ? 0.6 + 0.35 * Math.sqrt(coN[k]) : 1; if (WA) WA[q] += wb;
     const u = o.wt ? o.wt(k) : 1; if (!(u > 0)) return;   // o.wt (the linked pass): an entity's share, its link weight; 0 adds nothing
     const h = hueOf(e) * Math.PI / 180, w = fit && !o.wt ? 0.08 + fit[k] * fit[k] : 1, wt = wb * u;   // a company weighs 0.6 + sqrt(its open roles) (a residual glow without roles), a role 1
     A[q] += Math.cos(h) * w * u; B[q] += Math.sin(h) * w * u; N[q] += w * u; C0[q] += u; W0[q] += wt; });
@@ -1795,7 +1801,7 @@ function colourField(ctx, Ly, o) {
   let s0 = 1; if (WA) { let sl = 0, sa = 0; for (let q = 0; q < W0.length; q++) { sl += W0[q]; sa += WA[q]; } s0 = sa > 0 ? sl / sa : 1; }
   // the soft coverage: the weighted density against its 95th percentile (d = 1 is a dense area), coverage = 1 - exp(-2.5 d): dense areas are rich,
   // sparse ones thin, with no flat plateau
-  const ramp = Ly.kind === 'companies' ? [2.5, 1.2] : [10, 0.7];   // roles: dense areas saturate, only the sparse edges thin; companies: the steeper ramp
+  const ramp = Ly.kind === 'companies' ? [2.5, 1.2] : [5, 0.9];   // roles: dense areas saturate, only the sparse edges thin; companies: the steeper ramp
   const dz = [...W0].filter((x) => x > 1e-3).sort((a, b) => a - b); if (!dz.length) return; const q95 = dz[Math.min(dz.length - 1, Math.floor(dz.length * 0.95))] || 1e-3;
   const band = Array.isArray(o.L) ? o.L : [o.L, o.L];
   const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sg = small.getContext('2d'), img = sg.createImageData(GW, GH);

@@ -89,7 +89,7 @@ export function init(api) {
       const ar = (c - a) * (d - b); polys.push({ bb: [a, b, c, d], pts }); if (ar > ba) { ba = ar; best = [a, b, c, d]; } }
     if (!best) continue; const lo = mercLon((best[0] + best[2]) / 2), la = mercLat((best[1] + best[3]) / 2), w = (best[2] - best[0]) * 360;
     countries.set(sh.id, { cc: sh.id, name: sh.name, lon: lo, lat: la, w, polys }); }
-  const cityList = (wd.places || []).filter((p) => p.pr === 'city').map((p) => ({ id: p.id, name: p.name, cc: String(p.id).split('|')[0], lon: mercLon(wx(p.x)), lat: mercLat(wy(p.y)), n: 0 }));
+  const cityList = (wd.places || []).filter((p) => p.pr === 'city').map((p) => ({ id: p.id, name: p.name, cc: String(p.id).split('|')[0], lon: mercLon(wx(p.x)), lat: mercLat(wy(p.y)), n: 0, size: p.n || 0 }));   // size: the place file's own count (a metro's is large)
   // the located roles: each to its nearest city within CITY_KM (a one-degree grid keeps it cheap); the rest stay country-level in the pills
   const grid = new Map(); cityList.forEach((c, k) => { const g = Math.floor(c.lon) + ',' + Math.floor(c.lat); (grid.get(g) || grid.set(g, []).get(g)).push(k); });
   const roleCity = new Int32Array(N).fill(-1);
@@ -113,7 +113,20 @@ export function init(api) {
       let o = R.cc.get(cc); if (!o) R.cc.set(cc, o = { n: 0, e: new Set(), lo: 0 }); o.n++; o.e.add(D.co[i]); const c = countries.get(cc); if (c && inEurope(c)) { R.europe.n++; R.europe.e.add(D.co[i]); }
       if (D.cat[i] === 1) { o.lo++; R.located++; if (c && inEurope(c)) R.europe.lo++; if (roleCity[i] >= 0) R.city[roleCity[i]]++; if (D.n3code && D.n3code[i] && String(D.n3code[i]).startsWith('DE2')) { R.bav.n++; R.bav.e.add(D.co[i]); } }
       const sl = D.coName[D.co[i]]; R.co.set(sl, (R.co.get(sl) || 0) + 1); }
+    R.cityCo = new Map(); for (let i = 0; i < N; i++) { if (!D.sel[i] || roleCity[i] < 0) continue; let m = R.cityCo.get(roleCity[i]); if (!m) R.cityCo.set(roleCity[i], m = new Map()); m.set(D.co[i], (m.get(D.co[i]) || 0) + 1); }   // each city's employers (the hubs' anchor)
     return R; }
+
+  // ---- hubs: the cities with open roles, folded into the metro they belong to (a suburb, a village with one big site, a second place of the same name),
+  // so a pill names a real hub. Within hubKm (30 km zoomed out, less zoomed in) the largest place (the place file's own count) is the head and names the
+  // hub; a hub of 20+ roles held mostly (60 %+) by one employer carries its name ("Oberkochen · ZEISS Group"). Counts are the sums, so nothing is lost.
+  function hubsOf(R, deg) { const km = Math.min(30, Math.max(6, deg * 2.5)), on = []; cityList.forEach((c, k) => { if (R.city[k] > 0) on.push(k); });
+    on.sort((a, b) => cityList[b].size - cityList[a].size || R.city[b] - R.city[a]); const used = new Set(), hubs = [];
+    for (const k of on) { if (used.has(k)) continue; const h = cityList[k], mem = [k]; used.add(k);
+      for (const j of on) { if (used.has(j)) continue; const c = cityList[j]; if (c.cc === h.cc && (kmBetween(h.lon, h.lat, c.lon, c.lat) <= km || c.name === h.name && kmBetween(h.lon, h.lat, c.lon, c.lat) <= 120)) { mem.push(j); used.add(j); } }
+      const n = mem.reduce((t, j) => t + R.city[j], 0), co = new Map(); for (const j of mem) for (const [ci, m] of R.cityCo.get(j) || []) co.set(ci, (co.get(ci) || 0) + m);
+      const top = [...co].sort((a, b) => b[1] - a[1])[0], an0 = top && n >= 20 && top[1] >= 0.6 * n && api.coName ? api.coName(D.coName[top[0]]) : null, anchor = an0 && an0.length > 24 ? an0.slice(0, 23).replace(/[\s,.\-]+\S*$/, '') + '…' : an0;   // an anchor only for a real hub (20+ roles), its name short
+      hubs.push({ k, c: h, n, mem, name: anchor && anchor.toLowerCase() !== h.name.toLowerCase() ? `${h.name} · ${anchor}` : h.name }); }
+    return hubs; }
 
   // ---- pins and status (small files, read once; the status file only when a status is shown)
   const pinsP = fetch(api.dataUrl('side/company-pins.json')).then((r) => (r.ok ? r.json() : null)).then((j) => { const all = j && Array.isArray(j.pins) ? j.pins.filter((p) => p.precision === 'site' && p.verified === true && Number.isFinite(p.lat) && Number.isFinite(p.lon)) : []; S.pins = all.filter(pinOk); S.pinsDropped = all.filter((p) => !pinOk(p)).map((p) => p.slug); S.pinsWhy = all.filter((p) => !pinOk(p)).map((p) => { const m = coCc.get(p.slug), c = countryAt(p.lon, p.lat); return { slug: p.slug, name: p.name, lat: p.lat, lon: p.lon, pin_country: c ? c.cc : null, open_roles_in_board: m ? m.n : 0, role_countries: m ? Object.fromEntries(Object.entries(m).filter(([k]) => k !== 'n').sort((x, y) => y[1] - x[1]).slice(0, 4)) : {}, reason: !m ? 'no open role in the public board' : !c ? 'pin point in no country shape' : 'no open role placed in the pin country' }; }); S.pinsAll = all.length; }).catch(() => {});
@@ -132,8 +145,7 @@ export function init(api) {
     if (c.cc === 'DE' && deg < 7 && ctr[0] >= BAV[0] && ctr[0] <= BAV[2] && ctr[1] >= BAV[1] && ctr[1] <= BAV[3] && D.n3code) return { name: api.pick('Bavaria', 'Bayern'), n: R.bav.n, lo: R.bav.n, e: R.bav.e.size, set: 'bavaria', note: api.pick('roles with a place in Bavaria; roles known only as Germany are counted under Germany', 'Stellen mit Ort in Bayern; Stellen nur mit Land Deutschland zählen unter Deutschland') };
     const o = R.cc.get(c.cc) || { n: 0, lo: 0, e: new Set() }; return { name: nameOf(c.cc, c.name), n: o.n, lo: o.lo, e: o.e.size, set: 'country:' + c.cc }; }
   const dn = {}, nameOf = (cc, fb) => { try { const l = de() ? 'de' : 'en'; return (dn[l] || (dn[l] = new Intl.DisplayNames([l], { type: 'region' }))).of(cc) || fb || cc; } catch (e) { return fb || cc; } };
-  const cityName = (c) => c.name;
-
+  
   const pool = new Map();   // key -> element
   let raf = 0; const schedule = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); };
   const flyDeg = (c) => Math.max(3.5, Math.min(24, (c.w || 8) * 1.25));
@@ -151,7 +163,7 @@ export function init(api) {
     if (lv === 'country') for (const [cc, o] of R.cc) { const c = countries.get(cc); if (!c || !o.n) { continue; }
       items.push({ k: 'c:' + cc, cls: 'gp-pill gp-country', n: o.n, name: nameOf(cc, c.name), cc, lon: c.lon, lat: c.lat, deg: flyDeg(c) });
     }
-    if (lv !== 'country') cityList.forEach((c, k) => { const n = R.city[k]; if (n > 0) items.push({ k: 'y:' + c.id, cls: 'gp-pill gp-city', n, name: cityName(c), lon: c.lon, lat: c.lat, deg: Math.min(1.1, Math.max(0.5, deg / 4)) }); });
+    if (lv !== 'country') for (const h of hubsOf(R, deg)) items.push({ k: 'y:' + h.c.id, cls: 'gp-pill gp-city', n: h.n, name: h.name, lon: h.c.lon, lat: h.c.lat, deg: Math.min(1.1, Math.max(0.5, deg / 4)), hub: h.mem.length });   // one pill per hub (see hubsOf)
     items.sort((a, b) => b.n - a.n);
     // pins first (they sit on their site), then the pills that still fit; a pill hidden for room stays in the list
     const pins = [];
