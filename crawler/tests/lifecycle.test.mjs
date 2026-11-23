@@ -1,10 +1,10 @@
 // node --test crawler/tests/lifecycle.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, readdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openLifecycle, lifecycleMode } from '../lifecycle.mjs';
+import { openLifecycle, lifecycleMode, MAX_MISS_LINES } from '../lifecycle.mjs';
 
 const quiet = () => {};
 const clock = (iso) => { let t = Date.parse(iso); return () => new Date(t += 1000); };
@@ -84,4 +84,17 @@ test('capped: an answer of exactly a page cap is not complete and misses nothing
   assert.equal(f[1].complete, false);
   assert.equal(f[1].capped, 500);
   assert.equal(ev.filter((e) => e.kind === 'missed').length, 0);
+});
+
+test('bounded: at most MAX_MISS_LINES missed lines per url, old event days removed', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-'));
+  mkdirSync(join(dir, 'lifecycle', 'events', '2026-10-01'), { recursive: true });
+  writeFileSync(join(dir, 'lifecycle', 'events', '2026-10-01', 'ev-x.jsonl'), '{}' + String.fromCharCode(10));
+  const lc = openLifecycle(dir, { mode: 'shadow', now: clock('2026-11-20T08:00:00Z'), log: quiet });
+  lc.fetched('B', M, ['u', 'v']);
+  for (let i = 0; i < MAX_MISS_LINES + 4; i++) lc.fetched('B', M, ['v']);
+  const st = lc.flush();
+  assert.equal(events(dir).filter((e) => e.kind === 'missed').length, MAX_MISS_LINES);
+  assert.equal(existsSync(join(dir, 'lifecycle', 'events', '2026-10-01')), false);
+  assert.equal(st.event_days_removed, 1);
 });

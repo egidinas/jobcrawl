@@ -13,12 +13,15 @@
 //   events/<day>/ev-<ts>.jsonl  the cycle's lines, append-only, one file per cycle (never rewritten)
 // The mode is read from MADE_LIFECYCLE: off (default) writes nothing. shadow records only and changes nothing else in the crawl.
 // 'on' is reserved for the crawl's own K rule (stage 3, not implemented yet) and behaves like shadow.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 export const LIFECYCLE_VERSION = 'lifecycle_obs_v1';
 const PRUNE_MISSES = 6, PRUNE_DAYS = 60;
+// bounded growth: a url gets at most MAX_MISS_LINES 'missed' lines in a row (the count in the state goes on); event day folders older
+// than EVENT_KEEP_DAYS are removed by the module itself (the Atlas lane ingests them within a day)
+export const MAX_MISS_LINES = 8, EVENT_KEEP_DAYS = 14;
 // An answer of exactly a provider page cap is a truncated listing (live check 2026-11-23: SmartRecruiters boards answering 500 on every
 // fetch while the postings beyond the cap stay live): never a complete answer, so it produces no misses.
 export const PAGE_CAPS = new Set([100, 200, 250, 500, 1000, 2000, 5000, 10000]);
@@ -84,6 +87,7 @@ export function openLifecycle(dataDir, { mode = lifecycleMode(), now = () => new
         if (set.has(u)) continue;
         const s = urls[u];
         s[2] += 1;
+        if (s[2] > MAX_MISS_LINES) continue;
         lines.push({ ts, kind: 'missed', url: u, board, fetch_id, n: s[2], last_seen: s[1], ...(suspect ? { suspect: true } : {}) });
         stats.missed++;
       }
@@ -101,7 +105,10 @@ export function openLifecycle(dataDir, { mode = lifecycleMode(), now = () => new
       const tmp = stateFile + '.tmp';
       writeFileSync(tmp, JSON.stringify({ v: LIFECYCLE_VERSION, at: now().toISOString(), urls }));
       renameSync(tmp, stateFile);
-      Object.assign(stats, { lines: lines.length, pruned, urls_after: Object.keys(urls).length });
+      const evRoot = resolve(dir, 'events'), keepFrom = new Date(Date.parse(today) - EVENT_KEEP_DAYS * 864e5).toISOString().slice(0, 10);
+      let daysRemoved = 0;
+      for (const d of readdirSync(evRoot)) if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d < keepFrom) { rmSync(resolve(evRoot, d), { recursive: true, force: true }); daysRemoved++; }
+      Object.assign(stats, { lines: lines.length, pruned, urls_after: Object.keys(urls).length, event_days_removed: daysRemoved });
       log(`[lifecycle] result: ${JSON.stringify(stats)}`);
       return stats;
     },
