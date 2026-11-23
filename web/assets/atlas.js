@@ -1620,6 +1620,7 @@ async function fillRole(li) {
     + `<div class="links"><a class="link" href="${roleLink(id, rows[i][3])}">${cfg.role_url ? L('Full role page →', 'Ganze Stellenseite →') : L('Details in the job list →', 'Details in der Stellenliste →')}</a>${d && companyLink(d.cs) ? `<a class="link" href="${companyLink(d.cs)}">${L('About ' + row[2] + ' →', 'Über ' + row[2] + ' →')}</a>` : ''}<a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply ↗', 'Bewerben ↗')}</a></div>`;
 }
 function renderList() {
+  if (hk.own && st.mode !== 'geo') { $('atlas-list').innerHTML = ''; return; }   // a module shows its own list (hook own): no cards here, no description shards fetched
   if (!rowsReady && st.mode === 'roles') { $('atlas-list').innerHTML = `<li class="atlas-note">${L('Loading the roles…', 'Lade die Stellen …')}</li>`; return; }
   $('atlas-list').innerHTML = st.sample.map(cardHtml).join('') || `<li class="atlas-note">${L('Nothing in the lens with these filters. Move it or make it larger.', 'Nichts in der Lupe mit diesen Filtern. Verschieben oder vergrößern Sie sie.')}</li>`;
   $('atlas-list').querySelectorAll('.atlas-item').forEach(fillRole);
