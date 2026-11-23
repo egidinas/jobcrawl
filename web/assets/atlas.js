@@ -350,6 +350,11 @@ const ux = (px) => (px - W / 2) / (st.z.s * BW) + st.z.cx, uy = (py) => (py - H 
 // wheel: the regions are put on a closed tour of their centres (nearest neighbour, then 2-opt) and the k-th region of the tour gets hue
 // 360 k / n. Similar areas so read as related colours, and across the map the colours still vary widely. HR is the layout being drawn.
 let HR = null; const hueTabs = new WeakMap();
+let XP = null;   // the print options while a print image is drawn (renderPrint; the geography's colours read it)
+// print geography: one level everywhere, the country: its shade and its number are all its open roles (placed in it, and those known only by the
+// country); Germany's states are drawn in their country's shade, and the hotspot states and cities are named with the roles placed in them
+const printCountryVal = (cc) => { const u = PA.n.get('country:' + cc); return (u ? u.n : 0) + ((PA.D && PA.D.coOnly && PA.D.coOnly[cc]) || 0); };
+const printGeoVal = (s) => { const u = paUnit(s); if (!u) return 0; return printCountryVal(paLevelOf(s) === 'country' ? String(u.id) : String(s.id).slice(0, 2)); };   // a state shows its country's number (one level everywhere)
 function hueTable(regs) {
   let t = hueTabs.get(regs); if (t) return t;
   const n = regs.length, P = regs.map((r) => r.xy || [0, 0]), d = (a, b) => Math.hypot(P[a][0] - P[b][0], P[a][1] - P[b][1]);
@@ -975,7 +980,7 @@ const inRings = (rings, x, y) => { let c = false; for (const q of rings) for (le
 const geoShapeAt = (Lg, X, Y) => Lg.shapes.find((s) => s.pr.length && inRings(s.pr, X, Y)) || null;
 // a shape's fill: the class colour of its level (countries, German states, counties: 7 blue classes each, from the place file's counts; see
 // placeRecount), grey when it has no open role (and while the place file loads)
-const geoShapeRgb = (s, T) => { const u = paUnit(s); return u && u.n > 0 && u.rgb ? u.rgb : (T.glow ? [26, 28, 36] : [226, 228, 234]); };
+const geoShapeRgb = (s, T) => { if (XP && XP.shade) { const c = XP.shade(s); if (c) return c; } const u = paUnit(s); return u && u.n > 0 && u.rgb ? printGeoRgb(u.rgb) : (T.glow ? [26, 28, 36] : [226, 228, 234]); };
 // the open roles counted in a shape (located roles by point in polygon, from the place file); geomap's own count until the file is in
 const shapeN = (s) => { if (!PA.ready) return s.roles || 0; const u = paUnit(s); return u ? u.n : 0; };
 // the companies at a place (their catalogue entities)
@@ -1056,17 +1061,17 @@ function paintGeo(ctx, P, o) {
     ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 0.35 * a / A0 * areaA; ctx.strokeStyle = ink; ctx.lineWidth = 0.6;
     for (const s of sh) { const m = modPath(s); if (m) { ctx.save(); ctx.transform(MT.k, 0, 0, MT.k, MT.e, MT.f); ctx.lineWidth = 0.6 / MT.k; ctx.stroke(m.path); ctx.restore(); } else ctx.stroke(s.path); } };
   const countiesOf = (L, a) => { if (!(ca > 0) || !L.counties.length) return; ctx.globalAlpha = a * ca;
-    for (const c of L.counties) { const u = paUnit(c), col = u && u.n > 0 ? u.rgb : grey; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.fill(c.path, 'evenodd'); }
+    for (const c of L.counties) { const u = paUnit(c), col = u && u.n > 0 ? printGeoRgb(u.rgb) : grey; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.fill(c.path, 'evenodd'); }
     ctx.globalAlpha = 0.35 * a / A0 * areaA * ca; ctx.strokeStyle = ink; ctx.lineWidth = 0.5; for (const c of L.counties) ctx.stroke(c.path); };
   for (const sid of below) { const Lc = geoLayer(sid); geoSync(Lc); geoPaths(Lc); const a = sid === (geo.fade && geo.fade.from) && geo.t >= 0.02 ? A0 * (1 - fade) : A0; shapesOf(Lc, a); countiesOf(Lc, a); }
   shapesOf(Lg, A0 * fade, below.length > 0 && geo.t < 0.02);
   countiesOf(Lg, A0 * fade);
   if (modCo.length) { const { k, e, f } = MT;
     const vis0 = (c) => !(c.bb[2] * k + e < -10 || c.bb[0] * k + e > W + 10 || c.bb[3] * k + f < -10 || c.bb[1] * k + f > H + 10); ctx.save(); ctx.transform(k, 0, 0, k, e, f);
-    for (const c of modCo) { if (!vis0(c)) continue; const col = c.n > 0 && c.rgb ? c.rgb : grey; ctx.globalAlpha = A0 * fade * ca; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.fill(c.path, 'evenodd'); ctx.globalAlpha = 0.35 * fade * ca * areaA; ctx.strokeStyle = ink; ctx.lineWidth = 0.5 / k; ctx.stroke(c.path); }
+    for (const c of modCo) { if (!vis0(c)) continue; const col = c.n > 0 && c.rgb ? printGeoRgb(c.rgb) : grey; ctx.globalAlpha = A0 * fade * ca; ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; ctx.fill(c.path, 'evenodd'); ctx.globalAlpha = 0.35 * fade * ca * areaA; ctx.strokeStyle = ink; ctx.lineWidth = 0.5 / k; ctx.stroke(c.path); }
     ctx.restore(); }
   // the rivers, a thin line in a water colour (the big ones wider), for finding one's way on the map
-  if (Lg.rpath) { const rw = Math.min(1.8, 0.8 + 0.25 * Math.log2(Math.max(1, st.z.s))); ctx.globalAlpha = (T.glow ? 0.9 : 0.85) * fade; ctx.strokeStyle = T.glow ? 'rgb(150,205,255)' : 'rgb(30,95,190)'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  if (Lg.rpath && (!XP || XP.rivers)) { const rw = Math.min(1.8, 0.8 + 0.25 * Math.log2(Math.max(1, st.z.s))) * (XP ? 0.6 : 1); ctx.globalAlpha = (T.glow ? 0.9 : 0.85) * fade * (XP ? 0.35 : 1); ctx.strokeStyle = T.glow ? 'rgb(150,205,255)' : 'rgb(30,95,190)'; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     ctx.lineWidth = 1.5 * rw; ctx.stroke(Lg.rpath[0]); ctx.lineWidth = 1.0 * rw; ctx.stroke(Lg.rpath[1]); }
   // the companies: the colour is the kind of employer (its company type, as on its card); a filled dot has open roles in the filter (larger with
   // more of them), a ring has none. One path per colour, kind and size; filled dots on top, a dark rim so they stand out on any area. The
@@ -1238,7 +1243,7 @@ function paNames(ctx, Lg, o) { const M = PA.M, G = M.GEO, D = PA.D, tier = paTie
     if (p.ctext) { ctx.font = `500 ${p.sm}px system-ui,sans-serif`; ctx.strokeStyle = am.halo; ctx.strokeText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); ctx.fillStyle = am.text; ctx.fillText(p.ctext, p.x, y + p.fs * 0.6 + p.sm * 1.5); } }
   ctx.restore(); o.counts.areas = items.filter((p) => !p.chip).length; o.counts.chip = items.some((p) => p.chip); PA.lastLabels = items.map((p) => [p.t, p.cnt || '', p.ctext || '']); }
 // the narrow API of the pills module (atlas-geo-pills.js): the stage, the place data, the projection, the view and a fly-to
-const pillsApi = () => ({ stage, PA, L, pick, isDe, dataUrl, coLogo, companyLink, W: () => W, H: () => H, GEO: () => GEO, data: (sid) => geo.data.get(sid) || null, selKey: () => PA.key, deg: () => geoDeg(),
+const pillsApi = () => ({ stage, PA, L, pick, isDe, dataUrl, coLogo, companyLink, coName: (slug) => (coBy.has(slug) ? printCoName(coBy.get(slug).name) : null), W: () => W, H: () => H, GEO: () => GEO, data: (sid) => geo.data.get(sid) || null, selKey: () => PA.key, deg: () => geoDeg(),
   project: (lon, lat) => { const r = lat * Math.PI / 180; return paXY((lon + 180) / 360, (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2); },
   center: () => { const v = geoView(); return [v.x * 360 - 180, 180 / Math.PI * Math.atan(Math.sinh(Math.PI * (1 - 2 * v.y)))]; },
   fly: (lon, lat, deg, instant) => { const F = geoFrame(), r = lat * Math.PI / 180, wx = (lon + 180) / 360, wy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2, z1 = { s: Math.min(maxZoom(), 360 * W / (F.p * deg)), cx: 0.5 + (wx - F.mx) * F.p / BW, cy: 0.5 + (wy - F.my) * F.p / BH };
@@ -1337,11 +1342,390 @@ function tweenDraw() { const A = anim; g.setTransform(1, 0, 0, 1, 0, 0); g.globa
   blit(A.old, 1); if (A.nw && A.f > 0) blit(A.nw, A.f); g.globalAlpha = 1; emit('draw', { mode: st.mode, tween: true }); }
 function blit(S, alpha) { const a = st.z.s / S.z.s, ox = W / 2 * (1 - a) + (S.z.cx - st.z.cx) * st.z.s * BW, oy = H / 2 * (1 - a) + (S.z.cy - st.z.cy) * st.z.s * BH;
   g.globalAlpha = alpha; g.imageSmoothingEnabled = true; g.drawImage(S.c, ox, oy, a * W, a * H); }
+// ---- the print preset: renderImage({ preset: 'print', ... }) draws a still for a printed page (a PDF figure about 17 cm wide) with its own painter,
+// so the screen's drawing is not touched. What it does, and why:
+//   - dots: small round dots whose alpha falls with the local density (dense cores stay translucent, the sparsest outliers fade); no stars, halos or glow
+//   - colour: the 16 job families only, one fixed colour per family in both themes (PRINT_FAMILIES, checked for colour-blind separation between families
+//     that touch on the map); a light wash of the dominant family per cell (never a mixed hue), and one outline per family around its main area
+//   - outskirts: the wash covers the whole image (margin included) with a zero-padded blur; a soft vignette fades the edge into the background
+//   - labels: two tiers sized in points for the print width: family names (bold, 5.5-6.5 pt, halo) and a few major groups (5 pt) that do not repeat their
+//     family's name. No role titles, no duplicates, no overlaps (every placed box is in lastRender().labels, with lastRender().checks)
+//   - tracked vs in scope (inScope): roles outside it are slate grey over a faint grey outline of the whole cloud; on the company map a company with
+//     in-scope roles is coloured, one with only other roles grey, a watched one (the layout's zero_roles) a small ring
+//   - the role map always shows the whole anchored layout; the company map is cropped to its hiring firms (2nd-98th percentile)
+//   - geography: a country's shade and number are all its open roles; a country drawn by states (Germany) keeps its shade as the centre and its states
+//     vary by their roles with an exact site; hub bubbles (roles with an exact site within 40 km) named after the city with most roles, with the leading
+//     employer; a footnote that reconciles every number with the total
+//   - a key at the bottom with the counts of what was drawn (never typed in)
+// Options (besides scale, default 4; theme 'light' | 'neon'; frame [w, h], the logical size, whose aspect is the image's):
+//   inScope    Set or array of the in-scope role ids, or 'all' (every role is: the public board). Without it the key gives plain counts.
+//   wash       the family wash's strength (default per theme); 0 leaves it out
+//   contours   0, 1 or 2 outlines per family (default 1; none on the company map)
+//   labels     the number of second-tier labels (default 12 groups on the role map, 16 companies on the company map)
+//   crop       false: the company map shows the page's view instead of the hiring firms' core
+//   focus      company map: a company's slug: the narrative, it and its focusN (default 9) closest in-scope companies (company vectors, as the page's
+//              similar-companies link) with arcs and their open in-scope roles, the rest muted, zoomed to them
+//   geoCam     geography: { lon, lat, deg[, rivers] } the view (deg: its width in degrees of longitude); default the scope's own fit; rivers off
+//   hubs       geography: the number of hub bubbles (default 9); countries: the most country labels (default 10)
+//   ptWidth    the printed width in points the type is sized for (default 482, 17 cm)
+//   key        false leaves the key out
+// The export harness (outside this repo) passes inScope from the data folder's side/posting-meta.json member column.
+const PRINT_FONT = "Inter, 'Inter Display', 'Hanken Grotesk', system-ui, sans-serif";
+// the 16 families' colours by their English name (light, dark): OKLCH, lightness 0.55 / 0.66 (light) and 0.70 / 0.80 (dark), chroma 0.13 / 0.12; the hues
+// are spread so that families next to each other on the map differ most (worst neighbouring pair: CVD delta E 10.5 light, 8.4 dark; normal vision 18.8 / 15.6)
+const PRINT_FAMILIES = {
+  'Software & Data': ['#0079b3', '#4fa8e1'], 'IT & Cybersecurity': ['#d57356', '#ffa287'], 'Systems & Mission Engineering': ['#b98917', '#e4b65c'],
+  'Electronics & RF': ['#00a3c2', '#4fd0f1'], 'Optics, Photonics & Quantum': ['#9b5295', '#c882c2'], 'Mechanical & Structures': ['#a87bd0', '#d3a9fa'],
+  'Propulsion & Thermal': ['#008282', '#00b5b5'], 'Manufacturing & Production': ['#a75c00', '#d58b4b'], 'Test & Verification': ['#7c7400', '#aaa23f'],
+  'Quality & Product Assurance': ['#ce6e9a', '#f99dc5'], 'Supply Chain & Procurement': ['#7ca142', '#a8cc76'], 'Facilities & EHS': ['#00ab8a', '#5dd7b6'],
+  'Programmes, Projects & Product': ['#298646', '#63b376'], 'Business, Sales & Communications': ['#6b64ba', '#9793e6'],
+  'Corporate, Finance & People': ['#b04d59', '#df7e86'], 'Research & Academia': ['#6690e1', '#9bbeff'],
+};
+const PRINT_THEMES = {
+  light: { dark: false, bg: '#ffffff', ink: '#161a22', sub: '#3b4250', halo: '#ffffff', grey: [148, 163, 184], ring: [120, 126, 138], wash: 0.62, washOp: 'multiply', vignette: 0.9, arc: '#161a22', hub: '#e8590c', border: 'rgba(22,26,34,0.62)' },
+  neon: { dark: true, bg: '#0b0d13', ink: '#f3f5fa', sub: '#c6ccd8', halo: '#0b0d13', grey: [120, 130, 150], ring: [130, 137, 152], wash: 0.42, washOp: 'screen', vignette: 0.95, arc: '#f3f5fa', hub: '#ff8a3d', border: 'rgba(243,245,250,0.6)' },
+};
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+// a family's colour by its region (the region's English name; an unknown name: a hue of the plain wheel)
+function printRgb(Ly, c1, T) { const r = Ly.regions[c1], nm = r && r.label ? r.label[0] : '', f = PRINT_FAMILIES[nm]; if (f) return hexRgb(f[T.dark ? 1 : 0]);
+  return oklch(T.dark ? 0.74 : 0.58, 0.12, (c1 * 137.508) % 360); }
+const smooth = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+// a separable Gaussian with zero padding (outside the grid counts as empty, so a density near the edge thins out instead of being renormalised)
+function blur0(A, GW, GH, sg) { const r = Math.ceil(3 * sg), k = new Float32Array(2 * r + 1); let ks = 0; for (let i = -r; i <= r; i++) { k[i + r] = Math.exp(-i * i / (2 * sg * sg)); ks += k[i + r]; }
+  for (let i = 0; i < k.length; i++) k[i] /= ks; const t = new Float32Array(A.length);
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let s = 0; for (let j = Math.max(0, x - r); j <= Math.min(GW - 1, x + r); j++) s += A[y * GW + j] * k[j - x + r]; t[y * GW + x] = s; }
+  for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let s = 0; for (let j = Math.max(0, y - r); j <= Math.min(GH - 1, y + r); j++) s += t[j * GW + x] * k[j - y + r]; A[y * GW + x] = s; } }
+// marching squares: the segments of the iso-line at `lev` on a grid (cell corners at integer coordinates)
+function isoSegs(G, GW, GH, lev) { const out = [], at = (x, y) => G[y * GW + x], ip = (a, b) => (lev - a) / (b - a);
+  for (let y = 0; y < GH - 1; y++) for (let x = 0; x < GW - 1; x++) { const a = at(x, y), b = at(x + 1, y), c = at(x + 1, y + 1), d = at(x, y + 1);
+    const m = (a >= lev ? 8 : 0) | (b >= lev ? 4 : 0) | (c >= lev ? 2 : 0) | (d >= lev ? 1 : 0); if (m === 0 || m === 15) continue;
+    const T = [x + ip(a, b), y], R = [x + 1, y + ip(b, c)], B = [x + ip(d, c), y + 1], L = [x, y + ip(a, d)];
+    const S = { 1: [L, B], 2: [B, R], 3: [L, R], 4: [T, R], 5: [L, T, B, R], 6: [T, B], 7: [L, T], 8: [L, T], 9: [T, B], 10: [T, R, L, B], 11: [T, R], 12: [L, R], 13: [B, R], 14: [L, B] }[m];
+    for (let i = 0; i < S.length; i += 2) out.push(S[i][0], S[i][1], S[i + 1][0], S[i + 1][1]); }
+  return out; }
+// the print labels: placed in order, each at the first candidate whose box (with a margin) is free and inside the image; returns the box or null
+function printLabeller(ctx, ext, PT) {
+  const boxes = [], placed = [];
+  const fsAt = (lab, i) => (i && lab.sub ? lab.sub * lab.fs : lab.fs), wAt = (lab, i) => (i && lab.sub ? 500 : lab.weight);
+  const measure = (lab) => { let w = 0, h = 0; lab.lines.forEach((t, i) => { ctx.font = `${wAt(lab, i)} ${fsAt(lab, i)}px ${PRINT_FONT}`; w = Math.max(w, ctx.measureText(t).width); h += fsAt(lab, i) * 1.12; }); return [w, h]; };
+  const free = (b, pad, padX = pad) => b[0] >= ext[0] + 2 * PT && b[1] >= ext[1] + 2 * PT && b[2] <= ext[2] - 2 * PT && b[3] <= ext[3] - 2 * PT && boxes.every((q) => b[2] + padX < q[0] || b[0] - padX > q[2] || b[3] + pad < q[1] || b[1] - pad > q[3]);
+  // lab: { lines, fs, weight, color, halo, haloW, alpha, cands: [[x, y, align]], pad, tier, dot }; align: 'center' | 'left' (box starts at x) | 'right'
+  // lab.auto: the ink follows what lies under the label (a light text with a dark halo on a dark area): the image's pixel at the box centre
+  const lumAt = (x, y) => { const m = ctx.getTransform(), px = Math.round(m.a * x + m.e), py = Math.round(m.d * y + m.f); if (px < 0 || py < 0 || px >= ctx.canvas.width || py >= ctx.canvas.height) return 1;
+    const d = ctx.getImageData(px, py, 1, 1).data; return (0.2126 * d[0] + 0.7152 * d[1] + 0.0722 * d[2]) / 255; };
+  function put(lab) { const [w, h] = measure(lab);
+    for (const [x, y, al, lead] of lab.cands) { const x0 = al === 'left' ? x : al === 'right' ? x - w : x - w / 2, b = [x0, y - h / 2, x0 + w, y + h / 2];
+      if (!free(b, lab.pad ?? 1.5 * PT, lab.padX ?? lab.pad ?? 1.5 * PT)) continue;
+      boxes.push(b); if (lab.auto) { const l = lumAt((b[0] + b[2]) / 2, (b[1] + b[3]) / 2); if (l < 0.42) lab = { ...lab, color: '#ffffff', halo: 'rgba(8,20,45,0.85)' }; else if (l > 0.55) lab = { ...lab, color: '#101826', halo: 'rgba(255,255,255,0.85)' }; }   // the ink against what lies under it ctx.save();
+      if (lead) { const ex = Math.max(b[0], Math.min(lead[0], b[2])), ey = Math.max(b[1], Math.min(lead[1], b[3])), d = Math.hypot(ex - lead[0], ey - lead[1]), r0 = lead[2] || 0;   // a leader line from the point's edge to the label's
+        if (d > r0 + 0.5 * PT) { ctx.globalAlpha = 0.85; ctx.strokeStyle = lab.color; ctx.lineWidth = 0.45 * PT; ctx.beginPath(); ctx.moveTo(lead[0] + (ex - lead[0]) * r0 / d, lead[1] + (ey - lead[1]) * r0 / d); ctx.lineTo(ex, ey); ctx.stroke(); } } ctx.font = `${lab.weight} ${lab.fs}px ${PRINT_FONT}`; ctx.textBaseline = 'middle'; ctx.textAlign = al; ctx.lineJoin = 'round'; ctx.globalAlpha = lab.alpha ?? 1;
+      let yy = b[1]; lab.lines.forEach((t, i) => { const f = fsAt(lab, i), ty = yy + f * 0.56; yy += f * 1.12; ctx.font = `${wAt(lab, i)} ${f}px ${PRINT_FONT}`; if (lab.haloW) { ctx.strokeStyle = lab.halo; ctx.lineWidth = lab.haloW * f / lab.fs; ctx.strokeText(t, x, ty); } ctx.fillStyle = lab.color; ctx.fillText(t, x, ty); });
+      ctx.restore(); placed.push({ t: lab.lines.join(' '), box: b.map((v) => Math.round(v * 10) / 10), pt: Math.round(Math.min(...lab.lines.map((_, i) => fsAt(lab, i))) / PT * 10) / 10, tier: lab.tier }); return b; }
+    return null; }
+  return { put, boxes, placed, reserve: (b) => boxes.push(b) };
+}
+// the label candidates around a point: on it, then above, below, right, left (o: the offset)
+// candidates farther out, each with a leader line back to the point (r0: the point's radius): 16 directions at growing distances
+const leaderCands = (x, y, r0, dists) => { const out = []; for (const d of dists) for (let q = 0; q < 16; q++) { const a = q * Math.PI / 8, cx = Math.cos(a), cy = Math.sin(a), X = x + cx * d, Y = y + cy * d; out.push([X, Y, cx > 0.3 ? 'left' : cx < -0.3 ? 'right' : 'center', [x, y, r0]]); } return out; };
+const aroundPt = (x, y, o, h) => [[x, y, 'center'], [x, y - o - h / 2, 'center'], [x, y + o + h / 2, 'center'], [x + o, y, 'left'], [x - o, y, 'right'], [x + o, y - o, 'left'], [x - o, y - o, 'right'], [x + o, y + o, 'left'], [x - o, y + o, 'right']];
+// a group's main patch on screen: the densest 3 x 3 window of its points on a coarse grid, at the mean of the points in it
+function mainPatch(pts, W0, H0) { if (!pts.length) return null; const GW = 36, GH = Math.max(8, Math.round(36 * H0 / W0)), c = new Float32Array(GW * GH), sxA = new Float32Array(GW * GH), syA = new Float32Array(GW * GH);
+  for (const [x, y] of pts) { const gx = Math.max(0, Math.min(GW - 1, Math.floor(x / W0 * GW))), gy = Math.max(0, Math.min(GH - 1, Math.floor(y / H0 * GH))), q = gy * GW + gx; c[q]++; sxA[q] += x; syA[q] += y; }
+  let best = -1, bq = [0, 0]; for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) { let s = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = x + dx, yy = y + dy; if (xx >= 0 && yy >= 0 && xx < GW && yy < GH) s += c[yy * GW + xx]; } if (s > best) { best = s; bq = [x, y]; } }
+  let n = 0, X = 0, Y = 0; for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const xx = bq[0] + dx, yy = bq[1] + dy; if (xx < 0 || yy < 0 || xx >= GW || yy >= GH) continue; const q = yy * GW + xx; n += c[q]; X += sxA[q]; Y += syA[q]; }
+  return n ? [X / n, Y / n, best] : null; }
+// the display name of a company for a print label: shortName, and the board's own suffixes out ("(softgarden)", "[External]", "(personio)" ...)
+const PRINT_CAPS = /^(asml|mbda|ohb|mda|tkms|gmv|saab|knds|ses|esa|iceye|dlr|cnes|rfa)$/i;   // board names that came title-cased from an ATS ("Asml (workday)"): their own capitals
+const printCoName = (nm) => { const t = shortName(String(nm || '').replace(/\s*[([][^)\]]*[)\]]/g, ' ').replace(/\s+aktiebolag\s*$/i, '').replace(/\s+S\.?\s?A\.?$/i, '').replace(/\s+/g, ' ').trim()); return PRINT_CAPS.test(t) ? t.toUpperCase() : t; };   // every bracket out: "(Workday, all sites)", "[External]", "(softgarden)"
+// the wash: per family a density grid over the whole image (ext, logical units), blurred with zero padding; each cell takes the colour of its dominant family
+// (sharpened weights, so borders are soft but never a mixed hue) at an alpha that rises gently with the total density. Returns the grids (for contours).
+function printWash(ctx, items, ext, T, o) {
+  const fam = new Map(); for (const it of items) { if (!fam.has(it.f)) fam.set(it.f, fam.size); }
+  const ew = ext[2] - ext[0], eh = ext[3] - ext[1], GW = 220, GH = Math.max(40, Math.round(220 * eh / ew)), nf = fam.size, G = Array.from({ length: nf }, () => new Float32Array(GW * GH));
+  for (const it of items) { const gx = Math.floor((it.x - ext[0]) / ew * GW), gy = Math.floor((it.y - ext[1]) / eh * GH); if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) continue; G[fam.get(it.f)][gy * GW + gx] += it.w; }
+  const sg = o.sigma * GW / ew; for (const A of G) blur0(A, GW, GH, sg);
+  const tot = new Float32Array(GW * GH); for (const A of G) for (let q = 0; q < tot.length; q++) tot[q] += A[q];
+  const nz = [...tot].filter((x) => x > 1e-6).sort((a, b) => a - b), q95 = nz.length ? nz[Math.floor(nz.length * 0.95)] : 1;
+  const rgbOf = [...fam.keys()].map((f) => o.rgb(f));
+  if (o.strength > 0) { const small = document.createElement('canvas'); small.width = GW; small.height = GH; const sgc = small.getContext('2d'), img = sgc.createImageData(GW, GH);
+    for (let q = 0; q < tot.length; q++) { if (tot[q] < 1e-6) continue; let r = 0, g = 0, b = 0, ws = 0;
+      for (let f = 0; f < nf; f++) { const w = (G[f][q] / tot[q]) ** 6; if (w < 1e-4) continue; r += rgbOf[f][0] * w; g += rgbOf[f][1] * w; b += rgbOf[f][2] * w; ws += w; }
+      const d = tot[q] / q95, cov = (1 - Math.exp(-2.4 * d)) ** 1.25;
+      img.data[q * 4] = r / ws; img.data[q * 4 + 1] = g / ws; img.data[q * 4 + 2] = b / ws; img.data[q * 4 + 3] = Math.round(255 * o.strength * cov); }
+    sgc.putImageData(img, 0, 0); ctx.save(); ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high'; ctx.globalCompositeOperation = T.washOp; ctx.drawImage(small, ext[0], ext[1], ew, eh); ctx.restore(); }
+  // the contour: per family ONE soft outline, around its largest connected area above 35 % (and 15 %, contours 2) of its own smoothed peak; the
+  // smaller islands of a family get none (they would read as scattered, arbitrary rings)
+  if (o.contours > 0) { ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    [...fam.keys()].forEach((f, i) => { const A2 = Float32Array.from(G[i]); blur0(A2, GW, GH, sg * 1.6); let mx = 0; for (const v of A2) mx = Math.max(mx, v); if (!(mx > 0)) return;
+      for (const [lev0, a] of (o.contours > 1 ? [[0.35, 0.7], [0.15, 0.4]] : [[0.35, 0.7]])) { const lev = lev0 * mx, lab = new Int32Array(GW * GH).fill(-1); let best = -1, bestN = 0, nc = 0;
+        for (let q0 = 0; q0 < lab.length; q0++) { if (lab[q0] >= 0 || A2[q0] < lev) continue; const stack = [q0]; lab[q0] = nc; let n = 0;   // the connected areas above the level (4-neighbours)
+          while (stack.length) { const q = stack.pop(); n++; const x = q % GW, y = (q - x) / GW; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x + dx, yy = y + dy; if (xx < 0 || yy < 0 || xx >= GW || yy >= GH) continue; const r = yy * GW + xx; if (lab[r] < 0 && A2[r] >= lev) { lab[r] = nc; stack.push(r); } } }
+          if (n > bestN) { bestN = n; best = nc; } nc++; }
+        if (best < 0 || bestN < 12) continue; let mIn = 0, mAll = 0; for (let q = 0; q < A2.length; q++) { mAll += A2[q]; if (lab[q] === best) mIn += A2[q]; } if (mIn < 0.25 * mAll) continue;   // the outline must hold a quarter of the family
+        const B = Float32Array.from(A2); for (let q = 0; q < B.length; q++) if (lab[q] >= 0 && lab[q] !== best) B[q] = 0.5 * lev;
+        const s = isoSegs(B, GW, GH, lev); if (!s.length) continue; const p = new Path2D();
+        for (let k = 0; k < s.length; k += 4) { p.moveTo(ext[0] + s[k] / GW * ew, ext[1] + s[k + 1] / GH * eh); p.lineTo(ext[0] + s[k + 2] / GW * ew, ext[1] + s[k + 3] / GH * eh); }
+        const c = rgbOf[i]; ctx.strokeStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.globalAlpha = a; ctx.lineWidth = o.lineW; ctx.stroke(p); } });
+    ctx.restore(); }
+  return { G, GW, GH, tot, q95, ext };
+}
+// the local density at a point from the wash's total grid, against a typical occupied cell (1 = typical)
+const washDens = (WG, x, y, typ) => { const gx = Math.floor((x - WG.ext[0]) / (WG.ext[2] - WG.ext[0]) * WG.GW), gy = Math.floor((y - WG.ext[1]) / (WG.ext[3] - WG.ext[1]) * WG.GH); if (gx < 0 || gy < 0 || gx >= WG.GW || gy >= WG.GH) return 0; return WG.tot[gy * WG.GW + gx] / typ; };
+// the roles and the companies maps for print. P: prepare(); o: { T (PRINT_THEMES), ext, PT, inScope (Set | 'all' | null), xp (the options) }
+function paintPrint(ctx, P, o) {
+  const { Ly, roles } = P, { T, ext, PT, xp } = o, all = o.inScope === 'all', inS = (id) => all || !o.inScope || o.inScope.has(id), counts = {};
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; ctx.fillStyle = T.bg; ctx.fillRect(ext[0], ext[1], ext[2] - ext[0], ext[3] - ext[1]);
+  const famRgb = (c1) => printRgb(Ly, c1, T), rgbS = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`, focus = !roles && xp.focus ? coBy.get(xp.focus) : null;
+  // the entities, split: roles in scope / tracked only; companies in scope (with their in-scope roles) / hiring outside scope only / watched with none
+  const ins = [], outs = [], rings = [], inN = new Map();
+  Ly.ents.forEach((e, k) => { if (!vis[k] || (e.hidden && !st.all)) return; const X0 = sx(e.x), Y0 = sy(e.y);
+    if (roles) { (inS(e.id) ? ins : outs).push({ k, e, x: X0, y: Y0 }); return; }
+    const vr = visibleRoles(e), n = vr.filter((i) => inS(rows[i][0])).length; inN.set(k, n);
+    const zr = LAY.companies.zero_roles; if (zr ? zr[k] === 1 : !e.idx.length) rings.push({ k, e, x: X0, y: Y0 }); else if (n > 0)   // watched: the layout's zero_roles flag (the manifest's companies_without_roles_tracked)
+     ins.push({ k, e, x: X0, y: Y0, n }); else outs.push({ k, e, x: X0, y: Y0 }); });
+  // the narrative: the focus company and its closest in-scope companies (cosine of the company vectors, as the page's similar-companies link)
+  let near = null; if (focus) { const fe = focus, byE = new Map(ins.map((it) => [it.e, it])); near = (xp.near || []).map(([s, e]) => [s, byE.get(e)]).filter((x) => x[1]); counts.focus = { slug: fe.slug, name: printCoName(fe.name), near: near.map(([s, it]) => [it.e.slug, Math.round(s * 1000) / 1000]) }; }
+  const lit = near ? new Set([focus.slug, ...near.map(([, it]) => it.e.slug)]) : null;
+  // the wash from the in-scope points (companies weigh a little more with their roles); muted under a narrative
+  // roles with a tracked-only part: a faint grey silhouette of every tracked role first, so the whole cloud reads as one shape
+  if (roles && outs.length && !lit) printWash(ctx, [...ins, ...outs].map((it) => ({ x: it.x, y: it.y, f: -1, w: 1 })), ext, T, { strength: T.dark ? 0.12 : 0.16, contours: 0, sigma: 12, lineW: 0, rgb: () => T.grey });
+  const washItems = ins.map((it) => ({ x: it.x, y: it.y, f: it.e.c1, w: roles ? 1 : 1 + 0.25 * Math.sqrt(it.n) }));
+  const WG = printWash(ctx, washItems, ext, T, { strength: lit ? 0 : xp.wash ?? T.wash, contours: lit || !roles ? 0 : xp.contours ?? 1, sigma: roles ? 10 : 14, lineW: 0.45 * PT, rgb: famRgb });
+  const occ = [...WG.tot].filter((x) => x > 1e-6).sort((a, b) => a - b), typ = occ.length ? occ[Math.floor(occ.length / 2)] : 1;
+  // dot alpha: falls with the local density (d: against a typical occupied cell) so cores stay translucent; the sparsest outliers fade
+  const aOf = (x, y, a0, lo) => { const d = washDens(WG, x, y, typ); return Math.max(lo, Math.min(a0, a0 / Math.max(1, d) ** 0.45)) * (0.4 + 0.6 * smooth(0.02, 0.3, d)); };
+  const R = (roles ? 0.5 : 0.62) * PT;   // a role's dot: 1 pt across; a company's smallest dot
+  if (roles) {
+    // tracked only: grey, first, fainter; in scope: the family colour, one path per colour and alpha step
+    const bucket = new Map(), add = (key, rgb, a, x, y, r) => { let b = bucket.get(key); if (!b) bucket.set(key, b = { rgb, a, p: new Path2D() }); b.p.moveTo(x + r, y); b.p.arc(x, y, r, 0, 7); };
+    for (const it of outs) { const a = aOf(it.x, it.y, 0.42, 0.3) * (lit ? 0.5 : 1), q = Math.round(a * 24); if (q) add('g' + q, T.grey, q / 24, it.x, it.y, R * 1.15); }
+    for (const b of bucket.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = rgbS(b.rgb); ctx.fill(b.p); } bucket.clear();
+    for (const it of ins) { const a = aOf(it.x, it.y, 1, 0.38), q = Math.round(a * 24); if (q) add(it.e.c1 + '|' + q, famRgb(it.e.c1), q / 24, it.x, it.y, R); }
+    for (const b of bucket.values()) { ctx.globalAlpha = b.a; ctx.fillStyle = rgbS(b.rgb); ctx.fill(b.p); }
+    counts.tracked = ins.length + outs.length; counts.inScope = ins.length;
+  } else {
+    const rOf = (n) => Math.min(2.8, 0.6 + 0.26 * Math.sqrt(n)) * PT;   // size: the square root of the open in-scope roles, capped (about 80 roles)
+    ctx.lineWidth = 0.35 * PT; ctx.strokeStyle = rgbS(T.ring); ctx.globalAlpha = lit ? 0.18 : 0.4; const pr = new Path2D(); for (const it of rings) { pr.moveTo(it.x + R * 0.95, it.y); pr.arc(it.x, it.y, R * 0.95, 0, 7); } ctx.stroke(pr);
+    ctx.globalAlpha = lit ? 0.25 : 0.5; ctx.fillStyle = rgbS(T.grey); const pg = new Path2D(); for (const it of outs) { pg.moveTo(it.x + R * 0.85, it.y); pg.arc(it.x, it.y, R * 0.85, 0, 7); } ctx.fill(pg);
+    const big = [...ins].sort((a, b) => b.n - a.n);
+    for (const it of big) { const on = !lit || lit.has(it.e.slug), r = lit && on ? Math.max(1.6 * PT, rOf(it.n)) : rOf(it.n); if (lit && on) continue;   // the narrative's companies come after the arcs
+      ctx.globalAlpha = on ? 0.95 : 0.2; ctx.fillStyle = rgbS(famRgb(it.e.c1));
+      ctx.beginPath(); ctx.arc(it.x, it.y, r, 0, 7); ctx.fill(); ctx.globalAlpha = on ? 0.9 : 0.3; ctx.lineWidth = 0.35 * PT; ctx.strokeStyle = T.bg; ctx.stroke(); }
+    counts.tracked = ins.length + outs.length + rings.length; counts.inScope = ins.length; counts.outOnly = outs.length; counts.watched = rings.length;
+    counts.inScopeRoles = ins.reduce((t, it) => t + it.n, 0);
+    o.rOf = rOf; o.ins = ins;
+  }
+  // the narrative's arcs: from the focus to each close company, curved, thicker for the closer ones; the focus ringed
+  if (near && near.length) { const f0 = ins.find((it) => it.e === focus) || { x: sx(focus.x), y: sy(focus.y), n: inN.get(Ly.ents.indexOf(focus)) || 0 }, s0 = near[0][0];
+    ctx.save(); ctx.lineCap = 'round'; for (const [j, [s, it]] of near.entries()) { const kc = (j % 2 ? -1 : 1) * (0.15 + 0.05 * (j % 3)), mx = (f0.x + it.x) / 2, my = (f0.y + it.y) / 2, dx = it.x - f0.x, dy = it.y - f0.y, c = [mx - dy * kc, my + dx * kc];
+      ctx.globalAlpha = 0.75; ctx.strokeStyle = T.arc; ctx.lineWidth = (0.5 + 0.9 * (s / s0) ** 4) * PT; ctx.beginPath(); ctx.moveTo(f0.x, f0.y); ctx.quadraticCurveTo(c[0], c[1], it.x, it.y); ctx.stroke(); }
+    for (const it of [f0, ...near.map((x) => x[1])]) { if (!it.e) continue; const r = Math.max(1.6 * PT, o.rOf(it.n || 1)); ctx.globalAlpha = 1; ctx.fillStyle = rgbS(famRgb(it.e.c1)); ctx.beginPath(); ctx.arc(it.x, it.y, r, 0, 7); ctx.fill(); ctx.lineWidth = 0.7 * PT; ctx.strokeStyle = T.bg; ctx.stroke(); }
+    ctx.globalAlpha = 1; ctx.lineWidth = 0.8 * PT; ctx.strokeStyle = T.ink; ctx.beginPath(); ctx.arc(f0.x, f0.y, Math.max(1.6 * PT, o.rOf ? o.rOf(f0.n || 1) : R) + 1.4 * PT, 0, 7); ctx.stroke(); ctx.restore(); o.f0 = f0; }
+  return { counts, near, ins, outs, rings, inN };
+}
+// a narrative label: its name and open in-scope roles, placed outward from the focus (along the ray from the focus through the company, then turned a little
+// either way), a short leader back to the dot when it is not beside it; the focus itself: below or above its ring
+function printNarrativeLabel(it, nm, isF, o, lab, res) {
+  const { T, PT } = o, f0 = o.f0, r = Math.max(1.6 * PT, o.rOf(it.n || 1)), fs = (isF ? 6.5 : 5.6) * PT, lines = [nm, `${(it.n || 0).toLocaleString(isDe() ? 'de-DE' : 'en')} open roles`];
+  const cands = []; if (isF) { const g = r + 2.6 * PT; cands.push([it.x, it.y + g + 1.1 * fs, 'center'], [it.x, it.y - g - 1.1 * fs, 'center'], [it.x - g, it.y, 'right'], [it.x + g, it.y, 'left']); }
+  else { let a = Math.atan2(it.y - f0.y, it.x - f0.x); if (Math.hypot(it.x - f0.x, it.y - f0.y) < 4 * PT) a = Math.PI * (0.75 + 0.5 * (res.near.findIndex((x) => x[1] === it) % 2));   // on top of the focus: away from it, left
+    const onTop = Math.hypot(it.x - f0.x, it.y - f0.y) < 12 * PT, das = onTop ? Array.from({ length: 16 }, (_, q) => q * Math.PI / 8) : [0, 0.35, -0.35, 0.7, -0.7, 1.1, -1.1];
+    for (const d of [r + 2.5 * PT, r + 7 * PT, r + 12 * PT, r + 18 * PT, r + 26 * PT, r + 34 * PT]) for (const da of das) { const c = Math.cos(a + da), sn = Math.sin(a + da), X = it.x + c * d, Y = it.y + sn * d;
+      cands.push([X, Y, c > 0.3 ? 'left' : c < -0.3 ? 'right' : 'center', d > r + 3 * PT ? [it.x, it.y, r] : null]); } }
+  return lab.put({ lines, fs, weight: isF ? 700 : 600, sub: 0.85, color: T.ink, halo: T.halo, haloW: 0.22 * fs, cands, pad: 1.6 * PT, tier: 2 });
+}
+// the labels of the roles and companies maps (after the vignette): tier 1 the families, tier 2 the major groups (roles) or the largest employers (companies)
+function printLabels(ctx, P, o, res, lab) {
+  const { Ly, roles } = P, { T, PT, xp } = o, famPts = new Map(), out = { families: 0, groups: 0, companies: 0 };
+  const W0 = W, H0 = H;   // the map box in logical units (the patches are found inside it)
+  for (const it of res.ins) { if (!famPts.has(it.e.c1)) famPts.set(it.e.c1, []); famPts.get(it.e.c1).push([it.x, it.y]); }
+  const minN = Math.max(roles ? 40 : 6, 0.004 * res.ins.length), lit = !!res.near;
+  // tier 1: every family with enough in-scope points, the largest first, at its main patch; size 9 to 11 pt by its share
+  const fams = [...famPts].filter(([, p]) => p.length >= minN).sort((a, b) => b[1].length - a[1].length), nMax = fams.length ? fams[0][1].length : 1;
+  const famLabels = () => { for (const [c1, pts] of fams) { const pk = mainPatch(pts, W0, H0); if (!pk) continue; if (!roles && pk[2] < 0.3 * pts.length) { out.familyDiffuse = (out.familyDiffuse || 0) + 1; continue; }   // a company map family spread thin: no name (it would name a spot that is not its)
+    const r = Ly.regions[c1], nm = r.label ? r.label[0] : nameOf(r);
+    const fs = (roles ? 5.5 + 1.0 * Math.sqrt(pts.length / nMax) : 5.5) * PT, lines = wrapText(nm, 22, 3), h = lines.length * fs * 1.12;
+    const b = lab.put({ lines, fs, weight: 700, color: T.ink, halo: T.halo, haloW: 0.24 * fs, alpha: lit ? 0.55 : 1, cands: aroundPt(pk[0], pk[1], 0.9 * fs, h).concat(aroundPt(pk[0], pk[1], 2.2 * fs, h).slice(1), leaderCands(pk[0], pk[1], 0, [3.5 * fs, 5 * fs])), pad: 2.5 * PT, padX: fs, tier: 1 });
+    if (b) out.families++; else out.familyMissed = (out.familyMissed || []).concat(nm); } };
+  if (roles) famLabels();   // the role map: the families first; the company map: its companies first (the top employers are what it is read for), the families around them
+  const famNames = new Set(fams.map(([c1]) => (Ly.regions[c1].label || [''])[0].toLowerCase()));
+  if (roles) {
+    // tier 2: the largest groups (neighbourhoods) by in-scope roles, named once, never a family's own name; 6.5 pt regular
+    const hp = new Map(); for (const it of res.ins) { const h = it.e.c2; if (h < 0 || !Ly.hoods[h]) continue; if (!hp.has(h)) hp.set(h, []); hp.get(h).push([it.x, it.y]); }
+    const seen = new Set(famNames), cap = xp.labels ?? 12, stems = (t) => String(t).toLowerCase().split(/[^a-zäöüß]+/).filter((w) => w.length >= 4).map((w) => w.slice(0, 6));
+    const famOfHood = new Map(); for (const it of res.ins) if (!famOfHood.has(it.e.c2)) famOfHood.set(it.e.c2, it.e.c1);
+    for (const [h, pts] of [...hp].sort((a, b) => b[1].length - a[1].length)) { if (out.groups >= cap) break; const r = Ly.hoods[h], nm = r.label ? r.label[0] : nameOf(r), key = nm.toLowerCase();
+      const fr = Ly.regions[famOfHood.get(h)], fst = new Set(stems(fr && fr.label ? fr.label[0] : '')); if (stems(nm).some((w) => fst.has(w))) { out.groupRedundant = (out.groupRedundant || 0) + 1; continue; }   // it repeats its family's name
+      if (seen.has(key) || pts.length < minN) continue; const pk = mainPatch(pts, W0, H0); if (!pk) continue; const fs = 5.0 * PT, lines = wrapText(nm, 24, 3), hh = lines.length * fs * 1.12;
+      if (lab.put({ lines, fs, weight: 500, color: T.sub, halo: T.halo, haloW: 0.24 * fs, alpha: 0.95, cands: aroundPt(pk[0], pk[1], 0.9 * fs, hh), pad: 2 * PT, tier: 2 })) { seen.add(key); out.groups++; } }
+  } else {
+    // tier 2: the companies with most in-scope open roles (narrative: the focus and its close companies), beside their dot; 6.5 pt
+    const list = lit ? [o.f0 && o.f0.e ? o.f0 : null, ...res.near.map(([, it]) => it)].filter(Boolean) : [...res.ins].sort((a, b) => b.n - a.n), cap = lit ? list.length : xp.labels ?? 16, seen = new Set(), parents = [];
+    if (lit) for (const it of list) { const r = Math.max(1.6 * PT, o.rOf(it.n || 1)) + 0.6 * PT; lab.reserve([it.x - r, it.y - r, it.x + r, it.y + r]); }   // no name over a dot of the constellation
+    for (const it of list) { if (out.companies >= cap) break; const nm = printCoName(it.e.name); if (!nm || seen.has(nm.toLowerCase())) continue; const isF = lit && it.e.slug === xp.focus;
+      const pk0 = nm.split(/\s+/)[0].toLowerCase(); if (!lit && pk0.length >= 3 && parents.some((q) => q.k === pk0 && Math.hypot(q.x - it.x, q.y - it.y) < 0.25 * W)) { out.parentMerged = (out.parentMerged || []).concat(nm); continue; }   // "Airbus Defence and Space" near "Airbus": the parent's label stands for both
+      if (lit) { if (printNarrativeLabel(it, nm, isF, o, lab, res)) { seen.add(nm.toLowerCase()); out.companies++; } else out.companyMissed = (out.companyMissed || []).concat(nm); continue; }
+      const fs = (isF ? 6.5 : 5.2) * PT, r = o.rOf(it.n || 1) + (isF ? 2.4 : 1.2) * PT, lines = [nm];
+      if (lab.put({ lines, fs, weight: isF ? 700 : 500, color: T.ink, halo: T.halo, haloW: 0.24 * fs, cands: [[it.x + r, it.y, 'left'], [it.x - r, it.y, 'right'], [it.x, it.y - r - fs * 0.6, 'center'], [it.x, it.y + r + fs * 0.6, 'center'], [it.x + r, it.y - r, 'left'], [it.x - r, it.y - r, 'right'], [it.x + r, it.y + r, 'left'], [it.x - r, it.y + r, 'right'], ...leaderCands(it.x, it.y, o.rOf(it.n || 1) + 0.3 * PT, [r + 5 * PT, r + 9 * PT, r + 14 * PT, r + 20 * PT])], pad: 2.2 * PT, tier: 2 })) { seen.add(nm.toLowerCase()); parents.push({ k: pk0, x: it.x, y: it.y }); out.companies++; }
+      else out.companyMissed = (out.companyMissed || []).concat(nm); }
+  }
+  return out;
+}
+// the geography in print: the shapes in a ramp for the background (light: dark is many), no page chrome, names at the shaded level: the regions (states) and
+// cities with most open roles, sized by their count; a country's name only where the country is shaded as a whole and large enough on the image
+const PRINT_GEO_RAMP = { light: ['#e3ecf8', '#c4d7f0', '#9dbce6', '#739dd8', '#4f80c6', '#3466ad', '#204d91'], neon: ['#1d3a6e', '#2a5298', '#3a6fbd', '#5b8fd6', '#86aee6', '#b3cff3', '#e3efff'] };
+const GEO_CLASS = ['#1d3a6e', '#2a5298', '#3a6fbd', '#5b8fd6', '#86aee6', '#b3cff3', '#e3efff'].map(hexRgb);
+function printGeoRgb(rgb) { if (!XP || !rgb) return rgb; const k = GEO_CLASS.findIndex((c) => c[0] === rgb[0] && c[1] === rgb[1] && c[2] === rgb[2]); return k < 0 ? rgb : hexRgb(PRINT_GEO_RAMP[XP.T.dark ? 'neon' : 'light'][k]); }
+// the drawn geography layers (the active level and the coarser ones under it), their shapes on screen for the current view
+function printGeoLayers(Lg) { geoSync(Lg); geoPaths(Lg); const out = [Lg]; for (const sid of geoLevels()) { if (sid === Lg.sid || !geo.data.has(sid)) continue; const L = geoLayer(sid); geoSync(L); geoPaths(L); out.push(L); } return out; }
+// the countries on the map: every country unit of the drawn layers (Germany from its states), its visible area and label point, and its number (all its open roles)
+function printCountries(Lg) {
+  const ctry = new Map(), inView = (x, y) => x > 0 && y > 0 && x < W && y < H;
+  for (const L of printGeoLayers(Lg)) for (const s of L.shapes) { if (!s.pr.length) continue; const lv = paLevelOf(s), cc = lv === 'country' ? String(s.id) : String(s.id).slice(0, 2);
+    let a = ctry.get(cc); if (!a) ctry.set(cc, (a = { cc, s: null, x: 0, y: 0, w: 0, ar: 0, fine: false, shapes: [] }));
+    if (L === Lg && lv !== 'country') a.fine = true; if (lv === 'country' && !a.s) a.s = s; if (a.L && a.L !== L) continue; a.L = L;   // one layer places a country's label (the finest that has it; Germany: its states)
+    a.shapes.push(s); if (!inView(s.lx, s.ly)) continue; const w = Math.sqrt(s.ar || 1); a.x += s.lx * w; a.y += s.ly * w; a.w += w; a.ar += s.ar || 0; }
+  return [...ctry.values()].map((a) => ({ ...a, x: a.w ? a.x / a.w : -1, y: a.w ? a.y / a.w : -1, v: printCountryVal(a.cc) }));
+}
+// the hubs: the roles with an exact site (the place file), grouped greedily within 40 km of the densest point; each hub is named after the city in it with
+// most roles in the scope file (a suburb or a village with one big site folds into its metro), with its leading employers as a second line
+function printHubs(Lg) {
+  const D0 = PA.D, P0 = [], kmPx = (W / geoDeg()) / (111.32 * Math.cos(50 * Math.PI / 180)), R = 40 * kmPx;
+  if (D0) for (let i = 0; i < D0.N; i++) { if (D0.cat[i] !== 1 || !D0.sel[i]) continue; const r = Math.max(-80, Math.min(80, D0.lat[i])) * Math.PI / 180;
+    const [X, Y] = paXY((D0.lon[i] + 180) / 360, (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2); P0.push({ i, X, Y, hub: -1 }); }
+  const ccNames = new Set(); try { const dn = new Intl.DisplayNames(['en'], { type: 'region' }); for (const L of printGeoLayers(Lg)) for (const s0 of L.shapes) if (s0.kind === 'country') ccNames.add(String(dn.of(String(s0.id)) || '').toLowerCase()); } catch (e) { /* names only */ }
+  const cities = []; for (const L of printGeoLayers(Lg)) L.ents.forEach((e, k) => { if (e.place && /^pl:[A-Z]{2}\|/.test(e.id) && !/[()\d]/.test(e.name) && !ccNames.has(String(e.name).toLowerCase()) && e.n > 0) cities.push({ name: e.name, n: e.n, cos: (L.coAt.get(k) || []).length, x: sx(e.x), y: sy(e.y) }); });   // a city of the scope file: never a site pin, a coded area or a country
+  const hubs = [], near = (p, q, r) => (p.X - q.X) ** 2 + (p.Y - q.Y) ** 2 <= r * r;
+  for (let round = 0; round < 40; round++) { let best = null, bn = 0;
+    for (const p of P0) { if (p.hub >= 0 || p.X < 0 || p.Y < 0 || p.X > W || p.Y > H) continue; let n = 0; for (const q of P0) if (q.hub < 0 && near(p, q, R)) n++; if (n > bn) { bn = n; best = p; } }
+    if (!best || bn < 5) break; const mem = P0.filter((q) => q.hub < 0 && near(best, q, R)); mem.forEach((q) => { q.hub = hubs.length; });
+    const X = mem.reduce((t, q) => t + q.X, 0) / mem.length, Y = mem.reduce((t, q) => t + q.Y, 0) / mem.length;
+    const nm = cities.filter((c) => (c.x - X) ** 2 + (c.y - Y) ** 2 <= R * R).sort((a, b) => b.n - a.n || b.cos - a.cos)[0];
+    const byCo = new Map(); for (const q of mem) { const c = D0.coName ? D0.coName[D0.co[q.i]] : ''; byCo.set(c, (byCo.get(c) || 0) + 1); }
+    const top = [...byCo].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([slug, k]) => [coBy.has(slug) ? printCoName(coBy.get(slug).name) : slug, k]);
+    hubs.push({ X, Y, n: mem.length, name: nm ? nm.name : '', top, cand: cities.filter((c) => (c.x - X) ** 2 + (c.y - Y) ** 2 <= R * R).sort((a, b) => b.n - a.n).slice(0, 4).map((c) => [c.name, c.n]) }); }
+  return { hubs, R, sited: P0.length };
+}
+function printGeoLabels(ctx, P, o, lab, G) {
+  const { T, PT } = o, out = { countries: 0, hubs: 0 }; if (!PA.ready) return out;
+  const fmt = (n) => n.toLocaleString(isDe() ? 'de-DE' : 'en'), name = (a) => { if (a.s) return geoNameOf(a.s); try { return new Intl.DisplayNames([isDe() ? 'de' : 'en'], { type: 'region' }).of(a.cc) || a.cc; } catch (e) { return a.cc; } };
+  // the hub bubbles first (reserved, drawn now, under the names): area by its sited roles
+  const hubs = G.hubs.slice(0, o.xp.hubs ?? 9), hTop = hubs.length ? hubs[0].n : 1, rOf = (n) => (1.4 + 5.6 * Math.sqrt(n / hTop)) * PT;
+  ctx.save(); for (const h of hubs) { h.r = rOf(h.n); ctx.globalAlpha = 0.78; ctx.fillStyle = T.hub; ctx.beginPath(); ctx.arc(h.X, h.Y, h.r, 0, 7); ctx.fill(); ctx.globalAlpha = 1; ctx.lineWidth = 0.6 * PT; ctx.strokeStyle = T.bg; ctx.stroke(); } ctx.restore();
+  // the hubs' names first, beside their bubble or out on a short leader: the city, then its sited roles and its leading employer
+  for (const h of hubs) { if (!h.name) continue; const fs = (5.0 + 1.2 * Math.sqrt(h.n / hTop)) * PT, g = h.r + 1.2 * PT, sub = `${fmt(h.n)} · ${h.top[0] ? h.top[0][0] : ''}`;
+    if (lab.put({ lines: [h.name, sub], fs, weight: 700, sub: 0.86, auto: true, color: T.ink, halo: T.halo, haloW: 0.18 * fs, cands: [[h.X + g, h.Y, 'left'], [h.X - g, h.Y, 'right'], [h.X, h.Y - g - 1.1 * fs, 'center'], [h.X, h.Y + g + 1.1 * fs, 'center'], ...leaderCands(h.X, h.Y, h.r, [g + 6 * PT, g + 12 * PT, g + 18 * PT, g + 26 * PT, g + 34 * PT])], pad: 1 * PT, tier: 2 })) out.hubs++;
+    else out.hubMissed = (out.hubMissed || []).concat(h.name); }
+  // the countries: the largest by open roles (at least 0.4 % of the largest), each with enough room on the image for its name; the name and the number in one label
+  const cs = G.countries.filter((a) => a.v > 0 && a.w > 0).sort((a, b) => b.v - a.v), vTop = cs.length ? cs[0].v : 1;
+  for (const a of cs) { if (out.countries >= (o.xp.countries ?? 10) || a.v < 0.004 * vTop) break; const nm = name(a), fs = (5.6 + 2.3 * Math.sqrt(a.v / vTop)) * PT;
+    ctx.font = `700 ${fs}px ${PRINT_FONT}`; const w = ctx.measureText(nm).width; if (a.ar < 1.3 * w * 2.2 * fs) continue;   // too small on the image for its name
+    const tm = ctx.getTransform(), inside = (x, y) => a.shapes.some((s0) => s0.path && ctx.isPointInPath(s0.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd'));
+    const cands = []; for (let ring = 0; ring <= 5; ring++) for (let q = 0; q < (ring ? 8 * ring : 1); q++) { const an = ring ? q * 2 * Math.PI / (8 * ring) : 0, x = a.x + Math.cos(an) * ring * 1.6 * fs, y = a.y + Math.sin(an) * ring * 1.1 * fs; if (inside(x, y)) cands.push([x, y, 'center']); }   // a lattice inside the country, nearest first
+    if (lab.put({ lines: [nm, fmt(a.v)], fs, weight: 700, sub: 0.8, auto: true, color: T.ink, halo: T.halo, haloW: 0.18 * fs, cands, pad: 1.2 * PT, tier: 1 })) out.countries++; else out.countryMissed = (out.countryMissed || []).concat(nm); }
+  out.hubList = hubs.map((h) => [h.name, h.n, h.top, h.cand]); out.countryList = cs.slice(0, 14).map((a) => [name(a), a.v, a.w > 0]);
+  return out;
+}
+// the key: one line of counts from what was drawn, and the marks it uses, in the image's bottom-left margin (device units: k px per pt)
+function printKey(ctx, T, lines, marks, m, k, cw, ch) {
+  const fs = 6 * k, items = []; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  ctx.font = `600 ${fs}px ${PRINT_FONT}`; let w = ctx.measureText(lines[0]).width + 6 * k; ctx.font = `400 ${fs}px ${PRINT_FONT}`;
+  for (const mk of marks) { const r = (mk.r || 1.3) * k, sw = mk.cols ? (mk.cols.length - 1) * 1.7 * r + 2 * r : 2 * r; items.push({ mk, r, sw }); w += sw + 2 * k + ctx.measureText(mk.t).width + 6 * k; }
+  const h = 2.2 * fs, pad = 3 * k, bw = w + 2 * pad, bh = h, cands = [[m, ch - m - bh], [cw - m - bw, ch - m - bh], [m, m], [cw - m - bw, m]], bg = hexRgb(T.bg);
+  const ink = (x, y) => { const d = ctx.getImageData(Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), Math.min(Math.round(bw), cw), Math.round(bh)).data; let n = 0; for (let i = 0; i < d.length; i += 16) if (Math.abs(d[i] - bg[0]) + Math.abs(d[i + 1] - bg[1]) + Math.abs(d[i + 2] - bg[2]) > 24) n++; return n; };
+  let best = cands[0], bn = Infinity; for (const c of cands) { const n = ink(c[0], c[1]); if (n < bn) { bn = n; best = c; } }
+  const [x0, y0] = best; ctx.globalAlpha = 0.85; ctx.fillStyle = T.bg; ctx.beginPath(); ctx.roundRect(x0, y0, bw, bh, 3 * k); ctx.fill(); ctx.globalAlpha = 1;
+  let x = x0 + pad, y = y0 + bh / 2; ctx.font = `600 ${fs}px ${PRINT_FONT}`; ctx.fillStyle = T.ink; ctx.fillText(lines[0], x, y); x += ctx.measureText(lines[0]).width + 6 * k; ctx.font = `400 ${fs}px ${PRINT_FONT}`;
+  for (const { mk, r, sw } of items) {
+    if (mk.cols) mk.cols.forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x + r + i * 1.7 * r, y, r, 0, 7); ctx.fill(); });
+    else { ctx.beginPath(); ctx.arc(x + r, y, r, 0, 7); if (mk.ring) { ctx.lineWidth = 0.5 * k; ctx.strokeStyle = mk.col; ctx.stroke(); } else { ctx.fillStyle = mk.col; ctx.fill(); } }
+    x += sw + 2 * k; ctx.fillStyle = T.sub; ctx.fillText(mk.t, x, y); x += ctx.measureText(mk.t).width + 6 * k; }
+  ctx.restore(); return [x0, y0, bw, bh];
+}
+async function renderPrint({ scale = 4, theme = 'light', frame = [900, 640], inScope, focus, focusN, geoCam, wash, contours, labels, hubs, countries, crop, ptWidth = 482, key = true } = {}) {
+  const keep = [W, H, BW, BH], z0 = { ...st.z }, T = PRINT_THEMES[theme] || PRINT_THEMES.light; setMap(frame[0], frame[1]);
+  const ids = inScope === 'all' ? 'all' : inScope ? (inScope instanceof Set ? inScope : new Set(inScope)) : null;
+  XP = { T, theme }; const xp = { focus, focusN, wash, contours, labels, hubs, countries, crop };
+  try {
+    const geoM = st.mode === 'geo';
+    if (geoM && geoCam) { const F = geoFrame(), r = geoCam.lat * Math.PI / 180, wx = (geoCam.lon + 180) / 360, wy = (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2;
+      st.z = { s: 360 * W / (F.p * geoCam.deg), cx: 0.5 + (wx - F.mx) * F.p / BW, cy: 0.5 + (wy - F.my) * F.p / BH }; }
+    if (!geoM && focus && coBy.has(focus) && st.mode === 'companies') {   // the narrative: the closest companies with in-scope roles (cosine of the company vectors, as the page's similar-companies link); zoomed to them
+      const fe = coBy.get(focus), inS = (id) => ids === 'all' || !ids || ids.has(id), sc = [];
+      if (fe.vec) for (const e of layers.companies.ents) { if (e === fe || !e.vec || !e.idx.some((i) => inS(rows[i][0]))) continue; let s = 0; for (let d = 0; d < D; d++) s += fe.vec[d] * e.vec[d]; sc.push([s, e]); }
+      sc.sort((a, b) => b[0] - a[0]); xp.near = sc.slice(0, focusN || 9); const pts = [fe, ...xp.near.map((x) => x[1])], xs = pts.map((e) => e.x), ys = pts.map((e) => e.y);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), s = Math.max(1, Math.min(16, 0.86 * W / (BW * Math.max(x1 - x0, 0.01)), 0.8 * H / (BH * Math.max(y1 - y0, 0.01))));
+      st.z = { s, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 }; }
+    else if (!geoM && st.mode === 'companies' && crop !== false) {   // the active core: the 2nd to 98th percentile of the hiring companies (in scope) on both axes
+      const inS = (id) => ids === 'all' || !ids || ids.has(id), hx = [], hy = []; for (const e of layers.companies.ents) if (e.idx.some((i) => inS(rows[i][0]))) { hx.push(e.x); hy.push(e.y); }
+      if (hx.length > 20) { hx.sort((a, b) => a - b); hy.sort((a, b) => a - b); const q = (A, p) => A[Math.floor(p * (A.length - 1))], x0 = q(hx, 0.02), x1 = q(hx, 0.98), y0 = q(hy, 0.02), y1 = q(hy, 0.98);
+        st.z = { s: Math.max(1, Math.min(4, W / (BW * (x1 - x0)), H / (BH * (y1 - y0)))), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 }; } }
+    if (st.mode === 'roles') { const Lr = layers.roles, xs = Lr.ents.map((e) => e.x).sort((a, b) => a - b), ys = Lr.ents.map((e) => e.y).sort((a, b) => a - b), q = (A, p) => A[Math.floor(p * (A.length - 1))];   // the role map: the whole anchored layout cropped to its content (the page's own fit differs by data set)
+      const x0 = q(xs, 0.002), x1 = q(xs, 0.998), y0 = q(ys, 0.002), y1 = q(ys, 0.998); st.z = { s: Math.max(1, Math.min(W / (BW * (x1 - x0)), H / (BH * (y1 - y0)))), cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 }; }
+    const P = prepare(THEMES[T.dark ? 'neon' : 'light']); P.paper = T.bg; P.ink = T.ink; P.T = { ...P.T, bg: T.bg, halo: T.bg };   // the print background everywhere (the screen theme's own bg would show as a box)
+    const cw = Math.round(900 * scale), ch = Math.round(900 * scale * H / W), m = 0.025 * cw;   // a tight margin: the map fills the page
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    const ctx = c.getContext('2d'); ctx.fillStyle = T.bg; ctx.fillRect(0, 0, cw, ch);
+    const kpt = cw / ptWidth;   // device px per printed point
+    const keyH = 0, u = Math.min((cw - 2 * m) / W, (ch - 2 * m - keyH) / H), ox = (cw - u * W) / 2, oy = (ch - keyH - u * H) / 2;   // keyH: the key's band at the bottom (three lines)
+    ctx.setTransform(u, 0, 0, u, ox, oy);
+    const PT = kpt / u, ext = [-ox / u, -oy / u, (cw - ox) / u, (ch - oy) / u], lab = printLabeller(ctx, ext, PT), o = { T, ext, PT, inScope: ids, xp };
+    const info = { preset: 'print', scale, theme, mode: st.mode, width: cw, height: ch, mapScale: u, pxPerPt: kpt };
+    let keyLines = [], marks = [], legend = null;
+    const nf = (n) => n.toLocaleString(isDe() ? 'de-DE' : 'en');
+    // the vignette: an ellipse of the image's aspect, clear in the middle, fading to the background at the corners
+    // the fade: the outer band (about twice the margin) fades from the background into the map on every side, so the edge is soft but the map keeps the page
+    const vignette = () => { if (!(T.vignette > 0)) return; const bg = hexRgb(T.bg), f = 2.2 * m; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      for (const [x0, y0, x1, y1, rx, ry, rw, rh] of [[0, 0, f, 0, 0, 0, f, ch], [cw, 0, cw - f, 0, cw - f, 0, f, ch], [0, 0, 0, f, 0, 0, cw, f], [0, ch, 0, ch - f, 0, ch - f, cw, f]]) {
+        const g1 = ctx.createLinearGradient(x0, y0, x1, y1); g1.addColorStop(0, `rgba(${bg},1)`); g1.addColorStop(0.45, `rgba(${bg},0.6)`); g1.addColorStop(1, `rgba(${bg},0)`); ctx.fillStyle = g1; ctx.fillRect(rx, ry, rw, rh); }
+      ctx.restore(); };
+    if (!geoM) {
+      const res = paintPrint(ctx, P, o); vignette(); ctx.setTransform(u, 0, 0, u, ox, oy);
+      const lb = printLabels(ctx, P, o, res, lab); Object.assign(info, res.counts, lb);
+      const fam = [...new Set(res.ins.map((it) => it.e.c1))].sort((a, b) => a - b).map((c1) => { const q = printRgb(P.Ly, c1, T), r = P.Ly.regions[c1]; return [`rgb(${q})`, r.label ? r.label[0] : nameOf(r)]; });
+      legend = null;   // one short line: the PDF caption carries the explanations
+      if (P.roles) { keyLines = [ids && ids !== 'all' ? `${nf(res.counts.tracked)} roles tracked · ${nf(res.counts.inScope)} in scope` : ids === 'all' ? `${nf(res.counts.inScope)} roles in scope` : `${nf(res.counts.tracked)} roles`];
+        marks = [{ cols: fam.slice(0, 5).map((f) => f[0]), t: ids && ids !== 'all' ? 'in scope (colour: job family)' : 'colour: job family', r: 1.1 }]; if (ids && ids !== 'all') marks.push({ col: `rgb(${T.grey})`, t: 'tracked, not in scope', r: 1.1 }); }
+      else { keyLines = [ids && ids !== 'all' ? `${nf(res.counts.tracked)} companies tracked · ${nf(res.counts.inScope)} hiring in scope · ${nf(res.counts.watched)} watched` : ids === 'all' ? `${nf(res.counts.tracked)} companies · ${nf(res.counts.inScope)} hiring in scope · ${nf(res.counts.watched)} watched` : `${nf(res.counts.tracked)} companies · ${nf(res.counts.inScope)} hiring · ${nf(res.counts.watched)} watched`];
+        marks = [{ cols: fam.slice(0, 5).map((f) => f[0]), t: 'hiring (colour: job family, size: open roles)', r: 1.1 }]; if (ids && ids !== 'all') marks.push({ col: `rgb(${T.grey})`, t: 'hiring outside scope only', r: 1.1 }); marks.push({ ring: true, col: `rgb(${T.ring})`, t: 'watched (no open role right now)', r: 1.1 });
+        if (res.near) { keyLines = [`${printCoName(focus && coBy.get(focus).name)} and its ${res.near.length} closest companies by what they hire for · open roles in scope`]; marks = []; } }
+    } else {
+      // the shade: a country by all its open roles (one geometric scale, 7 classes); a country drawn by its states keeps its own class as its centre and
+      // its states vary around it by their roles with an exact site, relative to each other (up to 3 classes down, none up)
+      const ramp = PRINT_GEO_RAMP[T.dark ? 'neon' : 'light'].map(hexRgb), Lg0 = P.Ly, G = { countries: printCountries(Lg0) };
+      const vmax = Math.max(1, ...G.countries.map((a) => a.v)), br = Array.from({ length: 7 }, (_, i) => Math.pow(vmax, i / 7)), cls = (v) => { let k = 0; for (let i = 0; i < 7; i++) if (v >= br[i]) k = i; return k; };
+      const stMax = new Map(); for (const s0 of Lg0.shapes) { if (paLevelOf(s0) === 'country') continue; const u0 = paUnit(s0), cc = String(s0.id).slice(0, 2); if (u0) stMax.set(cc, Math.max(stMax.get(cc) || 0, u0.n)); }
+      XP = { ...XP, xp, rivers: !!(geoCam && geoCam.rivers), shade: (s0) => { const lv = paLevelOf(s0), u0 = paUnit(s0); if (!u0) return null;
+        if (lv === 'country') { const v = printCountryVal(String(u0.id)); return v > 0 ? ramp[cls(v)] : null; }
+        const cc = String(s0.id).slice(0, 2), kc = cls(printCountryVal(cc)), m0 = stMax.get(cc) || 1, rel = u0.n > 0 ? Math.log1p(u0.n) / Math.log1p(m0) : 0; return ramp[Math.max(0, Math.min(6, kc - 3 + Math.round(3 * rel)))]; } };
+      paintGeo(ctx, P, { screen: false, names: 'many', ff: 3, ts: PT, noLabels: true }); ctx.setTransform(u, 0, 0, u, ox, oy);
+      // the country borders over the shades: each country reads as one unit
+      ctx.save(); ctx.strokeStyle = T.border; ctx.lineWidth = 0.75 * PT; ctx.lineJoin = 'round'; const doneB = new Set();
+      for (const L of printGeoLayers(Lg0)) for (const s0 of L.shapes) { if (s0.kind !== 'country' || !s0.path || doneB.has(s0.id)) continue; doneB.add(s0.id); ctx.stroke(s0.path); } ctx.restore();
+      Object.assign(G, printHubs(Lg0));
+      const lb = printGeoLabels(ctx, P, o, lab, G); Object.assign(info, lb, { deg: Math.round(geoDeg() * 10) / 10, breaks: br.map((x) => Math.round(x)) });
+      const D0 = PA.D, cnt = D0 ? D0.cnt : null, onMap = G.countries.filter((a) => a.w > 0).reduce((t, a) => t + a.v, 0), withC = cnt ? cnt.located + cnt.country : 0, inHubs = G.hubs.slice(0, xp.hubs ?? 9).reduce((t, h) => t + h.n, 0);
+      Object.assign(info, { onMap, elsewhere: withC - onMap, none: cnt ? cnt.none : 0, sited: G.sited, inHubs });
+      info.footnote = cnt ? `${nf(D0.nSel)} open roles in scope: ${nf(onMap)} in the countries on this map, ${nf(withC - onMap)} in other countries, ${nf(cnt.none)} without a known country. Country shade and number: all its open roles. German states: shaded by roles with an exact site, relative to each other. Bubbles: roles with an exact site within 40 km (${nf(inHubs)} of the ${nf(cnt.located)} roles with an exact site); many employers list roles by country only, so hubs such as Toulouse, Hamburg or London are under-counted.` : '';
+      keyLines = [`${nf(D0 ? D0.nSel : 0)} open roles in scope`];
+      marks = [{ cols: ramp.map((c) => `rgb(${c})`), t: `1 → ${nf(Math.round(vmax))} per country`, r: 1.1 }, { col: T.hub, t: 'hub: roles at an exact site', r: 1.3 }];
+    }
+    if (key) info.keyBox = printKey(ctx, T, keyLines, marks, m, kpt, cw, ch).map(Math.round);
+    info.key = keyLines; info.labels = lab.placed;
+    // self-checks: no two labels overlap, no name twice, the smallest type
+    const L0 = lab.placed; let overlaps = 0; for (let i = 0; i < L0.length; i++) for (let j = i + 1; j < L0.length; j++) { const a = L0[i].box, b = L0[j].box; if (a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]) overlaps++; }
+    const names = L0.filter((l) => l.tier !== 3).map((l) => l.t.toLowerCase()); info.checks = { overlaps, duplicates: names.length - new Set(names).size, minPt: Math.min(...L0.map((l) => l.pt)), n: L0.length };
+    lastRender = info;
+    return await new Promise((ok, bad) => c.toBlob((b) => (b ? ok(b) : bad(new Error('the image could not be made'))), 'image/png'));
+  } finally { [W, H, BW, BH] = keep; st.z = z0; XP = null; }
+}
 // the current view as a PNG Blob, on the theme's background with a margin of 4 % of the width on every side; the logical W x H
 // frame (the stage's size, or frame: [w, h] for a fixed one) is fitted into the rest at one uniform scale. The image is 900 * scale
 // wide. Fonts are drawn at scale * textScale px (default 0.6 for the 'many' names).
 let lastRender = null;
-async function renderImage({ scale = 4, names = 'many', theme = 'neon', textScale, frame } = {}) {
+async function renderImage(opts = {}) {
+  if (opts.preset === 'print') return renderPrint(opts);   // the print preset: its own painter (see renderPrint)
+  const { scale = 4, names = 'many', theme = 'neon', textScale, frame } = opts;
   const keep = [W, H, BW, BH]; if (frame) setMap(frame[0], frame[1]);
   try {
     const T = THEMES[theme] || THEMES.neon, P = prepare(T); P.paper = css('--panel', '#fff');
@@ -1930,6 +2314,6 @@ if (CAM) window.jobcrawlPlace = { camera: ({ lon, lat, deg }) => { cancelAnimati
     return { sel: D.nSel, cnt: { ...D.cnt }, coOnlyDE: D.coOnly.DE || 0, inView: paInView(), deg: geoDeg(), zoom: paZoom(geoDeg()), tier: paTier(geoDeg()), detail: PA.detail, missing: D.missing, surface: PA.pv.surface, built: PA.pv.built,
       compare: PA.pv.compare || null, bavaria: u('state', 'DE2'), oberbayern: null, munich: u('county', 'DE212'), munichLand: u('county', 'DE21H'), germany: u('country', 'DE'), singapore: u('country', 'SG'), sgCountryOnly: D.coOnly.SG || 0, clusters: PA.circles.length, labels: PA.lastLabels || [],
       deCountiesInScope: [...geo.lays.values()].flatMap((Lg) => Lg.counties.map((c) => c.id).concat(Lg.shapes.filter((s) => s.kind === 'district').map((s) => s.id))), deCountiesMissing: [...geo.lays.values()].flatMap((Lg) => Lg.counties.map((c) => c.id).concat(Lg.shapes.filter((s) => s.kind === 'district').map((s) => s.id))).filter((id) => PA.detail && !PA.n.has('county:' + id)) }; } };
-window.jobcrawlAtlas = { renderImage, setView, pills: () => (PILLS.mod ? PILLS.mod.state() : null), pillsApi: () => PILLS.mod, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
+window.jobcrawlAtlas = { renderImage, setView, ready: () => ({ rows: rowsReady, vectors: vecReady, place: PA.ready, geo: !!GEO }), pills: () => (PILLS.mod ? PILLS.mod.state() : null), pillsApi: () => PILLS.mod, geo: { t: () => geo.t, set: (t) => { geoStop(); geoSetT(t); }, play: (to) => geoPlay(to), loaded: () => !!GEO }, link: () => (lnk ? { from: lnk.from, to: lnk.to, n: lnk.n, lit: lnk.lit, maxShare: lnk.maxShare, sim: !!lnk.sim, picked: !!lnk.picked, empty: lnk.empty, top: lnk.top } : null), lastRender: () => lastRender, view: () => ({ W, H, BW, BH, z: { ...st.z } }),
   lens: () => ({ x: st.lens.x, y: st.lens.y, size: st.size }), inLens: () => inLens(), pointAt: (k) => { const e = lay().ents[k]; return e ? [sx(e.x), sy(e.y)] : null; },
   timeline: () => (TL ? { steps: TL.steps.length, kind: TL.kind, idx: scrub.idx, tm: scrub.tm, end: TL.end, records: TLN } : null), scrubTo: (i) => { tlStop(); setScrub(i); }, play: () => tlPlay(), heatMean: (c) => heatMeanOf(c), heatOn: (on) => { $('atlas-heat').checked = !!on; draw(); }, layer: () => { const Ly = lay(); return { n: Ly.ents.length, embers: Ly.ents.filter((e) => e.ember).length }; }, heatCells: () => { if (!lastHeat) return null; let mx = 0, big = 0, pos = 0, neg = 0; for (const v of lastHeat.sc) { const m = Math.abs(v); if (m > mx) mx = m; if (m >= 0.05) { big++; if (v > 0) pos++; else neg++; } } return { cells: lastHeat.sc.length, max: +mx.toFixed(3), warm: pos, cool: neg }; } };
