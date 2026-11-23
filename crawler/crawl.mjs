@@ -800,14 +800,17 @@ async function scan() {
       }
       if (gd.confirmed) problems.push(`GUARD ${name}: ${gd.n} fetches in a row with under half of its ${openRows.length} open roles listed; closing ${missing.length}`);
     } else delete guardState[name];
+    // an empty answer is a complete one only with the provider's positive empty signal (a swallowed error looks the same)
+    lc?.fetched(name, trow, live, { cls: trow.cls, complete: res.jobs.length > 0 || res.jobs.emptyOk === true, emptyOk: res.jobs.emptyOk === true });
+    let held = 0;
     for (const row of openRows) {
       if (!live.has(row.url)) {
+        if (lc?.mode === 'on' && !lc.closable(row.url)) { held++; continue; }   // MADE_LIFECYCLE=on: gone only on K misses + the floor
         row.status = 'gone';
         problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
       }
     }
-    // an empty answer is a complete one only with the provider's positive empty signal (a swallowed error looks the same)
-    lc?.fetched(name, trow, live, { cls: trow.cls, complete: res.jobs.length > 0 || res.jobs.emptyOk === true, emptyOk: res.jobs.emptyOk === true });
+    if (held) problems.push(`LIFECYCLE ${name}: ${held} missing roles kept open (under the miss count or the time floor)`);
   });
 
   if (needLazyJd.length && !flag('dry-run')) {
@@ -936,7 +939,15 @@ async function scan() {
   if (flag('dry-run')) return console.log('\n(dry run: nothing written)');
   // Sweep: a role that no feed has confirmed for 3 days is gone (covers sources that are no longer crawled).
   const cutoff = new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10);
-  for (const row of history.values()) if ((row.status === 'open' || row.status === 'dup' || row.status === 'extra') && row.last_seen < cutoff) row.status = 'gone';
+  // MADE_LIFECYCLE=on (D1): the sweep closes only on the lifecycle evidence; a posting nothing has listed for UNKNOWN_DAYS becomes
+  // 'unknown' (not a close: no surface lists it, the history never counts it as closed); the rest keeps its status.
+  const lcOn = lc?.mode === 'on';
+  for (const row of history.values()) {
+    if (!((row.status === 'open' || row.status === 'dup' || row.status === 'extra') && row.last_seen < cutoff)) continue;
+    if (!lcOn) row.status = 'gone';
+    else if (lc.closable(row.url)) row.status = 'gone';
+    else if (lc.unknownSince(row.url, row.last_seen)) row.status = 'unknown';
+  }
   // The description retention (jdCleanup) needs the rows the prune below drops, so it gets a copy taken before the prune.
   const jdRows = new Map(history);
   // Retention (crawl.history_prune_days, default 0 = off: hoard first, reduce later). When a profile sets it, gone/filtered

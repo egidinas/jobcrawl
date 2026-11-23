@@ -86,3 +86,13 @@ test('lifecycle shadow: the crawl outputs the board reads are byte-identical to 
   const extra = files(shadow).filter((f) => !existsSync(join(off, f))).map((f) => relative('.', f)).filter((f) => !volatile.test(f));
   assert.deepEqual(extra, [], 'files only shadow wrote outside lifecycle/');
 });
+
+test('lifecycle on: a posting one complete answer lacks stays open (under K misses); off closes it at once', () => {
+  const prof = profileDir(), stub = stubFile();
+  const off = runCycles('off', prof, stub), on = runCycles('on', prof, stub);
+  const st = (d) => Object.fromEntries(readFileSync(join(d, 'scan-history.tsv'), 'utf8').trim().split('\n').slice(1)
+    .map((l) => l.split('\t')).map((p) => [p[2], p[6]]));
+  assert.equal(st(off)['Optics Engineer'], 'gone');
+  assert.equal(st(on)['Optics Engineer'], 'open');
+  assert.equal(st(on)['Systems Engineer'], 'open');
+});

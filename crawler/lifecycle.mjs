@@ -12,7 +12,10 @@
 //   state.json                  url -> [board that last listed it, last day seen (YYYY-MM-DD), consecutive misses]
 //   events/<day>/ev-<ts>.jsonl  the cycle's lines, append-only, one file per cycle (never rewritten)
 // The mode is read from MADE_LIFECYCLE: off (default) writes nothing. shadow records only and changes nothing else in the crawl.
-// 'on' is reserved for the crawl's own K rule (stage 3, not implemented yet) and behaves like shadow.
+// 'on' (stage 3, switched on only after the replay gate, coordinator 2026-11-24): the crawl's own status follows the same rule as the
+// lifecycle deriver: a posting a complete answer lacks is 'gone' only at K_MISSES counted misses and at least FLOOR_H hours after it
+// was last seen (closable()); the 3-day sweep closes only on that evidence and marks a posting nothing has listed for UNKNOWN_DAYS
+// 'unknown' (D1: never a close). K, floor and unknown days mirror scripts/atlas/lifecycle/config/lifecycle_v1.json.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
@@ -23,6 +26,7 @@ const PRUNE_MISSES = 6, PRUNE_DAYS = 60;
 // bounded growth: a url gets at most MAX_MISS_LINES 'missed' lines in a row (the count in the state goes on); event day folders older
 // than EVENT_KEEP_DAYS are removed by the module itself (the Atlas lane ingests them within a day)
 export const MAX_MISS_LINES = 8, EVENT_KEEP_DAYS = 14;
+export const K_MISSES = 3, FLOOR_H = 24, UNKNOWN_DAYS = 14;
 // An answer of exactly a provider page cap is a truncated listing (live check 2026-11-23: SmartRecruiters boards answering 500 on every
 // fetch while the postings beyond the cap stay live): never a complete answer, so it produces no misses.
 export const PAGE_CAPS = CAPPED_COUNTS;   // one list for the crawl and its lifecycle lines
@@ -35,7 +39,7 @@ export function lifecycleMode(env = process.env) {
 /** -> null when off, else a recorder {fetched, skippedOrFailed, flush, stats}. now() gives the cycle clock (tests pass their own). */
 export function openLifecycle(dataDir, { mode = lifecycleMode(), now = () => new Date(), log = console.log } = {}) {
   if (mode === 'off') return null;
-  if (mode === 'on') log('[lifecycle] mode on is not implemented in the crawl yet (stage 3); recording as shadow');
+  if (mode === 'on') log(`[lifecycle] mode on: the crawl closes a posting only at ${K_MISSES} counted misses and ${FLOOR_H} h since last seen`);
   const dir = resolve(dataDir, 'lifecycle');
   const stateFile = resolve(dir, 'state.json');
   let urls = {};
@@ -57,8 +61,20 @@ export function openLifecycle(dataDir, { mode = lifecycleMode(), now = () => new
     return { ts, fetch_id };
   }
 
+  const lastSeenMs = (s) => (Number.isFinite(s?.[3]) ? s[3] : Date.parse(`${s?.[1] ?? '1970-01-01'}T23:59:59Z`));
   return {
     mode, stats,
+    /** 'on' mode: may the crawl mark this url gone? K counted misses since it was last seen and the time floor passed. */
+    closable(u, at = now()) {
+      const s = urls[u];
+      return Boolean(s) && s[2] >= K_MISSES && at.getTime() - lastSeenMs(s) >= FLOOR_H * 3600e3;
+    },
+    /** 'on' mode: nothing listed this url for UNKNOWN_DAYS (or the state never held it and the history says so). */
+    unknownSince(u, lastSeenDay, at = now()) {
+      const s = urls[u];
+      const ms = s ? lastSeenMs(s) : Date.parse(`${lastSeenDay || '1970-01-01'}T23:59:59Z`);
+      return at.getTime() - ms >= UNKNOWN_DAYS * 864e5;
+    },
     /** A board that was not fetched (circuit breaker) or failed: one fetch line, no url touched. */
     skippedOrFailed(board, meta, cls) { fetchLine(board, meta, cls, 0, false); },
     /** A board answered. listed = every url of the answer (before any filter); complete = the answer is the whole board. */
@@ -80,7 +96,7 @@ export function openLifecycle(dataDir, { mode = lifecycleMode(), now = () => new
         if (!s) { lines.push({ ts, kind: 'seen', url: u, board, fetch_id, first: true }); stats.first++; stats.seen++; }
         else if (s[1] !== day || s[2] > 0) { lines.push({ ts, kind: 'seen', url: u, board, fetch_id, ...(s[2] > 0 ? { after_misses: s[2] } : {}) }); stats.seen++; }
         if (s && s[0] !== board) byBoard.get(s[0])?.delete(u);
-        urls[u] = [board, day, 0];
+        urls[u] = [board, day, 0, Date.parse(ts)];   // [3]: last seen (ms); older states carry the day only
         (byBoard.get(board) ?? byBoard.set(board, new Set()).get(board)).add(u);
       }
       if (!complete) return;

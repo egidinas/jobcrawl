@@ -98,3 +98,17 @@ test('bounded: at most MAX_MISS_LINES missed lines per url, old event days remov
   assert.equal(existsSync(join(dir, 'lifecycle', 'events', '2026-10-01')), false);
   assert.equal(st.event_days_removed, 1);
 });
+
+test('on: closable only at K counted misses and the time floor; unknown after the unknown days', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lc-'));
+  let t = Date.parse('2026-11-20T08:00:00Z');
+  const lc = openLifecycle(dir, { mode: 'on', now: () => new Date(t), log: quiet });
+  lc.fetched('B', M, ['u', 'v']);
+  t += 3600e3; lc.fetched('B', M, ['v']); t += 3600e3; lc.fetched('B', M, ['v']); t += 3600e3; lc.fetched('B', M, ['v']);
+  assert.equal(lc.closable('u'), false, '3 misses within 3 h: under the 24 h floor');
+  t += 24 * 3600e3; lc.fetched('B', M, ['v']);
+  assert.equal(lc.closable('u'), true);
+  assert.equal(lc.closable('v'), false);
+  assert.equal(lc.unknownSince('w', '2026-11-01'), true, 'not in the state, history last seen 19 days ago');
+  assert.equal(lc.unknownSince('v', ''), false);
+});
