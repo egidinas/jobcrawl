@@ -20,6 +20,7 @@ import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { classifyError, makeBreaker, hostOf, livenessGuard } from './resilience.mjs';
+import { openLifecycle } from './lifecycle.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
 const args = process.argv.slice(2);
@@ -406,6 +407,7 @@ async function scan() {
   const RELEASED_FILE = pathResolve(OUT_DIR, 'title-released.tsv');
   const releasedAt = loadReleased(RELEASED_FILE);
   const date = today();
+  const lc = openLifecycle(OUT_DIR);   // MADE_LIFECYCLE=shadow: source observations only (lifecycle.mjs); off = null, nothing recorded
   const fresh = [];
   const problems = [];
   const boardMs = [];   // [name, provider, ms] per board fetch, for the board-time note (cycle length is measured, owner 2026-11-07)
@@ -588,10 +590,10 @@ async function scan() {
   results.forEach((res, i) => {
     const name = companies[i].name;
     const tr = (extra) => { const row = { ts: new Date().toISOString(), board: name, provider: res?.provider ?? res?.r?.provider ?? companies[i].provider ?? '?', host: res?.host ?? hostOf(companies[i], res?.r?.slug), ...extra }; triageRows.push(row); return row; };
-    if (res?.skipped) { tr({ cls: 'SKIPPED', code: '', detail: 'circuit breaker open' }); return; }   // not fetched: no health change, nothing marked gone
+    if (res?.skipped) { lc?.skippedOrFailed(name, tr({ cls: 'SKIPPED', code: '', detail: 'circuit breaker open' }), 'SKIPPED'); return; }   // not fetched: no health change, nothing marked gone
     if (!res || res.error) {
       const t = res?.triage ?? { cls: 'OTHER', code: '', detail: 'failed' };
-      tr({ cls: t.cls, code: t.code, detail: t.detail });
+      lc?.skippedOrFailed(name, tr({ cls: t.cls, code: t.code, detail: t.detail }), t.cls);
       noteHealth(name, false, 0);
       return problems.push(`${name}: ${res?.error ?? 'failed'} [${t.cls}${t.code ? ' ' + t.code : ''}]`);
     }
@@ -778,7 +780,7 @@ async function scan() {
     // Liveness: previously tracked roles that vanished from a feed that loaded fine. A partial answer (the provider's time or page
     // budget ended the walk: res.jobs.incomplete) proves nothing about the roles it did not reach: they keep their status, and the
     // 3-day sweep below still retires a role that no answer confirms.
-    if (res.jobs.incomplete) return;
+    if (res.jobs.incomplete) { lc?.fetched(name, trow, live, { cls: 'INCOMPLETE', complete: false }); return; }
     // Liveness guard (resilience.mjs livenessGuard): a board that had more than 5 open roles and now shows under half of them, or none,
     // without a positive empty-OK signal is a suspect fetch (a provider that swallowed an error looks exactly like this): the roles stay
     // open for this cycle and only the 3rd such fetch in a row closes them.
@@ -788,6 +790,7 @@ async function scan() {
       if (gd.hold) {
         trow.cls = 'SUSPECT_DROP'; trow.detail = `${openRows.length - missing.length} of ${openRows.length} open roles still listed; kept open (${gd.n} of 3)`;
         problems.push(`GUARD ${name}: ${trow.detail}`);
+        lc?.fetched(name, trow, live, { cls: 'SUSPECT_DROP', complete: false });
         return;
       }
       if (gd.confirmed) problems.push(`GUARD ${name}: ${gd.n} fetches in a row with under half of its ${openRows.length} open roles listed; closing ${missing.length}`);
@@ -798,6 +801,8 @@ async function scan() {
         problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
       }
     }
+    // an empty answer is a complete one only with the provider's positive empty signal (a swallowed error looks the same)
+    lc?.fetched(name, trow, live, { cls: trow.cls, complete: res.jobs.length > 0 || res.jobs.emptyOk === true, emptyOk: res.jobs.emptyOk === true });
   });
 
   if (needLazyJd.length && !flag('dry-run')) {
@@ -945,6 +950,7 @@ async function scan() {
   } else {
     console.log('history: pruning off (crawl.history_prune_days 0)');
   }
+  lc?.flush();
   saveHistory(history);
   // the released urls that are still open (a role that closed or turned 'extra' again, e.g. with the switch off, leaves the file)
   if (titleRel?.extra) {   // the extra shift counts what it released, so its max_total holds across cycles
