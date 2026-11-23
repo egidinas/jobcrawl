@@ -1370,8 +1370,8 @@ function blit(S, alpha) { const a = st.z.s / S.z.s, ox = W / 2 * (1 - a) + (S.z.
 //     in-scope roles is coloured, one with only other roles grey, a watched one (the layout's zero_roles) a small ring
 //   - the role map always shows the whole anchored layout; the company map is cropped to its hiring firms (2nd-98th percentile)
 //   - geography: a country's shade and number are all its open roles; a country drawn by states (Germany) keeps its shade as the centre and its states
-//     vary by their roles with an exact site; hub bubbles (roles with an exact site within 40 km) named after the city with most roles, with the leading
-//     employer; a footnote that reconciles every number with the total
+//     vary by their roles with an exact site; hub bubbles (roles with an exact site within 40 km) named after the city with most roles and their count;
+//     a footnote that reconciles every number with the total
 //   - a key at the bottom with the counts of what was drawn (never typed in)
 // Options (besides scale, default 4; theme 'light' | 'neon'; frame [w, h], the logical size, whose aspect is the image's):
 //   inScope    Set or array of the in-scope role ids, or 'all' (every role is: the public board). Without it the key gives plain counts.
@@ -1618,13 +1618,13 @@ function printGeoLabels(ctx, P, o, lab, G) {
   // the hub bubbles first (reserved, drawn now, under the names): area by its sited roles
   const hubs = G.hubs.slice(0, o.xp.hubs ?? 9), hTop = hubs.length ? hubs[0].n : 1, rOf = (n) => (1.4 + 5.6 * Math.sqrt(n / hTop)) * PT;
   ctx.save(); for (const h of hubs) { h.r = rOf(h.n); ctx.globalAlpha = 0.78; ctx.fillStyle = T.hub; ctx.beginPath(); ctx.arc(h.X, h.Y, h.r, 0, 7); ctx.fill(); ctx.globalAlpha = 1; ctx.lineWidth = 0.6 * PT; ctx.strokeStyle = T.bg; ctx.stroke(); } ctx.restore();
-  // the hubs' names first, beside their bubble or out on a short leader: the city, then its sited roles and its leading employer
-  for (const h of hubs) { if (!h.name) continue; const fs = (5.0 + 1.2 * Math.sqrt(h.n / hTop)) * PT, g = h.r + 1.2 * PT, sub = `${fmt(h.n)} · ${h.top[0] ? h.top[0][0] : ''}`;
-    if (lab.put({ lines: [h.name, sub], fs, weight: 700, sub: 0.86, auto: true, color: T.ink, halo: T.halo, haloW: 0.18 * fs, cands: [[h.X + g, h.Y, 'left'], [h.X - g, h.Y, 'right'], [h.X, h.Y - g - 1.1 * fs, 'center'], [h.X, h.Y + g + 1.1 * fs, 'center'], ...leaderCands(h.X, h.Y, h.r, [g + 6 * PT, g + 12 * PT, g + 18 * PT, g + 26 * PT, g + 34 * PT])], pad: 1 * PT, tier: 2 })) out.hubs++;
+  // the hubs' names first, beside their bubble or out on a short leader: the city and its sited roles
+  for (const h of hubs) { if (!h.name) continue; const fs = (6.6 + 1.4 * Math.sqrt(h.n / hTop)) * PT, g = h.r + 1.2 * PT;   // the place and its roles only (an employer beside a place distracts on the map)
+    if (lab.put({ lines: [`${h.name} ${fmt(h.n)}`], fs, weight: 700, auto: true, color: T.ink, halo: T.halo, haloW: 0.18 * fs, cands: [[h.X + g, h.Y, 'left'], [h.X - g, h.Y, 'right'], [h.X, h.Y - g - 1.1 * fs, 'center'], [h.X, h.Y + g + 1.1 * fs, 'center'], ...leaderCands(h.X, h.Y, h.r, [g + 6 * PT, g + 12 * PT, g + 18 * PT, g + 26 * PT, g + 34 * PT])], pad: 1 * PT, tier: 2 })) out.hubs++;
     else out.hubMissed = (out.hubMissed || []).concat(h.name); }
   // the countries: the largest by open roles (at least 0.4 % of the largest), each with enough room on the image for its name; the name and the number in one label
   const cs = G.countries.filter((a) => a.v > 0 && a.w > 0).sort((a, b) => b.v - a.v), vTop = cs.length ? cs[0].v : 1;
-  for (const a of cs) { if (out.countries >= (o.xp.countries ?? 10) || a.v < 0.004 * vTop) break; const nm = name(a), fs = (5.6 + 2.3 * Math.sqrt(a.v / vTop)) * PT;
+  for (const a of cs) { if (out.countries >= (o.xp.countries ?? 10) || a.v < 0.004 * vTop) break; const nm = name(a), fs = (6.4 + 2.3 * Math.sqrt(a.v / vTop)) * PT;
     ctx.font = `700 ${fs}px ${PRINT_FONT}`; const w = ctx.measureText(nm).width; if (a.ar < 1.3 * w * 2.2 * fs) continue;   // too small on the image for its name
     const tm = ctx.getTransform(), inside = (x, y) => a.shapes.some((s0) => s0.path && ctx.isPointInPath(s0.path, tm.a * x + tm.e, tm.d * y + tm.f, 'evenodd'));
     const cands = []; for (let ring = 0; ring <= 5; ring++) for (let q = 0; q < (ring ? 8 * ring : 1); q++) { const an = ring ? q * 2 * Math.PI / (8 * ring) : 0, x = a.x + Math.cos(an) * ring * 1.6 * fs, y = a.y + Math.sin(an) * ring * 1.1 * fs; if (inside(x, y)) cands.push([x, y, 'center']); }   // a lattice inside the country, nearest first

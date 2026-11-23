@@ -118,14 +118,14 @@ export function init(api) {
 
   // ---- hubs: the cities with open roles, folded into the metro they belong to (a suburb, a village with one big site, a second place of the same name),
   // so a pill names a real hub. Within hubKm (30 km zoomed out, less zoomed in) the largest place (the place file's own count) is the head and names the
-  // hub; a hub of 20+ roles held mostly (60 %+) by one employer carries its name ("Oberkochen · ZEISS Group"). Counts are the sums, so nothing is lost.
+  // hub (the pill shows the place and its count only). Counts are the sums, so nothing is lost.
   function hubsOf(R, deg) { const km = Math.min(30, Math.max(6, deg * 2.5)), on = []; cityList.forEach((c, k) => { if (R.city[k] > 0) on.push(k); });
     on.sort((a, b) => cityList[b].size - cityList[a].size || R.city[b] - R.city[a]); const used = new Set(), hubs = [];
     for (const k of on) { if (used.has(k)) continue; const h = cityList[k], mem = [k]; used.add(k);
       for (const j of on) { if (used.has(j)) continue; const c = cityList[j]; if (c.cc === h.cc && (kmBetween(h.lon, h.lat, c.lon, c.lat) <= km || c.name === h.name && kmBetween(h.lon, h.lat, c.lon, c.lat) <= 120)) { mem.push(j); used.add(j); } }
       const n = mem.reduce((t, j) => t + R.city[j], 0), co = new Map(); for (const j of mem) for (const [ci, m] of R.cityCo.get(j) || []) co.set(ci, (co.get(ci) || 0) + m);
       const top = [...co].sort((a, b) => b[1] - a[1])[0], an0 = top && n >= 20 && top[1] >= 0.6 * n && api.coName ? api.coName(D.coName[top[0]]) : null, anchor = an0 && an0.length > 24 ? an0.slice(0, 23).replace(/[\s,.\-]+\S*$/, '') + '…' : an0;   // an anchor only for a real hub (20+ roles), its name short
-      hubs.push({ k, c: h, n, mem, name: anchor && anchor.toLowerCase() !== h.name.toLowerCase() ? `${h.name} · ${anchor}` : h.name }); }
+      hubs.push({ k, c: h, n, mem, name: h.name, anchor }); }   // the pill names the place only (an employer beside a place distracts); anchor kept for the list and checks
     return hubs; }
 
   // ---- pins and status (small files, read once; the status file only when a status is shown)
