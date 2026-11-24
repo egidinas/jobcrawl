@@ -87,6 +87,43 @@ const workdayPosted = (label = '') => {
 };
 
 /** HTML (possibly entity-escaped, as Greenhouse sends it) to readable plain text. */
+// Infinite Orbits (Wix): every link of the job list reads "View Job"; the title is the <h2> of the same repeater card (its element ids end
+// in __<card uuid>). Without a card title the URL slug is used, de-doubled: one slug repeats its title ("senior-thermal-engineersenior-
+// thermal-engineer", seen 24 Nov 2026).
+export function undoubled(t) {
+  const s = String(t || '').trim(), h = s.length / 2;
+  return s.length >= 8 && Number.isInteger(h) && s.slice(0, h).toLowerCase() === s.slice(h).toLowerCase() ? s.slice(0, h).trim() : s;
+}
+export function parseInfiniteOrbits(html = '') {
+  const UUID = '([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
+  const cardTitle = new Map();
+  for (const m of html.matchAll(new RegExp('__' + UUID + String.raw`"[^>]*>\s*<h2[^>]*>([\s\S]*?)</h2>`, 'g'))) {
+    if (!cardTitle.has(m[1])) cardTitle.set(m[1], plain(m[2]));
+  }
+  const re = /<a[^>]+href="(https:\/\/jobs\.infiniteorbits\.io\/jobs\/([^"\/]+))"[^>]*>([\s\S]*?)<\/a>/gi;
+  const out = [], seen = new Set();
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const jobUrl = m[1];
+    if (seen.has(jobUrl)) continue;
+    seen.add(jobUrl);
+    const before = html.slice(Math.max(0, m.index - 4000), m.index), ids = [...before.matchAll(new RegExp('__' + UUID, 'g'))];
+    let title = ids.length ? cardTitle.get(ids[ids.length - 1][1]) || '' : '';
+    if (!title || title.length < 3) {
+      const inner = plain(m[3]);
+      title = inner && inner.length >= 3 && !/view|apply|read/i.test(inner) ? inner : '';
+    }
+    if (!title) {
+      let slugText = m[2];
+      try { slugText = decodeURIComponent(m[2]); } catch (e) { /* keep the raw slug */ }
+      title = undoubled(slugText.replace(/–/g, '-').replace(/-/g, ' ').replace(/\s+/g, ' ').trim());
+      title = title.charAt(0).toUpperCase() + title.slice(1);
+    }
+    out.push({ title, url: jobUrl, location: 'Toulouse, France', postedAt: '' });
+  }
+  return out;
+}
+
 export function plain(html = '') {
   let s = String(html);
   if (/&lt;\/?[a-z]/i.test(s)) s = decode(s);
@@ -2477,32 +2514,8 @@ export const providers = {
   infiniteorbits: {
     detect: (u) => (/infiniteorbits\.io/i.test(u) ? 'infiniteorbits' : null),
     async fetch(slug, entry = {}) {
-      const url = 'https://jobs.infiniteorbits.io/jobs';
-      const html = await get(url, { json: false, timeoutMs: 20000 });
-      const re = /<a[^>]+href="(https:\/\/jobs\.infiniteorbits\.io\/jobs\/([^"\/]+))"[^>]*>([\s\S]*?)<\/a>/gi;
-      let m;
-      const out = [], seen = new Set();
-      while ((m = re.exec(html)) !== null) {
-        const jobUrl = m[1];
-        const pathSlug = m[2];
-        const inner = plain(m[3]);
-        if (seen.has(jobUrl)) continue;
-        seen.add(jobUrl);
-
-        let title = inner;
-        if (!title || title.length < 3 || /view|apply|read/i.test(title)) {
-          title = decodeURIComponent(pathSlug).replace(/–/g, '-').replace(/-/g, ' ').trim();
-          title = title.charAt(0).toUpperCase() + title.slice(1);
-        }
-
-        out.push({
-          title,
-          url: jobUrl,
-          location: 'Toulouse, France',
-          postedAt: '',
-        });
-      }
-      return out;
+      const html = await get('https://jobs.infiniteorbits.io/jobs', { json: false, timeoutMs: 20000 });
+      return parseInfiniteOrbits(html);
     },
   },
 

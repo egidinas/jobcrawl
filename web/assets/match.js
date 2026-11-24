@@ -540,3 +540,63 @@ export function sampleSpread(ix, ok, n = 12, rng = Math.random) {
   }
   return pick.map((k) => pool[k]);
 }
+
+// ---------- "Find roles" through a ranking service (the site's server), the engine above as the fallback ----------
+// A site may name a service at window.JOBCRAWL_MATCH_SERVICE = { url, regionScope: { "<region label>": "<scope id>" } } (madenetwork.de:
+// the NUC next-role route behind the data API). The page reads it when "Find roles" is pressed; without it the browser engine answers.
+// Contract: POST url with the JSON body {entry: "cv", cv_text, lang} (never a query string) -> 200 {list: [{sid, job_id, title, company,
+// company_slug, location, region, country, level, url, ...}]}. One request, no retry: each one counts against the visitor's daily quota.
+
+export const SERVICE_FIRST_MS = 5000;      // the first answer (headers) must come within this, else the browser engine answers
+export const SERVICE_BODY_MS = 5000;       // and the body within this after the headers
+export const SERVICE_MAX_CHARS = 20000;    // the route's own limit on the pasted text
+
+/** Ask the service once. -> {engine: 'service', items, ms} | {engine: 'fallback', why} (unreachable, slow, 5xx, not JSON, empty list,
+ * any other 4xx such as a login page) | {engine: 'limit', status, retryAfter} (429: the daily quota, shown as such) |
+ * {engine: 'refused', status} (400 / 413 / 422: the text was refused; a fallback would not say why). */
+export async function askService(svc, text, { lang = 'en', fetchFn = (u, i) => fetch(u, i), firstMs = SERVICE_FIRST_MS, bodyMs = SERVICE_BODY_MS, now = () => Date.now() } = {}) {
+  if (!svc || !svc.url) return { engine: 'fallback', why: 'no service' };
+  const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let tm = ac ? setTimeout(() => ac.abort(), firstMs) : 0;
+  const t0 = now();
+  const body = JSON.stringify({ entry: 'cv', cv_text: String(text).slice(0, SERVICE_MAX_CHARS), lang: lang === 'de' ? 'de' : 'en' });
+  let r;
+  try {
+    r = await fetchFn(svc.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, credentials: 'same-origin', cache: 'no-store', ...(ac ? { signal: ac.signal } : {}) });
+  } catch (e) {
+    clearTimeout(tm);
+    return { engine: 'fallback', why: ac && ac.signal.aborted ? 'timeout' : 'network' };
+  }
+  clearTimeout(tm);
+  if (r.status === 429) return { engine: 'limit', status: 429, retryAfter: +(r.headers && r.headers.get && r.headers.get('retry-after')) || null };
+  if ([400, 413, 422].includes(r.status)) return { engine: 'refused', status: r.status };
+  if (!r.ok) return { engine: 'fallback', why: 'http ' + r.status };
+  if (ac) tm = setTimeout(() => ac.abort(), bodyMs);
+  let d = null;
+  try { d = await r.json(); } catch (e) { d = null; } finally { clearTimeout(tm); }
+  const items = d && Array.isArray(d.list) ? d.list.filter((x) => x && x.sid && x.title) : null;
+  if (!items) return { engine: 'fallback', why: 'not json' };
+  if (!items.length) return { engine: 'fallback', why: 'empty' };
+  return { engine: 'service', items, ms: now() - t0 };
+}
+
+/** The visitor's picks on a service answer, as the browser engine applies them to its own index: Where (the narrowest scope of the role's
+ * region, by svc.regionScope; a region not named there counts as the widest scope), Level from / to (level code -> index in levelCodes,
+ * an unknown level is 0 as in match-attrs) and Max per employer. -> {shown, outside (in level, outside Where, best first), capped}. */
+export function pickServiceItems(items, { scope = null, scopeIds = [], regionScope = {}, levelCodes = [''], minLevel = 0, maxLevel = 99, perEmployer = 99 } = {}) {
+  const widestK = Math.max(0, scopeIds.length - 1), want = scope === null || scope === undefined ? widestK : scope;
+  const scopeOf = (x) => { const k = scopeIds.indexOf(regionScope[x.region]); return k < 0 ? widestK : k; };
+  const levelOf = (x) => Math.max(0, levelCodes.indexOf(x.level || ''));
+  const shown = [], outside = [], per = new Map();
+  let capped = 0;
+  for (const x of items) {
+    const lv = levelOf(x);
+    if (lv < minLevel || lv > maxLevel) continue;
+    if (scopeOf(x) > want) { outside.push(x); continue; }
+    const c = x.company_slug || x.company || '';
+    if (c && (per.get(c) || 0) >= perEmployer) { capped++; continue; }
+    per.set(c, (per.get(c) || 0) + 1);
+    shown.push(x);
+  }
+  return { shown, outside, capped };
+}

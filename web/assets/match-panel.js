@@ -5,11 +5,21 @@
 // - Two-Facet Match Chips (Background + Target Match, Level Stepped Up ↗)
 // Mounted by match.html into #match-panel.
 
-import { loadConfig, dataUrl, pageUrl, roleLink, companyLink, defaultScope, modelCache, L, LP, esc, isDe } from './app.js';
-import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields, chunkCvText, decomposeRating, queryVec } from './match.js';
+import { loadConfig, dataUrl, pageUrl, roleLink, companyLink, defaultScope, modelCache, storageKey, L, LP, esc, isDe } from './app.js';
+import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields, chunkCvText, decomposeRating, queryVec, askService, pickServiceItems } from './match.js';
 import * as PF from './profile.js';
 
 const cfg = await loadConfig();
+// "Find roles" asks the site's ranking service first when the site names one (window.JOBCRAWL_MATCH_SERVICE, see match.js askService;
+// madenetwork.de: the NUC next-role route, owner 2026-11-10) and falls back to the browser engine below when it is unreachable, slow or
+// failing. The visitor can choose "Match on this device" (the browser engine only, nothing sent); the choice lasts for the session.
+const SVC = () => (typeof window !== 'undefined' && window.JOBCRAWL_MATCH_SERVICE && window.JOBCRAWL_MATCH_SERVICE.url ? window.JOBCRAWL_MATCH_SERVICE : null);
+const LOCAL_KEY = storageKey('on-device');
+const ssGet = (k) => { try { return sessionStorage.getItem(k); } catch (e) { return null; } };
+const ssSet = (k, v) => { try { if (v) sessionStorage.setItem(k, v); else sessionStorage.removeItem(k); } catch (e) { /* the choice lasts for this page */ } };
+let onDevice = ssGet(LOCAL_KEY) === '1';
+const useService = () => !!SVC() && !onDevice;
+const HAS_SVC = !!SVC();
 // shadow: the in-browser model (EmbeddingGemma-2, a second vector space) stays hidden until an ax_b03 browser model is measured (size,
 // load time on a phone, same results as the NUC on 20 CVs); the NUC stays the default (owner 2026-11-14). Public is unchanged.
 const BROWSER_MODEL = !(window.MADE_B2_SHADOW === true || /^shadow\./.test(location.hostname));
@@ -80,16 +90,20 @@ button.more-asp{all:unset;cursor:pointer;font-size:13px;color:var(--accent-text)
 .reason-strip button{all:unset;cursor:pointer;padding:2px 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:11.5px}
 .reason-strip button:hover{border-color:var(--accent);color:var(--accent-text)}
 .reason-strip button.on{background:var(--accent);color:var(--btn-fg,#fff);border-color:var(--accent)}
+.match-local{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer}
+.match-quiet{font-size:12.5px;color:var(--muted)}
+.match-h small{font-weight:400;color:var(--muted)}
 .detected-badge{font-size:12px;padding:2px 8px;background:var(--line);border-radius:10px;color:var(--ink);font-weight:500}
 @media(max-width:560px){.vote{grid-column:2;grid-row:auto}.match-r{grid-template-columns:1.8em 1fr}.asp{grid-template-columns:1fr}.reason-strip{grid-column:1/-1}}
 `;
 document.head.appendChild(style);
 
+const LOCAL_NOTE = L('Your text and ratings stay in this browser; nothing is uploaded. Ratings alone (no CV) need no download: the roles you like and dislike are looked up in the board\'s own meaning index. Meaning matching downloads a small language model once (about 200 MB) and keeps it in this browser.', 'Ihr Text und Ihre Bewertungen bleiben in diesem Browser; es wird nichts hochgeladen. Bewertungen allein (ohne CV) brauchen keinen Download: Die Stellen, die Sie mögen oder ablehnen, werden im Bedeutungsindex der Börse nachgeschlagen. Der Bedeutungsabgleich lädt einmalig ein kleines Sprachmodell (ca. 200 MB) und behält es in diesem Browser.');
 mount.innerHTML = `<details class="match-details">
-<summary class="match-head"><strong>${L('Match me', 'Passende Stellen für mich')}</strong><span class="small muted">${L('Paste your CV or describe what you want. Ranked open roles, computed on your device.', 'CV einfügen oder beschreiben, was Sie suchen. Passende offene Stellen, berechnet auf Ihrem Gerät.')}</span></summary>
+<summary class="match-head"><strong>${L('Match me', 'Passende Stellen für mich')}</strong><span class="small muted" id="match-head-note">${headNote()}</span></summary>
 <div class="match-body">
 <textarea id="match-text" spellcheck="false" ${LP('Optional: paste your CV, or write a few lines on the work you want to do. Or leave this empty and rate roles instead (use the button below).', 'Optional: CV einfügen oder in wenigen Zeilen beschreiben, was Sie machen möchten. Oder leer lassen und stattdessen Stellen bewerten (Knopf darunter).')}></textarea>
-<div class="match-file"><label>${L('or read a CV file (PDF or text; read on this device, nothing is uploaded):', 'oder eine CV-Datei lesen (PDF oder Text; auf diesem Gerät gelesen, nichts wird hochgeladen):')} <input type="file" id="match-file" accept=".pdf,.txt,.md,application/pdf,text/plain"></label> <span class="match-note" id="match-file-status"></span></div>
+<div class="match-file"><label>${HAS_SVC ? L('or read a CV file (PDF or text; read on this device into the box above):', 'oder eine CV-Datei lesen (PDF oder Text; auf diesem Gerät in das Feld oben gelesen):') : L('or read a CV file (PDF or text; read on this device, nothing is uploaded):', 'oder eine CV-Datei lesen (PDF oder Text; auf diesem Gerät gelesen, nichts wird hochgeladen):')} <input type="file" id="match-file" accept=".pdf,.txt,.md,application/pdf,text/plain"></label> <span class="match-note" id="match-file-status"></span></div>
 
 <div class="target-bar" id="target-control-bar">
   <span id="target-bar-label" class="match-note">${L('Target activity — steer where you want to go next:', 'Zielaktivität — Richtung für den nächsten Karriereschritt:')}</span>
@@ -114,6 +128,7 @@ mount.innerHTML = `<details class="match-details">
 <label>${L('Keywords', 'Stichwörter')}<select id="match-kwmode"><option value="auto" selected>${L('automatic', 'automatisch')}</option><option value="must">${L('must match', 'müssen passen')}</option><option value="hint">${L('only a hint', 'nur ein Hinweis')}</option><option value="off">${L('ignore (ratings decide)', 'ignorieren (Bewertungen entscheiden)')}</option></select></label>
 <label class="match-ex"><input type="checkbox" id="match-explore"> ${L('Mix in 4 roles to explore', '4 Stellen zum Erkunden beimischen')}</label>
 <button type="button" class="button" id="match-go">${L('Find roles', 'Stellen finden')}</button>
+${HAS_SVC ? `<label class="match-local"><input type="checkbox" id="match-local"${onDevice ? ' checked' : ''}> ${L('Match on this device', 'Auf diesem Gerät abgleichen')}</label>` : ''}
 <button type="button" class="button outline" id="match-spread">${L('Show me a spread to rate', 'Eine Auswahl zum Bewerten zeigen')}</button>
 <a class="button outline" href="${pageUrl('atlas.html')}" id="match-atlas">${L('Explore the atlas', 'Atlas erkunden')}</a>
 <button type="button" class="button" id="match-taste" hidden>${L('Update results from my ratings', 'Ergebnisse aus meinen Bewertungen aktualisieren')}</button>
@@ -131,8 +146,20 @@ mount.innerHTML = `<details class="match-details">
 <label class="match-file">${L('Load a saved profile: ', 'Gespeichertes Profil laden: ')}<input type="file" id="match-load" accept=".json,application/json"></label>
 <button type="button" class="button outline small-btn" id="match-copy">${L('Copy my ratings', 'Meine Bewertungen kopieren')}</button>
 </div>
-<p class="match-note">${L('Your text and ratings stay in this browser; nothing is uploaded. Ratings alone (no CV) need no download: the roles you like and dislike are looked up in the board\'s own meaning index. Meaning matching downloads a small language model once (about 200 MB) and keeps it in this browser.', 'Ihr Text und Ihre Bewertungen bleiben in diesem Browser; es wird nichts hochgeladen. Bewertungen allein (ohne CV) brauchen keinen Download: Die Stellen, die Sie mögen oder ablehnen, werden im Bedeutungsindex der Börse nachgeschlagen. Der Bedeutungsabgleich lädt einmalig ein kleines Sprachmodell (ca. 200 MB) und behält es in diesem Browser.')}</p>
+<p class="match-note" id="match-privacy">${privacyNote()}</p>
 </div></details>`;
+
+// the panel's words on where the text goes: true for the engine that answers (the service, or this device)
+function headNote() {
+  return useService()
+    ? L('Paste your CV or describe what you want. Our server ranks the open roles for you and keeps nothing.', 'CV einfügen oder beschreiben, was Sie suchen. Unser Server ordnet die offenen Stellen für Sie und speichert nichts.')
+    : L('Paste your CV or describe what you want. Ranked open roles, computed on your device.', 'CV einfügen oder beschreiben, was Sie suchen. Passende offene Stellen, berechnet auf Ihrem Gerät.');
+}
+function privacyNote() {
+  if (useService()) return L('“Find roles” sends your text to our server once, to rank the open roles. It is used for this answer only: not stored, not logged. Your ratings and profile stay in this browser. “Match on this device” keeps everything in your browser; it downloads a role index once (about 30 MB).',
+    '„Stellen finden“ schickt Ihren Text einmal an unseren Server, um die offenen Stellen zu ordnen. Er wird nur für diese Antwort verwendet: nicht gespeichert, nicht protokolliert. Ihre Bewertungen und Ihr Profil bleiben in diesem Browser. „Auf diesem Gerät abgleichen“ hält alles in Ihrem Browser; dafür wird einmal ein Stellenindex geladen (etwa 30 MB).');
+  return LOCAL_NOTE;
+}
 
 const $ = (id) => mount.querySelector('#' + id);
 const st = {
@@ -295,17 +322,51 @@ function levelHint(items) {
   return ' ' + L('Your level answers point to ', 'Ihre Level-Antworten deuten auf ') + nm(lo) + (lo === hi ? '' : ' – ') + (lo === hi ? '' : nm(hi)) + L(' (set the level filter if you want to use that).', ' (Level-Filter setzen, um das zu nutzen).');
 }
 
-async function run(useModel) {
+// ---------- the service answer (no index needed) ----------
+const LOCAL_BTN = () => ` <button type="button" class="link more-asp" data-local="1">${L('Match on this device', 'Auf diesem Gerät abgleichen')}</button>`;
+const FALLBACK_LINE = () => `<span class="match-quiet">${L('Showing on-device results.', 'Ergebnisse von diesem Gerät.')}</span> `;
+// -> true when the service answered (a list, the daily limit or a refusal); false: the browser engine answers instead
+async function runService(text) {
+  const svc = SVC();
+  say(L('Matching on our server…', 'Abgleich auf unserem Server …'));
+  const a = await askService(svc, text, { lang: isDe() ? 'de' : 'en' });
+  if (a.engine === 'limit') {
+    say(L('The daily limit for matches on our server is reached. Try again tomorrow, or match on this device.', 'Das Tageslimit für Abgleiche auf unserem Server ist erreicht. Bitte morgen erneut versuchen oder auf diesem Gerät abgleichen.') + LOCAL_BTN());
+    return true;
+  }
+  if (a.engine === 'refused') {
+    say(L(`Our server could not read this text (HTTP ${a.status}). Shorten or change it, or match on this device.`, `Unser Server konnte diesen Text nicht lesen (HTTP ${a.status}). Bitte kürzen oder ändern, oder auf diesem Gerät abgleichen.`) + LOCAL_BTN());
+    return true;
+  }
+  if (a.engine !== 'service') { console.warn('match service: ' + a.why + '; the browser engine answers'); st.svcFail = a.why; return false; }
+  const o = settings(), scopeIds = cfg.scopes.map((s) => s.id);
+  const p = pickServiceItems(a.items, { ...o, scopeIds, regionScope: svc.regionScope || {}, levelCodes: LEVEL_CODES });
+  st.svc = new Map(a.items.map((x) => [x.sid, x]));
+  st.last = { kind: 'svc', shown: p.shown, outside: p.outside, capped: p.capped, scope: o.scope, total: a.items.length, showOutside: p.shown.length < 5 };
+  st.shown = 20;
+  render();
+  const kp = $('match-kw').value.trim() || st.fields.size;
+  say(L(`Ranked on our server in ${(a.ms / 1000).toFixed(1)} s; your text was not kept. `, `Auf unserem Server geordnet in ${(a.ms / 1000).toLocaleString('de-DE', { maximumFractionDigits: 1 })} s; Ihr Text wurde nicht gespeichert. `)
+    + (kp ? L('Keywords and field picks apply only when you match on this device.', 'Stichwörter und Fachgebiete gelten nur beim Abgleich auf diesem Gerät.') : ''));
+  return true;
+}
+
+async function run(useModel, { fromTaste = false } = {}) {
   const text = $('match-text').value.trim();
   const targetAmbition = $('match-target-text')?.value.trim() || '';
-  const ix = await ensureIndex();
-  const items = ratedItems().filter((x) => x.w !== null || x.r.reason);
-  let note = '';
-
+  let fallback = '';
+  st.svcFail = null;
   if (text.length < 20 && !hasTaste() && !targetAmbition) {
     say(L('Paste a few lines about your work, select a target activity, or rate some roles.', 'Fügen Sie ein paar Zeilen zu Ihrer Arbeit ein, wählen Sie eine Zielaktivität, oder bewerten Sie Stellen.'));
     return;
   }
+  if (!fromTaste && text.length >= 20 && useService()) {
+    if (await runService(text)) return;
+    fallback = FALLBACK_LINE();
+  }
+  const ix = await ensureIndex();
+  const items = ratedItems().filter((x) => x.w !== null || x.r.reason);
+  let note = fallback;
 
   // Meaning embedding with model if requested
   if (text.length >= 20 && useModel && ix.vec && st.embText !== text) {
@@ -461,13 +522,15 @@ function similarHtml(i) {
 
 async function fillDetail(li) {
   const id = li.dataset.id, box = li.querySelector('.match-d'); if (box.dataset.ready) return; box.dataset.ready = '1';
-  const d = (await shard(id))[id], row = st.rows.find((x) => x[0] === id);
-  const facts = d ? [d.l, d.r, d.lv && st.ix.levels.indexOf(d.lv) > 0 && L(...levelNames(st.ix.levels.indexOf(d.lv))), (d.tg || []).join(' · '), d.d && L('listed ', 'gelistet ') + d.d].filter(Boolean) : [];
+  const sv = st.svc && st.svc.get(id), ixRow = st.rows ? st.rows.find((x) => x[0] === id) : null;
+  const row = ixRow || (sv ? [id, sv.title, sv.company || '', sv.url || '', sv.company_slug || ''] : [id, '', '', '', '']);
+  const d = (await shard(id))[id], lvK = (c) => LEVEL_CODES.indexOf(c);
+  const facts = d ? [d.l, d.r, d.lv && lvK(d.lv) > 0 && L(...levelNames(lvK(d.lv), null)), (d.tg || []).join(' · '), d.d && L('listed ', 'gelistet ') + d.d].filter(Boolean) : [];
   const text = d && d.x ? d.x.replace(/\n{3,}/g, '\n\n').trim() : '';
   box.innerHTML = `<div class="facts">${facts.map((f) => `<span>${typeof f === 'string' && !f.startsWith('<') ? esc(f) : f}</span>`).join('')}</div>`
     + (text ? `<div class="txt" tabindex="0">${esc(text)}</div>` : `<p class="match-note">${L('No description was saved for this role; the title is all that was matched.', 'Für diese Stelle wurde keine Beschreibung gespeichert; abgeglichen wurde nur der Titel.')}</p>`)
     + `<div class="links"><a class="link" href="${roleLink(id)}">${ROLE_LINK}</a>${d && companyLink(d.cs) ? `<a class="link" href="${companyLink(d.cs)}">${L('About ' + row[2] + ' →', 'Über ' + row[2] + ' →')}</a>` : ''}<a class="link" href="${esc(row[3])}" target="_blank" rel="noopener">${L('Apply on the employer site ↗', 'Beim Arbeitgeber bewerben ↗')}</a></div>`
-    + similarHtml(st.idIndex ? st.idIndex.get(id) : st.rows.findIndex((x) => x[0] === id))
+    + (st.ix ? similarHtml(st.idIndex ? st.idIndex.get(id) : st.rows.findIndex((x) => x[0] === id)) : '')
     + `<div class="aspects">${aspectHtml(id)}</div>`;
 }
 
@@ -503,9 +566,46 @@ ${showReason ? reasonStripHtml(id) : ''}
   }).join('');
 }
 
+// a row of the service answer: the same markup as listHtml (data-id = the site's role id, so ratings and the page's tags work), drawn from
+// the answer's own fields (no index needed)
+function svcListHtml(list, open, start = 0) {
+  return list.map((x, k) => {
+    const id = x.sid, lk = Math.max(0, LEVEL_CODES.indexOf(x.level || '')), lvName = lk ? L(...levelNames(lk, null)) : '';
+    const rData = rated(id), showReason = rData.vote === -1 || st.activeReasonId === id;
+    const chips = (x.more ? `<span class="match-chip">${L(`+${x.more} more listing${x.more > 1 ? 's' : ''}`, `+${x.more} weitere Ausschreibung${x.more > 1 ? 'en' : ''}`)}</span>` : '')
+      + (lk >= 4 ? `<span class="match-chip stepup">${L('lead / senior ↗', 'Lead / Senior ↗')}</span>` : '');
+    return `<li class="match-r${open.has(id) ? ' open' : ''}" data-id="${esc(id)}"${x.job_id ? ` data-job="${esc(x.job_id)}"` : ''}><span class="n">${start + k + 1}</span><button type="button" class="hd" aria-expanded="${open.has(id)}">${esc(x.title)}</button>
+<span class="sum">${summary(id)}</span>
+<span class="vote" data-k="vote" role="group" aria-label="${isDe() ? 'Gewicht' : 'Weight'}">${voteHtml(id)}</span>
+<span class="m">${esc(x.company || '')}${x.location ? ' · ' + esc(x.location) : x.region ? ' · ' + esc(x.region) : ''}${lvName ? ' · ' + lvName : ''}</span>
+<span class="w">${chips}</span>
+${showReason ? reasonStripHtml(id) : ''}
+<div class="match-d"></div></li>`;
+  }).join('');
+}
+
+function renderSvc(open) {
+  const s = st.last, ol = $('match-results'), h = $('match-res-h'), sc = cfg.scopes[s.scope] || { label: { en: '', de: '' } }, wEn = sc.label.en, wDe = sc.label.de || sc.label.en;
+  const more = s.outside.length;
+  ol.innerHTML = svcListHtml(s.shown, open)
+    + (more && s.showOutside ? `<li class="match-h" role="presentation">${L(`Also close, outside ${wEn}`, `Ebenfalls passend, außerhalb von ${wDe}`)}</li>` + svcListHtml(s.outside, open, s.shown.length) : '');
+  h.hidden = false;
+  h.innerHTML = (s.scope >= cfg.scopes.length - 1 ? L(`The ${s.total} best matches`, `Die ${s.total} besten Treffer`) : L(`${s.shown.length} of the ${s.total} best matches ${s.shown.length === 1 ? 'is' : 'are'} in ${wEn}`, `${s.shown.length} der ${s.total} besten Treffer ${s.shown.length === 1 ? 'liegt' : 'liegen'} in ${wDe}`))
+    + (s.capped ? ' · ' + L(`${s.capped} hidden by the limit per employer`, `${s.capped} durch das Limit je Arbeitgeber ausgeblendet`) : '')
+    + (more ? ` <button type="button" class="link more-asp" data-outside="1">${s.showOutside ? L('Hide the ones outside', 'Die außerhalb ausblenden') : L(`Show ${more} outside`, `${more} außerhalb zeigen`)}</button>` : '');
+  $('match-rated').innerHTML = ''; $('match-rated-h').hidden = true;
+  mount.querySelectorAll('.match-r.open').forEach(fillDetail);
+  $('match-foot').hidden = false;
+  $('match-more').hidden = true;
+  $('match-taste').hidden = !hasTaste();
+}
+
 function render() {
-  const ix = st.ix, res = st.last ? st.last.results.slice(0, st.shown) : [], ol = $('match-results'), rl = $('match-rated');
   const open = new Set([...mount.querySelectorAll('.match-r.open')].map((e) => e.dataset.id));
+  if (st.last && st.last.kind === 'svc') return renderSvc(open);
+  $('match-res-h').hidden = true;
+  if (!st.ix) { $('match-results').innerHTML = ''; $('match-rated').innerHTML = ''; $('match-rated-h').hidden = true; $('match-foot').hidden = true; return; }
+  const ix = st.ix, res = st.last ? st.last.results.slice(0, st.shown) : [], ol = $('match-results'), rl = $('match-rated');
   ol.innerHTML = listHtml(res, open, ix);
   const rated = ratedItems().filter((x) => x.w !== null || Object.keys(x.r).length);
   const showRated = st.last && st.last.results.length && rated.length && !res.some((r) => st.ratings.has(idOf(r.i)));
@@ -577,8 +677,9 @@ mount.addEventListener('click', async (e) => {
     st.ratings.set(id, r);
     persist();
     render();
+    if (st.last && st.last.kind === 'svc') { say(L('Rating saved in this browser. "Update results from my ratings" ranks on this device.', 'Bewertung in diesem Browser gespeichert. „Ergebnisse aus meinen Bewertungen aktualisieren“ ordnet auf diesem Gerät.')); return; }
     say(L('Rating reason updated. Updating results…', 'Bewertungsgrund aktualisiert. Aktualisiere Treffer …'));
-    await run(!!st.model);
+    await run(!!st.model, { fromTaste: true });
     return;
   }
 
@@ -649,7 +750,9 @@ mount.addEventListener('click', async (e) => {
   try {
     if (btn.id === 'match-go') { btn.disabled = true; await run(BROWSER_MODEL && (!!st.model || (await cacheReady()))); btn.disabled = false; }
     else if (btn.id === 'match-model') { if (!BROWSER_MODEL) return; btn.disabled = true; await run(true); btn.disabled = false; }
-    else if (btn.id === 'match-taste') { btn.disabled = true; await run(!!st.model); btn.disabled = false; }
+    else if (btn.id === 'match-taste') { btn.disabled = true; await run(!!st.model, { fromTaste: true }); btn.disabled = false; }
+    else if (btn.dataset.local) { setOnDevice(true); const go = $('match-go'); go.disabled = true; try { await run(BROWSER_MODEL && (!!st.model || (await cacheReady()))); } finally { go.disabled = false; } }
+    else if (btn.dataset.outside) { st.last.showOutside = !st.last.showOutside; render(); }
     else if (btn.id === 'match-spread') { btn.disabled = true; await spread(); btn.disabled = false; }
     else if (btn.id === 'match-more') { st.shown += 20; render(); }
     else if (btn.id === 'match-copy') await copyRatings();
@@ -658,7 +761,7 @@ mount.addEventListener('click', async (e) => {
 
 async function copyRatings() {
   const rated = [...st.ratings].map(([id, r]) => {
-    const x = st.rows.find((y) => y[0] === id);
+    const sv = st.svc && st.svc.get(id), x = (st.rows && st.rows.find((y) => y[0] === id)) || (sv ? [id, sv.title, sv.company, sv.url] : [id, '', '', '']);
     return { id, title: x[1], company: x[2], url: x[3], reason: r.reason, role: r.role, company_rating: r.company, place: r.place, level: r.level, skills: r.skills, interest: r.interest, pay: r.pay, would_apply: r.apply, vote: r.vote, weight: tasteWeight(r) };
   });
   if (!rated.length) { say(L('Rate a few roles first: open one and use the stars.', 'Bewerten Sie zuerst einige Stellen: eine öffnen und die Sterne nutzen.')); return; }
@@ -669,8 +772,16 @@ async function copyRatings() {
 
 if (location.hash === '#match') mount.querySelector('details').open = true;
 window.addEventListener('hashchange', () => { if (location.hash === '#match') { mount.querySelector('details').open = true; mount.scrollIntoView({ block: 'start' }); } });
-mount.querySelector('details').addEventListener('toggle', (e) => { if (e.target.open) ensureIndex().catch(() => {}); });
-if (mount.querySelector('details').open) ensureIndex().catch(() => {});
+// opening the panel starts the index download only when this device answers (the service needs none)
+mount.querySelector('details').addEventListener('toggle', (e) => { if (e.target.open && !useService()) ensureIndex().catch(() => {}); });
+if (mount.querySelector('details').open && !useService()) ensureIndex().catch(() => {});
+function setOnDevice(on) {
+  onDevice = !!on; ssSet(LOCAL_KEY, onDevice ? '1' : '');
+  const cb = $('match-local'); if (cb) cb.checked = onDevice;
+  $('match-head-note').innerHTML = headNote(); $('match-privacy').innerHTML = privacyNote();
+  if (onDevice && mount.querySelector('details').open) ensureIndex().catch(() => {});
+}
+mount.addEventListener('change', (e) => { if (e.target.id === 'match-local') setOnDevice(e.target.checked); });
 if (BROWSER_MODEL) cacheReady().then((ready) => { if (ready) $('match-model').hidden = true; });
 document.getElementById('match-jump')?.addEventListener('click', () => { const d = mount.querySelector('details'); d.open = true; mount.scrollIntoView({ block: 'start' }); });
 restoreSettings();
