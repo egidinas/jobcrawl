@@ -36,7 +36,9 @@ def main():
         return 0
     texts = set()
     with open(hist, encoding='utf-8', newline='') as fh:
-        for r in csv.DictReader(fh, delimiter='\t'):
+        # The history is plain TSV, written without quoting: a title that starts with a quote mark must not open a quoted field
+        # (rows were swallowed silently, and from 2026-11-22 the step crashed on "field larger than field limit").
+        for r in csv.DictReader(fh, delimiter='\t', quoting=csv.QUOTE_NONE):
             if r.get('status') in ('open', 'dup') and r.get('location'):
                 texts.add(r['location'])
     new = [t for t in texts if t not in cache]
