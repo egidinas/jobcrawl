@@ -35,6 +35,9 @@ def main():
         print('geo: no scan-history.tsv, nothing to do')
         return 0
     texts = set()
+    # no length limit on a field: csv's default 131,072 characters raised "field larger than field limit" on one long field
+    # (22-24 Nov 2026, together with the quote mark below); min(): the C long of csv is 32 bits on some platforms
+    csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
     with open(hist, encoding='utf-8', newline='') as fh:
         # The history is plain TSV, written without quoting: a title that starts with a quote mark must not open a quoted field
         # (rows were swallowed silently, and from 2026-11-22 the step crashed on "field larger than field limit").

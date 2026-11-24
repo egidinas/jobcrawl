@@ -43,6 +43,22 @@ class Sanitize(unittest.TestCase):
         self.assertEqual(row['place'], 'Munich, Bavaria')
         self.assertEqual(row['places'], [['Munich', 'Bavaria', 'DE']])
 
+    def test_quote_mark_and_long_field(self):
+        # the two faults of 22-24 Nov 2026: a title that starts with a quote mark opened a quoted field and swallowed rows, and a field
+        # above csv's default limit (131,072 characters) stopped the step. Both rows around them must still be read.
+        with open(os.path.join(self.data, 'scan-history.tsv'), 'a', encoding='utf-8') as fh:
+            fh.write('https://careers.example.com/e\tAcme\t"Senior" Engineer\tBerlin\topen\n')
+            fh.write('https://careers.example.com/f\tAcme\t' + 'x' * 200_000 + '\tHamburg\topen\n')
+            fh.write('https://careers.example.com/g\tAcme\tEngineer\tKöln\topen\n')
+        out = io.StringIO()
+        with mock.patch.object(sys, 'argv', ['sanitize', '--data', self.data]), contextlib.redirect_stdout(out):
+            self.assertEqual(sanitize.main(), 0)
+        self.assertIn('6 distinct location texts', out.getvalue())
+        with open(os.path.join(self.data, 'places.json'), encoding='utf-8') as fh:
+            places = json.load(fh)
+        for loc in ('Berlin', 'Hamburg', 'Köln'):
+            self.assertIn(loc, places)
+
     def test_no_history_is_not_an_error(self):
         empty = tempfile.mkdtemp(prefix='jc-geo-empty-')
         try:
