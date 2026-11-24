@@ -582,21 +582,20 @@ export async function askService(svc, text, { lang = 'en', fetchFn = (u, i) => f
 
 /** The visitor's picks on a service answer, as the browser engine applies them to its own index: Where (the narrowest scope of the role's
  * region, by svc.regionScope; a region not named there counts as the widest scope), Level from / to (level code -> index in levelCodes,
- * an unknown level is 0 as in match-attrs) and Max per employer. -> {shown, outside (in level, outside Where, best first), capped}. */
+ * an unknown level is 0 as in match-attrs) and Max per employer. -> {shown, outside (in level, outside Where, best first), capped}; the cap counts each of the two lists on its own. */
 export function pickServiceItems(items, { scope = null, scopeIds = [], regionScope = {}, levelCodes = [''], minLevel = 0, maxLevel = 99, perEmployer = 99 } = {}) {
   const widestK = Math.max(0, scopeIds.length - 1), want = scope === null || scope === undefined ? widestK : scope;
   const scopeOf = (x) => { const k = scopeIds.indexOf(regionScope[x.region]); return k < 0 ? widestK : k; };
   const levelOf = (x) => Math.max(0, levelCodes.indexOf(x.level || ''));
-  const shown = [], outside = [], per = new Map();
+  const shown = [], outside = [], perIn = new Map(), perOut = new Map();
   let capped = 0;
   for (const x of items) {
     const lv = levelOf(x);
     if (lv < minLevel || lv > maxLevel) continue;
-    if (scopeOf(x) > want) { outside.push(x); continue; }
-    const c = x.company_slug || x.company || '';
+    const out = scopeOf(x) > want, per = out ? perOut : perIn, c = x.company_slug || x.company || '';
     if (c && (per.get(c) || 0) >= perEmployer) { capped++; continue; }
     per.set(c, (per.get(c) || 0) + 1);
-    shown.push(x);
+    (out ? outside : shown).push(x);
   }
   return { shown, outside, capped };
 }

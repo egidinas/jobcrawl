@@ -90,7 +90,7 @@ button.more-asp{all:unset;cursor:pointer;font-size:13px;color:var(--accent-text)
 .reason-strip button{all:unset;cursor:pointer;padding:2px 8px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font-size:11.5px}
 .reason-strip button:hover{border-color:var(--accent);color:var(--accent-text)}
 .reason-strip button.on{background:var(--accent);color:var(--btn-fg,#fff);border-color:var(--accent)}
-.match-local{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer}
+.match-row label.match-local{flex-direction:row;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer}
 .match-quiet{font-size:12.5px;color:var(--muted)}
 .match-h small{font-weight:400;color:var(--muted)}
 .detected-badge{font-size:12px;padding:2px 8px;background:var(--line);border-radius:10px;color:var(--ink);font-weight:500}

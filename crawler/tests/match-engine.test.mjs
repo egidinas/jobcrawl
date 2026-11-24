@@ -109,4 +109,8 @@ test('picks: Where by the region (as the browser index scope bits), level range,
   const two = [item('f6', 'Europe', { company_slug: 'same' }), item('g7', 'Europe', { company_slug: 'same' })];
   const cap = pickServiceItems(two, { scope: 3, scopeIds, levelCodes, perEmployer: 1 });
   assert.deepEqual([cap.shown.length, cap.capped], [1, 1]);
+  // the rows outside Where keep the cap too (24 Nov: one employer three times in the list below the heading)
+  const three = [item('h8', 'United States', { company_slug: 'io' }), item('i9', 'United States', { company_slug: 'io' }), item('j0', 'United States', { company_slug: 'io' })];
+  const outCap = pickServiceItems(three, { scope: 1, scopeIds, regionScope: SVC.regionScope, levelCodes, perEmployer: 2 });
+  assert.deepEqual([outCap.shown.length, outCap.outside.length, outCap.capped], [0, 2, 1]);
 });
