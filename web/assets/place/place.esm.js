@@ -1,4 +1,6 @@
 // place.esm.js: generated from geobase.js + place_data.js + place_a.js at source commit 3b92e864cb (proto/transitions on feat/atlas-view-transitions, make_esm_place.sh); do not edit
+// PATCHED here after 3b92e864cb (jobcrawl, 24 Nov 2026, the first-zoom freeze): loadFlat builds each outline from one path string in slices,
+// landOf remembers its answers per outline, loadGeoDetail names the finer outlines (GEO.hiresIds). Port these to proto/transitions before regenerating.
 // Places base for the transitions page, in the look of the site's geography page (atlas-geography.html, neon theme): flat OKLCH area fills
 // ranked by posting density (deep blue = few, magenta, amber = many), thin borders, rivers, names with counts. Drawn on a 2D canvas behind
 // the transparent MapLibre canvas with the map's own projection. Painting and tokens follow paintGeo / geoLayer in
@@ -60,22 +62,28 @@ function loadGeoFile(url) {
 }
 // counts per country id (ISO code) come from the postings on the page, so the numbers match the points; the colour is the page's log-density scale
 // ---- the county level (NUTS3 2024, built by build_levels.py from the NUTS work), assignment of postings to units, counts that add up across levels
+const yieldTask = () => new Promise((ok) => setTimeout(ok, 0));
+function flatShape(s, kind) {
+  let area = 0, cx = 0, cy = 0, best = 0; const bb = [1e18, 1e18, -1e18, -1e18], d = [];
+  const mx = (lon) => (lon + 180) / 360, my = (lat) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2; };
+  s.r.forEach((flat) => {
+    let a = 0, sx = 0, sy = 0, px = 0, py = 0, fx = 0, fy = 0;
+    for (let i = 0; i < flat.length; i += 2) {
+      const X = mx(flat[i] / 1e4), Y = my(flat[i + 1] / 1e4), u = X * GEO.U, v = Y * GEO.U; d.push((i ? 'L' : 'M') + u + ' ' + v);
+      if (u < bb[0]) bb[0] = u; if (v < bb[1]) bb[1] = v; if (u > bb[2]) bb[2] = u; if (v > bb[3]) bb[3] = v;
+      if (i) { const c = px * Y - X * py; a += c; sx += (px + X) * c; sy += (py + Y) * c; } else { fx = X; fy = Y; } px = X; py = Y;
+    }
+    const c = px * fy - fx * py; a += c; sx += (px + fx) * c; sy += (py + fy) * c; d.push('Z');
+    area += Math.abs(a) / 2; if (Math.abs(a) > best && a !== 0) { best = Math.abs(a); cx = sx / (3 * a); cy = sy / (3 * a); }
+  });
+  return { id: s.id, name: s.name, cc: s.cc, kind, path: new Path2D(d.join('')), bb, areaWorld: area, mx: cx, my: cy, n: 0 };
+}
 function loadFlat(url, kind) {
-  return fetch(url).then((r) => r.json()).then((d) => d.shapes.map((s) => {
-    const path = new Path2D(); let area = 0, cx = 0, cy = 0, best = 0, bb = [1e18, 1e18, -1e18, -1e18];
-    const mx = (lon) => (lon + 180) / 360, my = (lat) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2; };
-    s.r.forEach((flat) => {
-      let a = 0, sx = 0, sy = 0, px = 0, py = 0, fx = 0, fy = 0;
-      for (let i = 0; i < flat.length; i += 2) {
-        const X = mx(flat[i] / 1e4), Y = my(flat[i + 1] / 1e4), u = X * GEO.U, v = Y * GEO.U; if (i) path.lineTo(u, v); else path.moveTo(u, v);
-        if (u < bb[0]) bb[0] = u; if (v < bb[1]) bb[1] = v; if (u > bb[2]) bb[2] = u; if (v > bb[3]) bb[3] = v;
-        if (i) { const c = px * Y - X * py; a += c; sx += (px + X) * c; sy += (py + Y) * c; } else { fx = X; fy = Y; } px = X; py = Y;
-      }
-      const c = px * fy - fx * py; a += c; sx += (px + fx) * c; sy += (py + fy) * c; path.closePath();
-      area += Math.abs(a) / 2; if (Math.abs(a) > best && a !== 0) { best = Math.abs(a); cx = sx / (3 * a); cy = sy / (3 * a); }
-    });
-    return { id: s.id, name: s.name, cc: s.cc, kind, path, bb, areaWorld: area, mx: cx, my: cy, n: 0 };
-  }));
+  return fetch(url).then((r) => r.json()).then(async (d) => {
+    const out = []; let t0 = performance.now();
+    for (const sh of d.shapes) { out.push(flatShape(sh, kind)); if (performance.now() - t0 > 30) { await yieldTask(); t0 = performance.now(); } }
+    return out;
+  });
 }
 // ---- loading in two phases (contract with the geography page, 2026-11-14)
 // Phase 1, loadGeo(urls, counts, pts, opts): the world and Europe outline files only. Sets GEO.countries, GEO.states (German state counts from point-in-polygon on the state shapes, GEO.n1 per posting),
@@ -107,8 +115,9 @@ async function geoPhase1(urls, counts, pts, opts) {
   const colourOf = (n, area) => { if (GEO.classed) return classRgb(n); const q = Math.max(0, Math.min(1, (Math.log10(n / area) - dr[0]) / Math.max(1e-9, dr[1] - dr[0]))); return vivid(STYLE.hue(q), STYLE.fieldL[0], STYLE.fieldL[1], STYLE.chroma); };
   countries.forEach((s) => { if (s.n > 0 && s.areaWorld > 0) s.rgb = colourOf(s.n, s.areaWorld); });
   // land test per country (for placing postings on land)
-  const cxl = document.createElement('canvas').getContext('2d'), landCache = new Map();
-  const landOf = (cc) => { if (landCache.has(cc)) return landCache.get(cc); const sh = seen.get(cc); const o = sh ? { has: (lon, lat) => cxl.isPointInPath(sh.path, geoMercX(lon) * GEO.U, geoMercY(lat) * GEO.U, 'evenodd'), w: (sh.bb[2] - sh.bb[0]) / GEO.U * 360, h: (sh.bb[3] - sh.bb[1]) / GEO.U * 360 } : null; landCache.set(cc, o); return o; };
+  const cxl = document.createElement('canvas').getContext('2d'), landCache = new Map(), pipMemo = new WeakMap();
+  const landOf = (cc) => { if (landCache.has(cc)) return landCache.get(cc); const sh = seen.get(cc); let m = sh && pipMemo.get(sh.path); if (sh && !m) pipMemo.set(sh.path, (m = new Map()));
+    const o = sh ? { has: (lon, lat) => { const k = lon + ',' + lat; let r = m.get(k); if (r === undefined) { r = cxl.isPointInPath(sh.path, geoMercX(lon) * GEO.U, geoMercY(lat) * GEO.U, 'evenodd'); m.set(k, r); } return r; }, w: (sh.bb[2] - sh.bb[0]) / GEO.U * 360, h: (sh.bb[3] - sh.bb[1]) / GEO.U * 360 } : null; landCache.set(cc, o); return o; };
   Object.assign(GEOSTATE, { world, europe, seen, countries, colourOf, landOf, landCache, pts, opts, cxl });
   if (opts.place) GEO.placeStats = opts.place(landOf);
   // the German states. With a county code per posting (pts.n3code, assigned once when the place file is built) a state is the first three characters of its postings' county codes, so its count is
@@ -147,7 +156,7 @@ function loadGeoDetail(l3) {
     const states = GEO.states, stById = new Map(states.map((s) => [s.id, s])); states.forEach((s) => { s.n = 0; });
     counties.forEach((c) => { const s = stById.get(c.id.slice(0, 3)); if (s) { s.n += c.n; c.state = s; } });
     states.forEach((s) => { if (s.n > 0 && s.areaWorld > 0) s.rgb = colourOf(s.n, s.areaWorld); });
-    GEO.counties = counties; GEO.n3 = n3; GEO.stats = { fromFile, fromPip, assigned: fromFile + fromPip, counties: counties.length }; GEO.detail = 'ready'; geoLabelSets(); GEO.last = null;
+    GEO.hiresIds = hires.map((h) => h.id); GEO.counties = counties; GEO.n3 = n3; GEO.stats = { fromFile, fromPip, assigned: fromFile + fromPip, counties: counties.length }; GEO.detail = 'ready'; geoLabelSets(); GEO.last = null;
     if (GEO.onDetail) GEO.onDetail();
   })();
   return GEOSTATE.detailP;

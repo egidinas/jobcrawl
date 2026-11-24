@@ -898,7 +898,7 @@ function placeLoad() {
   if (PILLS.on && !PILLS.pre) PILLS.pre = import('./atlas-geo-pills.js').catch(() => null);   // beside the place data, so the pills can stand when it is ready
   const lv = geoLevels(), top = GEO.scopes.worldwide ? 'worldwide' : lv[lv.length - 1], eu = GEO.scopes.europe ? 'europe' : lv[lv.length - 2];
   PA.base = dataUrl(cfg.geomap).replace(/[^/]*$/, '');
-  PA.loading = Promise.all([import('./place/place.esm.js?v=3b92e864cb'), fetch(PA.base + 'places-v1.json').then((r) => (r.ok ? r.json() : null)).catch(() => null), import('./vendor/supercluster.min.js').catch(() => null)])
+  PA.loading = Promise.all([import('./place/place.esm.js?v=3b92e864cb-p1'), fetch(PA.base + 'places-v1.json').then((r) => (r.ok ? r.json() : null)).catch(() => null), import('./vendor/supercluster.min.js').catch(() => null)])
     .then(async ([M, pv]) => {
       if (!pv || !Array.isArray(pv.rows) || !top || !eu) { console.warn('[place] no place file; the areas stay grey'); return null; }
       // the module's input, from the place file alone (one row per role id; the module reads the id, the company and the country of a row)
@@ -908,7 +908,7 @@ function placeLoad() {
       await Promise.all([geoFetchScope(top), geoFetchScope(eu)]);   // the outline files once: the module's own fetch below then reads the browser cache
       await M.loadGeo([PA.base + GEO.scopes[top].file, PA.base + GEO.scopes[eu].file], gi.counts, gi.pts, { place: (landOf) => { const r = M.PlaceData.snapOwn(D, landOf); gi.refresh(); return r; } });
       Object.assign(PA, { M, D, gi, pv, ctl: M.PlaceA.create({ map: null, D }), ready: true, key: '' });
-      M.GEO.onDetail = () => { PA.detail = true; fetch(PA.base + 'countries_hires.json').then((r) => r.json()).then((h) => { PA.hires = new Set(h.shapes.map((x) => x.id).filter((id) => id !== 'DE')); if (st.mode === 'geo') draw(); }).catch(() => {}); PA.key = ''; placeRecount(); if (st.mode === 'geo') draw(); };
+      M.GEO.onDetail = () => { PA.detail = true; (M.GEO.hiresIds ? Promise.resolve({ shapes: M.GEO.hiresIds.map((id) => ({ id })) }) : fetch(PA.base + 'countries_hires.json').then((r) => r.json())).then((h) => { PA.hires = new Set(h.shapes.map((x) => x.id).filter((id) => id !== 'DE')); if (st.mode === 'geo') draw(); }).catch(() => {}); PA.key = ''; placeRecount(); if (st.mode === 'geo') draw(); };
       placeRecount(); if (st.mode === 'geo') draw(); return PA; })
     .catch((e) => { console.warn('[place] place module not loaded', e); return null; });
   return PA.loading; }
