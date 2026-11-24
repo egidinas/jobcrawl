@@ -602,7 +602,7 @@ function renderSvc(open) {
   h.hidden = false;
   if (s.server || s.worldwide) {
     const n = s.shown.length, wide = s.scope >= cfg.scopes.length - 1;
-    h.innerHTML = (wide ? L(`The ${n} best matches`, `Die ${n} besten Treffer`) : L(`The ${n} best matches in ${wEn}`, `Die ${n} besten Treffer in ${wDe}`))
+    h.innerHTML = (n === 1 ? (wide ? L('The best match', 'Der beste Treffer') : L(`The best match in ${wEn}`, `Der beste Treffer in ${wDe}`)) : wide ? L(`The ${n} best matches`, `Die ${n} besten Treffer`) : L(`The ${n} best matches in ${wEn}`, `Die ${n} besten Treffer in ${wDe}`))
       + (s.capped ? ' · ' + L(`${s.capped} hidden by the limit per employer`, `${s.capped} durch das Limit je Arbeitgeber ausgeblendet`) : '')
       + (!wide && n < 5 ? ` <button type="button" class="link more-asp" data-worldwide="1">${L('Show the best matches worldwide', 'Die besten Treffer weltweit zeigen')}</button>` : '');
   } else h.innerHTML = (s.scope >= cfg.scopes.length - 1 ? L(`The ${s.total} best matches`, `Die ${s.total} besten Treffer`) : L(`${s.shown.length} of the ${s.total} best matches ${s.shown.length === 1 ? 'is' : 'are'} in ${wEn}`, `${s.shown.length} der ${s.total} besten Treffer ${s.shown.length === 1 ? 'liegt' : 'liegen'} in ${wDe}`))
