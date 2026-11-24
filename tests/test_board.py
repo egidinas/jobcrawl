@@ -8,6 +8,7 @@ import shutil
 import tempfile
 import sys
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if os.path.dirname(HERE) not in sys.path:
@@ -171,6 +172,15 @@ class DatesAndOrder(unittest.TestCase):
         profile = dict(self.profile, board={'order': 'published'})
         entries = board.build_entries(self.ITEMS, profile)
         self.assertEqual(self.titles(entries), ['Alpha Engineer', 'Beta Engineer', 'Delta Engineer', 'Gamma Engineer'])
+
+    def test_shared_id_holds_back_the_later_role(self):
+        held = []
+        with mock.patch.object(board, 'role_id', lambda url: 'abcd0123'):
+            entries = board.build_entries(self.ITEMS, self.profile, held=held)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(len(held), len(self.ITEMS) - 1)
+        first = min(self.ITEMS, key=lambda i: (str(i.get('first_seen') or '9999')[:10], i['url']))
+        self.assertEqual(entries[0][1]['u'], first['url'])
 
     def test_unknown_order_is_refused(self):
         profile = dict(self.profile, board={'order': 'random'})
