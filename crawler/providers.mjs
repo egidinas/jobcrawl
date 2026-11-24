@@ -466,6 +466,25 @@ export function spaceCareersLocationLinks(html = '') {
   return [...new Set([...block.matchAll(/href="(\/jobs\/[^"]+)"/g)].map((m) => m[1]))];
 }
 
+// Jobs-in-Photonics titles: the board names the employer only as "<title> | <employer>". A dash splits the title itself
+// ("Team Lead – Manufacturing (m/f/x)", "Systems Engineer – Integrated Products (d/m/f)"), so a dash never yields a company
+// (until 24 Nov 2026 it did: 151 job-title fragments became company names). The part after the last " | " is the employer only
+// when it is short, has no gender tag and no comma, and the description names it; otherwise the posting keeps the board's name.
+const PHOTONICS_GENDER = /\((?:[mwdfx]|all|alle)\b[^)]*\)/i;
+export function photonicsTitleSplit(rawTitle = '', description = '') {
+  const t = String(rawTitle).replace(/[​­]/g, '').trim();
+  const i = t.lastIndexOf(' | ');
+  if (i > 0) {
+    const cand = t.slice(i + 3).trim();
+    const words = cand.split(/\s+/).filter(Boolean).length;
+    if (cand && words <= 5 && !PHOTONICS_GENDER.test(cand) && !cand.includes(',')
+        && String(description).toLowerCase().includes(cand.toLowerCase())) {
+      return { title: t.slice(0, i).trim(), company: cand };
+    }
+  }
+  return { title: t, company: null };
+}
+
 export const providers = {
   greenhouse: {
     detect: (u) => u.match(/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([\w-]+)/)?.[1],
@@ -1100,18 +1119,10 @@ export const providers = {
           for (const j of res) {
             if (!seen.has(j.id)) {
               const rawTitle = decode(j.title?.rendered ?? '');
-              let company = 'Jobs-in-Photonics (EPIC)';
-              let title = rawTitle;
-              if (rawTitle.includes(' – ')) {
-                const parts = rawTitle.split(' – ');
-                title = parts[0].trim();
-                company = `${parts.slice(1).join(' – ').trim()} (via Jobs-in-Photonics)`;
-              } else if (rawTitle.includes(' - ')) {
-                const parts = rawTitle.split(' - ');
-                title = parts[0].trim();
-                company = `${parts.slice(1).join(' - ').trim()} (via Jobs-in-Photonics)`;
-              }
               const desc = plain(j.content?.rendered ?? '');
+              const split = photonicsTitleSplit(rawTitle, desc);
+              let company = split.company ? `${split.company} (via Jobs-in-Photonics)` : 'Jobs-in-Photonics (EPIC)';
+              const title = split.title;
               const fullText = (rawTitle + ' ' + desc).toLowerCase();
               if (company === 'Jobs-in-Photonics (EPIC)') {
                 if (fullText.includes('diehl defence') || fullText.includes('diehl')) {
