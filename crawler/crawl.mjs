@@ -43,7 +43,7 @@ options:
   --refresh-only      update known roles only, never add new ones
   --force-due         fetch every enabled board now, ignoring interval_hours (a full refresh; one progress line per 50 boards)
   --dry-run           print the summary, write nothing
-  --triage-out <file> also write one JSON line per board outcome (triage class, code, host, jobs) to this file, even with --dry-run
+  --triage-out <file> also write one JSON line per board outcome (triage class, code, host, jobs; ms = first attempt, budget_ms) to this file, even with --dry-run
   --jd-cleanup-only   no crawl: remove the descriptions of roles not seen for more than jd_keep_days days, then exit
                       (with --dry-run it only counts them)
   --help              show this text
@@ -339,7 +339,7 @@ async function pool(items, worker) {
     Array.from({ length: Math.min(CONCURRENCY, items.length) }, async () => {
       while (i < items.length) {
         const idx = i++;
-        results[idx] = await worker(items[idx]).catch((e) => ({ error: formatErr(e), triage: e.triage ?? classifyError(e), host: e.host, provider: e.provider }));
+        results[idx] = await worker(items[idx]).catch((e) => ({ error: formatErr(e), triage: e.triage ?? classifyError(e), host: e.host, provider: e.provider, ms: e.ms, budget_ms: e.budget_ms }));
       }
     }),
   );
@@ -538,8 +538,10 @@ async function scan() {
       const fetchPromise = providers[r.provider].fetch(r.slug, entry);
       const jobs = await Promise.race([fetchPromise, timeoutPromise]);
       breaker.record(r.provider, bhost, true);
-      return { entry, r, jobs };
+      return { entry, r, jobs, ms: Date.now() - t0, budget_ms: ms };
     } catch (e) {
+      // the first attempt's duration, before the breaker's confirm retry (triage rows: "ms" beside the board's budget "budget_ms")
+      e.ms = Date.now() - t0; e.budget_ms = ms;
       const triage = classifyError(e);
       const cand = breaker.record(r.provider, bhost, false, triage);
       if (cand) {   // enough failures of one class: look again before the rest of the provider is skipped (resilience.mjs commit)
@@ -591,11 +593,14 @@ async function scan() {
   }
   results.forEach((res, i) => {
     const name = companies[i].name;
-    const tr = (extra) => { const row = { ts: new Date().toISOString(), board: name, provider: res?.provider ?? res?.r?.provider ?? companies[i].provider ?? '?', host: res?.host ?? hostOf(companies[i], res?.r?.slug), ...extra }; triageRows.push(row); return row; };
-    if (res?.skipped) { lc?.skippedOrFailed(name, tr({ cls: 'SKIPPED', code: '', detail: 'circuit breaker open' }), 'SKIPPED'); return; }   // not fetched: no health change, nothing marked gone
+    const tr = (extra) => { const row = { ts: new Date().toISOString(), board: name, provider: res?.provider ?? res?.r?.provider ?? companies[i].provider ?? '?', host: res?.host ?? hostOf(companies[i], res?.r?.slug), ...(Number.isFinite(res?.ms) ? { ms: res.ms, budget_ms: res.budget_ms } : {}), ...extra }; triageRows.push(row); return row; };
+    // the triage row is written first: with lc null (MADE_LIFECYCLE off) the optional call skipped its arguments, so skipped and failed
+    // boards had no triage row (fixed 2026-11-25; the live cycle runs with the lifecycle on and is unchanged)
+    if (res?.skipped) { const row = tr({ cls: 'SKIPPED', code: '', detail: 'circuit breaker open' }); lc?.skippedOrFailed(name, row, 'SKIPPED'); return; }   // not fetched: no health change, nothing marked gone
     if (!res || res.error) {
       const t = res?.triage ?? { cls: 'OTHER', code: '', detail: 'failed' };
-      lc?.skippedOrFailed(name, tr({ cls: t.cls, code: t.code, detail: t.detail }), t.cls);
+      const row = tr({ cls: t.cls, code: t.code, detail: t.detail });
+      lc?.skippedOrFailed(name, row, t.cls);
       noteHealth(name, false, 0);
       return problems.push(`${name}: ${res?.error ?? 'failed'} [${t.cls}${t.code ? ' ' + t.code : ''}]`);
     }
