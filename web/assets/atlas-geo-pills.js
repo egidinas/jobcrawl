@@ -140,6 +140,9 @@ export function init(api) {
 
   // ---- the view
   // the level follows the span of the canvas's shorter side (deg is the span across the width): a wide, short canvas shows less than deg from top to bottom
+  // a city pill flies to street level at the same density of points per pixel on every screen: a phone's narrow map needs a closer view,
+  // or the company pins of a city all merge into count bubbles (390 px: 0 pins, 3 bubbles in Munich at 1.1 degrees)
+  const cityDeg = (deg) => Math.min(1.1, Math.max(0.5, deg / 4)) * Math.min(1, Math.max(0.4, api.W() / 640));
   const level = (deg) => { const e = deg * Math.min(1, api.H() / Math.max(1, api.W())); return e >= CITY_DEG ? 'country' : e >= PIN_DEG ? 'city' : 'pin'; };
   function region(R, ctr, deg) {   // the named set the header counts: worldwide, Europe, one country, Bavaria (located roles, NUTS1 DE2)
     if (deg >= 95) return { name: api.pick('Worldwide', 'Weltweit'), n: R.world.n, lo: R.located, none: R.none, e: R.world.e.size, set: 'all' };
@@ -171,7 +174,7 @@ export function init(api) {
     if (lv === 'country') for (const [cc, o] of R.cc) { const c = countries.get(cc); if (!c || !o.n) { continue; }
       items.push({ k: 'c:' + cc, cls: 'gp-pill gp-country', n: o.n, name: nameOf(cc, c.name), cc, lon: c.lon, lat: c.lat, deg: flyDeg(c) });
     }
-    if (lv !== 'country') for (const h of hubsOf(R, deg)) items.push({ k: 'y:' + h.c.id, cls: 'gp-pill gp-city', n: h.n, name: h.name, lon: h.c.lon, lat: h.c.lat, deg: Math.min(1.1, Math.max(0.5, deg / 4)), hub: h.mem.length });   // one pill per hub (see hubsOf)
+    if (lv !== 'country') for (const h of hubsOf(R, deg)) items.push({ k: 'y:' + h.c.id, cls: 'gp-pill gp-city', n: h.n, name: h.name, lon: h.c.lon, lat: h.c.lat, deg: cityDeg(deg), hub: h.mem.length });   // one pill per hub (see hubsOf)
     items.sort((a, b) => b.n - a.n);
     // pins first (they sit on their site), then the pills that still fit; a pill hidden for room stays in the list
     const pins = [];
