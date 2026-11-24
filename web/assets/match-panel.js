@@ -6,7 +6,7 @@
 // Mounted by match.html into #match-panel.
 
 import { loadConfig, dataUrl, pageUrl, roleLink, companyLink, defaultScope, modelCache, storageKey, L, LP, esc, isDe } from './app.js';
-import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields, chunkCvText, decomposeRating, queryVec, askService, pickServiceItems } from './match.js';
+import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields, chunkCvText, decomposeRating, queryVec, askService, pickServiceItems, servicePicks } from './match.js';
 import * as PF from './profile.js';
 
 const cfg = await loadConfig();
@@ -327,10 +327,13 @@ function levelHint(items) {
 const LOCAL_BTN = () => ` <button type="button" class="link more-asp" data-local="1">${L('Match on this device', 'Auf diesem Gerät abgleichen')}</button>`;
 const FALLBACK_LINE = () => `<span class="match-quiet">${L('Showing on-device results.', 'Ergebnisse von diesem Gerät.')}</span> `;
 // -> true when the service answered (a list, the daily limit or a refusal); false: the browser engine answers instead
-async function runService(text) {
-  const svc = SVC();
+async function runService(text, { worldwide = false } = {}) {
+  const svc = SVC(), o = settings(), scopeIds = cfg.scopes.map((s) => s.id);
+  // the picks go to the server (ranked inside the pick); more rows than shown leave room for the level range and the cap per employer
+  const regions = worldwide ? [] : servicePicks(o.scope, scopeIds, svc.regionScope || {});
+  const k = o.minLevel > 0 || o.maxLevel < 99 ? 60 : 30;
   say(L('Matching on our server…', 'Abgleich auf unserem Server …'));
-  const a = await askService(svc, text, { lang: isDe() ? 'de' : 'en' });
+  const a = await askService(svc, text, { lang: isDe() ? 'de' : 'en', picks: { regions, scope: 'in', k } });
   if (a.engine === 'limit') {
     say(L('The daily limit for matches on our server is reached. Try again tomorrow, or match on this device.', 'Das Tageslimit für Abgleiche auf unserem Server ist erreicht. Bitte morgen erneut versuchen oder auf diesem Gerät abgleichen.') + LOCAL_BTN());
     return true;
@@ -341,10 +344,14 @@ async function runService(text) {
   }
   // a failed or slow service is not asked again for 2 minutes: each further click would wait up to 5 s and count against the quota
   if (a.engine !== 'service') { console.warn('match service: ' + a.why + '; the browser engine answers'); st.svcFail = a.why; st.svcDownUntil = Date.now() + SVC_COOLDOWN_MS; return false; }
-  const o = settings(), scopeIds = cfg.scopes.map((s) => s.id);
-  const p = pickServiceItems(a.items, { ...o, scopeIds, regionScope: svc.regionScope || {}, levelCodes: LEVEL_CODES });
+  // server = the service ranked inside the pick (one list); else an older Worker / NUC answered worldwide and the panel filters here,
+  // with the rows outside the pick below a heading (the fallback)
+  const server = !!(a.picks && a.picks.applied && (regions.length ? (a.picks.regions || []).length : true));
+  const sc = server || worldwide ? scopeIds.length - 1 : o.scope;
+  const p = pickServiceItems(a.items, { ...o, scope: sc, scopeIds, regionScope: svc.regionScope || {}, levelCodes: LEVEL_CODES });
   st.svc = new Map(a.items.map((x) => [x.sid, x]));
-  st.last = { kind: 'svc', shown: p.shown, outside: p.outside, capped: p.capped, scope: o.scope, total: a.items.length, showOutside: p.shown.length < 5 };
+  st.last = { kind: 'svc', server, worldwide, shown: p.shown.slice(0, 20), outside: p.outside.slice(0, 20), capped: p.capped, scope: worldwide ? sc : o.scope,
+    total: Math.min(20, a.items.length), showOutside: p.shown.length < 5 };
   st.shown = 20;
   render();
   const kp = $('match-kw').value.trim() || st.fields.size;
@@ -593,7 +600,12 @@ function renderSvc(open) {
   ol.innerHTML = svcListHtml(s.shown, open)
     + (more && s.showOutside ? `<li class="match-h" role="presentation">${L(`Also close, outside ${wEn}`, `Ebenfalls passend, außerhalb von ${wDe}`)}</li>` + svcListHtml(s.outside, open, s.shown.length) : '');
   h.hidden = false;
-  h.innerHTML = (s.scope >= cfg.scopes.length - 1 ? L(`The ${s.total} best matches`, `Die ${s.total} besten Treffer`) : L(`${s.shown.length} of the ${s.total} best matches ${s.shown.length === 1 ? 'is' : 'are'} in ${wEn}`, `${s.shown.length} der ${s.total} besten Treffer ${s.shown.length === 1 ? 'liegt' : 'liegen'} in ${wDe}`))
+  if (s.server || s.worldwide) {
+    const n = s.shown.length, wide = s.scope >= cfg.scopes.length - 1;
+    h.innerHTML = (wide ? L(`The ${n} best matches`, `Die ${n} besten Treffer`) : L(`The ${n} best matches in ${wEn}`, `Die ${n} besten Treffer in ${wDe}`))
+      + (s.capped ? ' · ' + L(`${s.capped} hidden by the limit per employer`, `${s.capped} durch das Limit je Arbeitgeber ausgeblendet`) : '')
+      + (!wide && n < 5 ? ` <button type="button" class="link more-asp" data-worldwide="1">${L('Show the best matches worldwide', 'Die besten Treffer weltweit zeigen')}</button>` : '');
+  } else h.innerHTML = (s.scope >= cfg.scopes.length - 1 ? L(`The ${s.total} best matches`, `Die ${s.total} besten Treffer`) : L(`${s.shown.length} of the ${s.total} best matches ${s.shown.length === 1 ? 'is' : 'are'} in ${wEn}`, `${s.shown.length} der ${s.total} besten Treffer ${s.shown.length === 1 ? 'liegt' : 'liegen'} in ${wDe}`))
     + (s.capped ? ' · ' + L(`${s.capped} hidden by the limit per employer`, `${s.capped} durch das Limit je Arbeitgeber ausgeblendet`) : '')
     + (more ? ` <button type="button" class="link more-asp" data-outside="1">${s.showOutside ? L('Hide the ones outside', 'Die außerhalb ausblenden') : L(`Show ${more} outside`, `${more} außerhalb zeigen`)}</button>` : '');
   $('match-rated').innerHTML = ''; $('match-rated-h').hidden = true;
@@ -756,6 +768,7 @@ mount.addEventListener('click', async (e) => {
     else if (btn.id === 'match-taste') { btn.disabled = true; await run(!!st.model, { fromTaste: true }); btn.disabled = false; }
     else if (btn.dataset.local) { setOnDevice(true); const go = $('match-go'); go.disabled = true; try { await run(BROWSER_MODEL && (!!st.model || (await cacheReady()))); } finally { go.disabled = false; } }
     else if (btn.dataset.outside) { st.last.showOutside = !st.last.showOutside; render(); }
+    else if (btn.dataset.worldwide) { const go = $('match-go'); go.disabled = true; try { if (!(await runService($('match-text').value.trim(), { worldwide: true }))) await run(BROWSER_MODEL && !!st.model); } finally { go.disabled = false; } }
     else if (btn.id === 'match-spread') { btn.disabled = true; await spread(); btn.disabled = false; }
     else if (btn.id === 'match-more') { st.shown += 20; render(); }
     else if (btn.id === 'match-copy') await copyRatings();

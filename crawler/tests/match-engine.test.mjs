@@ -2,7 +2,7 @@
 // Run: node --test crawler/tests/match-engine.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { askService, pickServiceItems, SERVICE_MAX_CHARS } from '../../web/assets/match.js';
+import { askService, pickServiceItems, servicePicks, SERVICE_MAX_CHARS } from '../../web/assets/match.js';
 
 const SVC = { url: '/api/v1/next-role', regionScope: { 'Munich & Bavaria': 'bavaria', 'Germany (Other)': 'germany', Europe: 'europe' } };
 const TEXT = 'Senior thermal engineer, 9 years in space. Thermal vacuum testing. Fictional example.';
@@ -113,4 +113,23 @@ test('picks: Where by the region (as the browser index scope bits), level range,
   const three = [item('h8', 'United States', { company_slug: 'io' }), item('i9', 'United States', { company_slug: 'io' }), item('j0', 'United States', { company_slug: 'io' })];
   const outCap = pickServiceItems(three, { scope: 1, scopeIds, regionScope: SVC.regionScope, levelCodes, perEmployer: 2 });
   assert.deepEqual([outCap.shown.length, outCap.outside.length, outCap.capped], [0, 2, 1]);
+});
+
+test('the picks go to the service in the POST body; what it applied comes back', async () => {
+  const scopeIds = ['bavaria', 'germany', 'europe', 'worldwide'];
+  assert.deepEqual(servicePicks(0, scopeIds, SVC.regionScope), ['Munich & Bavaria']);
+  assert.deepEqual(servicePicks(1, scopeIds, SVC.regionScope), ['Munich & Bavaria', 'Germany (Other)']);
+  assert.deepEqual(servicePicks(2, scopeIds, SVC.regionScope), ['Munich & Bavaria', 'Germany (Other)', 'Europe']);
+  assert.deepEqual(servicePicks(3, scopeIds, SVC.regionScope), []);
+  const applied = { applied: true, regions: ['Munich & Bavaria', 'Germany (Other)'], k: 30, scope: 'in', in_pick: 8682 };
+  const s = stub(() => json(200, { list: LIST, picks: applied }));
+  const a = await askService(SVC, TEXT, { fetchFn: s.fn, picks: { regions: servicePicks(1, scopeIds, SVC.regionScope), scope: 'in', k: 30 } });
+  assert.deepEqual(JSON.parse(s.calls[0].init.body), { entry: 'cv', cv_text: TEXT, lang: 'en', regions: ['Munich & Bavaria', 'Germany (Other)'], scope: 'in', k: 30 });
+  assert.ok(!s.calls[0].url.includes('?'));
+  assert.deepEqual(a.picks, applied);
+  // worldwide: no regions in the body
+  const w = stub(() => json(200, { list: LIST }));
+  const b = await askService(SVC, TEXT, { fetchFn: w.fn, picks: { regions: [], scope: 'in', k: 30 } });
+  assert.deepEqual(JSON.parse(w.calls[0].init.body), { entry: 'cv', cv_text: TEXT, lang: 'en', scope: 'in', k: 30 });
+  assert.equal(b.picks, null, 'an older Worker or NUC: no picks in the answer, the panel filters itself');
 });

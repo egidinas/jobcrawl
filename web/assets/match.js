@@ -546,6 +546,9 @@ export function sampleSpread(ix, ok, n = 12, rng = Math.random) {
 // the NUC next-role route behind the data API). The page reads it when "Find roles" is pressed; without it the browser engine answers.
 // Contract: POST url with the JSON body {entry: "cv", cv_text, lang} (never a query string) -> 200 {list: [{sid, job_id, title, company,
 // company_slug, location, region, country, level, url, ...}]}. One request, no retry: each one counts against the visitor's daily quota.
+// The visitor's picks go along as {regions, scope: "in", k} (made-data Worker + NUC, branch backlog/next-role-picks): the service then
+// ranks inside the pick and says so in `picks` ({applied: true, ...}). An older Worker or NUC drops the fields and answers worldwide
+// without `picks`; the panel then filters the answer itself (pickServiceItems), as before.
 
 export const SERVICE_FIRST_MS = 5000;      // the first answer (headers) must come within this, else the browser engine answers
 export const SERVICE_BODY_MS = 5000;       // and the body within this after the headers
@@ -554,12 +557,14 @@ export const SERVICE_MAX_CHARS = 20000;    // the route's own limit on the paste
 /** Ask the service once. -> {engine: 'service', items, ms} | {engine: 'fallback', why} (unreachable, slow, 5xx, not JSON, empty list,
  * any other 4xx such as a login page) | {engine: 'limit', status, retryAfter} (429: the daily quota, shown as such) |
  * {engine: 'refused', status} (400 / 413 / 422: the text was refused; a fallback would not say why). */
-export async function askService(svc, text, { lang = 'en', fetchFn = (u, i) => fetch(u, i), firstMs = SERVICE_FIRST_MS, bodyMs = SERVICE_BODY_MS, now = () => Date.now() } = {}) {
+export async function askService(svc, text, { lang = 'en', picks = null, fetchFn = (u, i) => fetch(u, i), firstMs = SERVICE_FIRST_MS, bodyMs = SERVICE_BODY_MS, now = () => Date.now() } = {}) {
   if (!svc || !svc.url) return { engine: 'fallback', why: 'no service' };
   const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
   let tm = ac ? setTimeout(() => ac.abort(), firstMs) : 0;
   const t0 = now();
-  const body = JSON.stringify({ entry: 'cv', cv_text: String(text).slice(0, SERVICE_MAX_CHARS), lang: lang === 'de' ? 'de' : 'en' });
+  const pk = picks || {};
+  const body = JSON.stringify({ entry: 'cv', cv_text: String(text).slice(0, SERVICE_MAX_CHARS), lang: lang === 'de' ? 'de' : 'en',
+    ...(pk.regions && pk.regions.length ? { regions: pk.regions } : {}), ...(pk.scope ? { scope: pk.scope } : {}), ...(pk.k ? { k: pk.k } : {}) });
   let r;
   try {
     r = await fetchFn(svc.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body, credentials: 'same-origin', cache: 'no-store', ...(ac ? { signal: ac.signal } : {}) });
@@ -577,7 +582,15 @@ export async function askService(svc, text, { lang = 'en', fetchFn = (u, i) => f
   const items = d && Array.isArray(d.list) ? d.list.filter((x) => x && x.sid && x.title) : null;
   if (!items) return { engine: 'fallback', why: 'not json' };
   if (!items.length) return { engine: 'fallback', why: 'empty' };
-  return { engine: 'service', items, ms: now() - t0 };
+  return { engine: 'service', items, ms: now() - t0, picks: d.picks && typeof d.picks === 'object' ? d.picks : null };
+}
+
+/** The region labels of a Where pick: every label of svc.regionScope whose scope is the pick or narrower; [] for the widest scope
+ * (worldwide: no filter). scopeIds narrowest first, as config scopes. */
+export function servicePicks(scope, scopeIds = [], regionScope = {}) {
+  const widestK = Math.max(0, scopeIds.length - 1), want = scope === null || scope === undefined ? widestK : scope;
+  if (want >= widestK) return [];
+  return Object.keys(regionScope).filter((r) => { const k = scopeIds.indexOf(regionScope[r]); return k >= 0 && k <= want; });
 }
 
 /** The visitor's picks on a service answer, as the browser engine applies them to its own index: Where (the narrowest scope of the role's
