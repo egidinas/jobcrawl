@@ -1,6 +1,4 @@
-// place.esm.js: generated from geobase.js + place_data.js + place_a.js at source commit 3b92e864cb (proto/transitions on feat/atlas-view-transitions, make_esm_place.sh); do not edit
-// PATCHED here after 3b92e864cb (jobcrawl, 24 Nov 2026, the first-zoom freeze): loadFlat builds each outline from one path string in slices,
-// landOf remembers its answers per outline, loadGeoDetail names the finer outlines (GEO.hiresIds). Port these to proto/transitions before regenerating.
+// place.esm.js: generated from geobase.js + place_data.js + place_a.js at source commit 9227c8991f (madenetwork.de proto/transitions, make_esm_place.sh); do not edit: tools/sync_jobcrawl_web.py checks it
 // Places base for the transitions page, in the look of the site's geography page (atlas-geography.html, neon theme): flat OKLCH area fills
 // ranked by posting density (deep blue = few, magenta, amber = many), thin borders, rivers, names with counts. Drawn on a 2D canvas behind
 // the transparent MapLibre canvas with the map's own projection. Painting and tokens follow paintGeo / geoLayer in
