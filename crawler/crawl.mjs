@@ -22,6 +22,7 @@ import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { classifyError, makeBreaker, hostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
 import { openLifecycle } from './lifecycle.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
+import { openAdmissions } from './admission.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -587,6 +588,18 @@ async function scan() {
     for (let at = row.company.indexOf('(via '); at >= 0; at = row.company.indexOf('(via ', at + 1)) if (row.company.endsWith(')')) keys.add(row.company.slice(at + 5, -1));
     for (const k of keys) (openByBoard.get(k) ?? openByBoard.set(k, []).get(k)).push(row);
   }
+  // Hide only by the admitting board (admission.mjs). Before any board is processed, every complete answer withdraws its board's
+  // admissions of the URLs it no longer lists, so a role its admitting board says is gone closes exactly as it did before the rule.
+  const adm = openAdmissions(OUT_DIR, {
+    now: nowMs, history,
+    lifecycleState: () => { const f = pathResolve(OUT_DIR, 'lifecycle', 'state.json'); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')).urls ?? null : null; },
+  });
+  adm.withdrawFromAnswers(results.flatMap((res, i) => {
+    if (!res || res.skipped || res.error || !Array.isArray(res.jobs)) return [];
+    const n = res.jobs.length, emptyOk = res.jobs.emptyOk === true;
+    return [{ board: companies[i].name, listed: new Set(res.jobs.map((j) => j.url)), emptyOk,
+      complete: !res.jobs.incomplete && !isCappedAnswer(n) && (n > 0 || emptyOk) }];
+  }));
   results.forEach((res, i) => {
     const name = companies[i].name;
     const tr = (extra) => { const row = { ts: new Date().toISOString(), board: name, provider: res?.provider ?? res?.r?.provider ?? companies[i].provider ?? '?', host: res?.host ?? hostOf(companies[i], res?.r?.slug), ...extra }; triageRows.push(row); return row; };
@@ -678,6 +691,12 @@ async function scan() {
         if (/^insert title of the position/i.test(prior.title) && j.title && !/^insert title of the position/i.test(j.title)) prior.title = j.title;   // csod template titles seen before the German view was read
         if (j.location && (!prior.location || prior.location === '?')) prior.location = j.location;
         if (j.company && (!prior.company || prior.company === name)) prior.company = j.company;
+        // Hide only by the admitting board (admission.mjs): a role another board admitted within 48 h keeps its status; this listing
+        // only refreshes its last sighting. The board's own admission is withdrawn by its own hide.
+        if ((why || extraOnly) && adm.mayHide(j.url, name, why ?? '', prior.status === 'open' || prior.status === 'dup')) {
+          prior.last_seen = date;
+          continue;
+        }
         if (why || extraOnly) {
           if (extraOnly) { prior.status = 'extra'; prior.last_seen = date; stats.extra = (stats.extra ?? 0) + 1; if (collectOnly) stats.collectOnly = (stats.collectOnly ?? 0) + 1; continue; }
           prior.status = 'filtered';
@@ -688,6 +707,7 @@ async function scan() {
         }
         stats.seen++;
         prior.last_seen = date;
+        adm.admit(j.url, name);
         if (prior.status === 'dup') {
           // A cross-listed copy stays out of the lists while its original is open; if the original closed, it takes over.
           // The employer's own ATS posting is the ground truth: when the "original" is an aggregator copy, the direct posting replaces it.
@@ -731,6 +751,7 @@ async function scan() {
         continue;
       }
       const companyName = j.company || name;
+      adm.admit(j.url, name);
 
       // Cross-listing: the same role already open under another URL (direct ATS and aggregator, or a reposted requisition).
       // Needs a matching description AND title AND employer AND place (crosslist.mjs); similar boilerplate alone is not enough.
@@ -806,6 +827,20 @@ async function scan() {
     for (const row of openRows) {
       if (!live.has(row.url)) {
         if (lc?.mode === 'on' && !lc.closable(row.url)) { held++; continue; }   // MADE_LIFECYCLE=on: gone only on K misses + the floor
+        if (adm.mayClose(row.url, name)) continue;   // another board admitted it within 48 h and still lists it (admission.mjs)
+        row.status = 'gone';
+        problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
+      }
+    }
+    // An admitting board (not an aggregator) whose complete answer no longer lists a role it admitted closes it also when the role
+    // carries another board's name, so a close the admitting board reports never waits for that other board's next fetch (admission.mjs).
+    if (!isAggregatorEntry({ ...companies[i], provider: res.r.provider })) {
+      const own = new Set(openRows);
+      for (const u of adm.saidGone(name)) {
+        const row = history.get(u);
+        if (!row || row.status !== 'open' || own.has(row)) continue;
+        if (lc?.mode === 'on' && !lc.closable(u)) { held++; continue; }
+        if (adm.mayClose(u, name)) continue;
         row.status = 'gone';
         problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
       }
@@ -911,6 +946,8 @@ async function scan() {
 
   fresh.sort((a, b) => Number(b.seniority) - Number(a.seniority) || a.company.localeCompare(b.company));
   console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}${titleRel ? ` | title release: ${titleRel.released} released, ${titleRel.kept} kept open, ${titleRel.deferred} deferred (caps ${titleRel.maxCycle}/cycle, ${titleRel.maxBoard}/board${titleRel.outside ? `; ${titleRel.outside}` : ''}${titleRel.extra ? `; extra shift until ${titleRel.extra.data.until}` : ''})` : ''}${results.some((r) => r?.skipped) ? ` | ${results.filter((r) => r?.skipped).length} skipped by the provider breaker` : ''}`);
+  // R3: one line per run, also when nothing was kept back (admission.mjs)
+  problems.unshift(adm.summaryLine());
   const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
@@ -987,6 +1024,7 @@ async function scan() {
   writeFileSync(HEALTH_FILE, JSON.stringify(health, null, 1) + '\n');
   for (const k of Object.keys(guardState)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete guardState[k];
   writeFileSync(GUARD_FILE, JSON.stringify(guardState, null, 1) + '\n');
+  try { adm.save(); } catch (e) { console.log(`[admission] state not written (${e.message}): the next run seeds it from the history`); }
   if (probationDirty || Object.keys(probation).length) {
     if (probationDirty) writeFileSync(PROB_FILE, JSON.stringify(probation, null, 1) + '\n');
     // Review list: companies disabled by the pruning rule. The companies file is never touched.
