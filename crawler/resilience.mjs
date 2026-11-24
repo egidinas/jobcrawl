@@ -18,6 +18,10 @@
 // The key is the provider, or provider@host for the providers in PER_HOST whose boards each sit on their own host (2026-11-25,
 // fix/breaker-per-host): there a few slow boards on their own hosts cannot switch off unrelated employers, and several boards on one
 // host that fails still trip together, with the same levels and skip lengths.
+// Platform key (PLATFORM, 2026-11-25): beside the per-host keys, the bare provider key ("successfactors") still trips when the failures
+// are broad: at least PLATFORM_MIN_HOSTS distinct hosts of the provider failed with one class in this cycle and no board of it answered
+// before that. Then the rest of the provider is skipped, with the same levels, skips, confirm retry, recovery, flag and log line as the
+// provider breaker before per-host keys, so a provider-wide outage stays visible and we stop asking a provider that is down.
 // State in <data>/provider-breaker.json. The alert is ONE flag file (CRAWL_PROVIDER_DOWN.flag) in the health folder, same
 // "<timestamp> <what is down>" shape as DOWN.flag, removed when no provider is open any more.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -86,6 +90,10 @@ export const breakerHostOf = (provider, entry, slug) => {
   if (provider === 'successfactors') return slugHost(entry?.api) || slugHost(slug) || hostOf(entry, slug);
   return hostOf(entry, slug) || slugHost(slug);
 };
+// Per-host providers that also keep a platform-wide key (one vendor platform behind the tenant domains), and how many distinct failing
+// hosts trip it. 5 from the replay of the 148 recorded cycles (21-24 Nov, BREAKER_PER_HOST.md): no chance trip there.
+export const PLATFORM_MIN_HOSTS = 5;
+const PLATFORM = new Set(['successfactors']);
 // Providers that never trip it: EURES has its own slow lane (answers come from lane files), usajobs is deferred.
 const EXEMPT = new Set(['eures', 'usajobs']);
 
@@ -95,36 +103,43 @@ export function makeBreaker({ dataDir, healthDir, dryRun = false, log = console.
   let state = { cycle: 0, providers: {} };
   try { if (file && existsSync(file)) state = JSON.parse(readFileSync(file, 'utf8')); } catch { /* fresh */ }
   state.providers ??= {};
-  // a bare key of a per-host provider is from before it was keyed per host: no board maps to it any more, so it would stay open in the
-  // flag until it ran out and then never be closed. It is dropped (its boards are judged per host from this cycle on).
-  for (const k of Object.keys(state.providers)) {
-    if (PER_HOST.has(k)) { log(`[breaker] ${k}: provider-wide key from before the per-host breaker dropped (level ${state.providers[k]?.level ?? '?'}, open until cycle ${state.providers[k]?.open_until ?? '?'})`); delete state.providers[k]; }
-  }
+  // A bare "successfactors" key in the file (written by the code before per-host keys, or by the platform key) is the platform key: an
+  // open one keeps the whole provider skipped until it runs out, exactly as before, and recovers the same way.
   state.cycle = (state.cycle ?? 0) + 1;
   const cycle = state.cycle;
-  const run = new Map();   // key -> { tried, ok, fails: {cls: n}, skipped, tripped }
+  const run = new Map();   // key -> { tried, ok, fails: {cls: n}, hosts: {cls: Set} (platform key), skipped, tripped }
   const keyOf = (provider, host) => (PER_HOST.has(provider) ? `${provider}@${host || '?'}` : provider);
-  const r = (k) => run.get(k) ?? run.set(k, { tried: 0, ok: 0, fails: {}, skipped: 0, tripped: null }).get(k);
+  const r = (k) => run.get(k) ?? run.set(k, { tried: 0, ok: 0, fails: {}, hosts: {}, skipped: 0, tripped: null }).get(k);
+  const isOpen = (k) => { const s = state.providers[k]; return Boolean(run.get(k)?.tripped || (s && cycle <= s.open_until)); };
 
   return {
     cycle,
     keyOf,
-    /** true: the breaker of this provider is open this cycle, skip the board (counted, never a failure) */
+    /** true: the breaker of this provider (its platform key, or the key of this host) is open this cycle, skip the board (counted, never a failure) */
     shouldSkip(provider, host) {
       if (EXEMPT.has(provider)) return false;
-      const k = keyOf(provider, host), s = state.providers[k], x = r(k);
-      if (x.tripped || (s && cycle <= s.open_until)) { x.skipped++; return true; }
+      if (PLATFORM.has(provider) && isOpen(provider)) { r(provider).skipped++; return true; }
+      const k = keyOf(provider, host);
+      if (isOpen(k)) { r(k).skipped++; return true; }
       return false;
     },
     /** records one board outcome; returns the breaker key when the failures now qualify for a trip (then confirm and commit()) */
     record(provider, host, ok, triage) {
       if (EXEMPT.has(provider)) return null;
       const k = keyOf(provider, host), x = r(k);
-      if (ok) { x.tried++; x.ok++; return null; }
+      const p = PLATFORM.has(provider) && k !== provider ? r(provider) : null;
+      if (ok) { x.tried++; x.ok++; if (p) { p.tried++; p.ok++; } return null; }
       const cls = triage?.cls ?? 'OTHER';
       if (cls === 'CONFIG' || cls === 'POLICY') return null;   // says nothing about the provider
       x.tried++;
       x.fails[cls] = (x.fails[cls] ?? 0) + 1;
+      if (p) {
+        p.tried++;
+        p.fails[cls] = (p.fails[cls] ?? 0) + 1;
+        const hs = (p.hosts[cls] ??= new Set()); hs.add(host || '?');
+        // broad failure: PLATFORM_MIN_HOSTS distinct hosts with one class, and no board of the provider answered before that
+        if (!p.tripped && !p.pending && p.ok === 0 && hs.size >= PLATFORM_MIN_HOSTS) { p.pending = { cls, triage, host, n: hs.size, tried: p.tried }; return provider; }
+      }
       const n = x.fails[cls];
       if (!x.tripped && !x.pending && n >= 3 && n / x.tried >= 0.5) { x.pending = { cls, triage, host, n, tried: x.tried }; return k; }   // a candidate: the caller confirms it, then commit()
       return null;
@@ -137,7 +152,7 @@ export function makeBreaker({ dataDir, healthDir, dryRun = false, log = console.
     commit(k, stillFailing) {
       const x = r(k), pend = x.pending; x.pending = null;
       if (!pend) return;
-      if (!stillFailing) { x.fails[pend.cls] = 0; log(`[breaker] ${k}: ${pend.n} of ${pend.tried} boards failed with ${pend.cls}, but the retry answered: no trip (transient)`); return; }
+      if (!stillFailing) { x.fails[pend.cls] = 0; x.hosts[pend.cls] = new Set(); log(`[breaker] ${k}: ${pend.n} of ${pend.tried} boards failed with ${pend.cls}, but the retry answered: no trip (transient)`); return; }
       const level = Math.min(4, (state.providers[k]?.level ?? 0) + 1), wait = BACKOFF[level - 1];
       x.tripped = { cls: pend.cls, level, wait };
       state.providers[k] = { level, cls: pend.cls, tripped_cycle: cycle, open_until: cycle + wait, tripped_at: new Date().toISOString(), example: pend.triage?.detail ?? '', code: pend.triage?.code ?? '', host: pend.host };

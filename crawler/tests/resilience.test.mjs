@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyError, makeBreaker, livenessGuard, breakerHostOf, slugHost } from '../resilience.mjs';
+import { classifyError, makeBreaker, livenessGuard, breakerHostOf, slugHost, PLATFORM_MIN_HOSTS } from '../resilience.mjs';
 
 test('classifyError: the classes', () => {
   const c = (e) => classifyError(e).cls;
@@ -162,17 +162,80 @@ test('per-host breaker: a retry that answers is no trip; keys per provider and p
   assert.equal(b.keyOf('workday', 'acme.wd3.myworkdayjobs.com'), 'workday');
 });
 
-test('per-host breaker: a provider-wide successfactors key left open from before is dropped, not kept in the flag', () => {
+// ---------- platform key beside the per-host keys (2026-11-25, REVIEWB condition) ----------
+const sfHosts = (n, ok = false, from = 0) => Array.from({ length: n }, (_, i) => ['successfactors', `jobs.t${from + i}.example`, ok]);
+const logOf = (d, boards, retryFails = true) => {
+  const lines = [];
+  const b = makeBreaker({ ...d, log: (s) => lines.push(s) });
+  const skipped = [];
+  boards.forEach(([p, h, ok], i) => { if (b.shouldSkip(p, h)) skipped.push(i); else { const k = b.record(p, h, ok, ok ? null : TO); if (k) b.commit(k, retryFails); } });
+  b.finish();
+  const f = join(d.healthDir, 'CRAWL_PROVIDER_DOWN.flag');
+  return { skipped, lines, flag: existsSync(f) ? readFileSync(f, 'utf8') : '' };
+};
+
+test('platform key: 5 distinct SuccessFactors hosts fail before any answers: trip, the rest skipped, same flag and log line as before', () => {
+  const d = dirs();
+  const run = [...sfHosts(5), ...sfHosts(3, true, 10), ['reachmee', 'web103.reachmee.com', true]];
+  const r = logOf(d, run);
+  assert.equal(PLATFORM_MIN_HOSTS, 5);
+  assert.deepEqual(r.skipped, [5, 6, 7], 'the SuccessFactors boards after the trip are skipped, other providers are not');
+  assert.ok(r.lines.includes('[breaker] successfactors: 5 of 5 boards failed with TIMEOUT_TLS timeout, the retry failed too; the rest are skipped for 1 cycle(s) (level 1)'), r.lines.join('\n'));
+  assert.match(r.flag, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z crawl provider down \(circuit breaker\) successfactors: TIMEOUT_TLS timeout, skipped until cycle 2 \(level 1; Timed out after 35s\)\n$/);
+  const st = stateOf(d).successfactors;
+  assert.deepEqual([st.level, st.cls, st.code, st.tripped_cycle, st.open_until], [1, 'TIMEOUT_TLS', 'timeout', 1, 2]);
+  // next cycle: every SuccessFactors board skipped (level 1 = 1 cycle), whatever its host
+  const r2 = logOf(d, [...sfHosts(2, true, 20), ['reachmee', 'web103.reachmee.com', true]]);
+  assert.deepEqual(r2.skipped, [0, 1]);
+});
+
+test('platform key: scattered failures do not trip it', () => {
+  // 4 hosts fail, the rest answer
+  let r = logOf(dirs(), [...sfHosts(4), ...sfHosts(10, true, 10)]); assert.deepEqual(r.skipped, []); assert.equal(r.flag, '');
+  // one board answered first: 8 hosts failing after it are not a platform outage (each host on its own)
+  r = logOf(dirs(), [...sfHosts(1, true, 50), ...sfHosts(8)]); assert.deepEqual(r.skipped, []); assert.equal(r.flag, '');
+  // 5 hosts fail with different classes
+  const d = dirs(), b = makeBreaker({ ...d, log: () => {} });
+  ['HTTP_5XX', 'MOVED', 'DNS', 'WAF', 'PARSE'].forEach((cls, i) => assert.equal(b.record('successfactors', `jobs.m${i}.example`, false, { cls }), null));
+  assert.equal(b.shouldSkip('successfactors', 'jobs.other.example'), false);
+  // five failures of ONE host are that host's breaker, not the platform's
+  const r5 = logOf(dirs(), [...Array(5).fill(['successfactors', 'jobs.one.example', false]), ['successfactors', 'jobs.two.example', true]]);
+  assert.deepEqual(r5.skipped, [3, 4]); assert.match(r5.flag, /successfactors@jobs\.one\.example: /); assert.doesNotMatch(r5.flag, /successfactors: /);
+  // the retry answers: no trip, and the count of failing hosts starts again
+  const d6 = dirs(), r6 = logOf(d6, [...sfHosts(5), ...sfHosts(4, false, 10)], false);
+  assert.deepEqual(r6.skipped, []); assert.ok(r6.lines.some((l) => /^\[breaker\] successfactors: 5 of 5 boards failed with TIMEOUT_TLS, but the retry answered: no trip/.test(l)));
+});
+
+test('platform key: recovers like the provider breaker (level 1, still down: level 2 = 2 cycles, then a clean cycle closes it)', () => {
+  const d = dirs();
+  const down = [...sfHosts(6)];
+  let r = logOf(d, down); assert.deepEqual(r.skipped, [5]);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5]);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [5]); assert.equal(stateOf(d).successfactors.level, 2);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5]);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5]);
+  const up = sfHosts(6, true);
+  r = logOf(d, up); assert.deepEqual(r.skipped, []); assert.equal(r.flag, ''); assert.deepEqual(stateOf(d), {});
+  assert.ok(r.lines.includes('[breaker] successfactors: recovered (6 of 6 boards ok), breaker closed'));
+});
+
+test('platform key: the state file of the code before per-host keys is read as it is (an open "successfactors" key keeps skipping)', () => {
   const d = dirs();
   // state as the old rule left it: SuccessFactors open until cycle 12 at level 2, reachmee open until cycle 11
   writeFileSync(join(d.dataDir, 'provider-breaker.json'), JSON.stringify({ cycle: 10, providers: {
     successfactors: { level: 2, cls: 'TIMEOUT_TLS', tripped_cycle: 10, open_until: 12, code: 'timeout', host: 'jobs.avl.com' },
     reachmee: { level: 1, cls: 'TIMEOUT_TLS', tripped_cycle: 10, open_until: 11, code: 'timeout', host: 'web103.reachmee.com' } } }));
-  const r = cycleOf(d, [['successfactors', 'jobs.avl.com', true], ['successfactors', 'jobs.dlr.de', true], ['reachmee', 'web103.reachmee.com', true]]);
-  assert.deepEqual(r.skipped, [2]);
-  const st = stateOf(d);
-  assert.equal(st.successfactors, undefined); assert.equal(st.reachmee.level, 1);
-  assert.match(r.flag, /^\S+ crawl provider down \(circuit breaker\) reachmee: /); assert.doesNotMatch(r.flag, /successfactors/);
+  let r = logOf(d, [['successfactors', 'jobs.avl.com', true], ['successfactors', 'careers.nus.edu.sg', true], ['reachmee', 'web103.reachmee.com', true]]);
+  assert.deepEqual(r.skipped, [0, 1, 2]);
+  assert.match(r.flag, /successfactors: TIMEOUT_TLS timeout, skipped until cycle 12 \(level 2/);
+  r = logOf(d, [['successfactors', 'jobs.avl.com', true], ['reachmee', 'web103.reachmee.com', true]]);
+  assert.deepEqual(r.skipped, [0]);
+  // cycle 13: tried again, clean: closed, the same as the old code would
+  r = logOf(d, [['successfactors', 'jobs.avl.com', true], ['successfactors', 'careers.nus.edu.sg', true]]);
+  assert.deepEqual(r.skipped, []); assert.deepEqual(stateOf(d), {}); assert.equal(r.flag, '');
+  // what the new code writes keeps the old entry shape for every key (old code reads level, open_until, cls, code, example)
+  const d2 = dirs(); logOf(d2, sfHosts(6));
+  for (const [k, s] of Object.entries(stateOf(d2))) for (const f of ['level', 'cls', 'tripped_cycle', 'open_until', 'tripped_at', 'example', 'code', 'host']) assert.ok(f in s, `${k} ${f}`);
 });
 
 test('livenessGuard: holds under half of more than 5 open roles twice, closes on the third, resets on a good fetch, honours emptyOk', () => {
