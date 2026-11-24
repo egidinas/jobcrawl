@@ -68,7 +68,7 @@ const dateMin = (a, b) => (!a ? b : !b ? a : a < b ? a : b);
 const dateMax = (a, b) => (!a ? b : !b ? a : a > b ? a : b);
 // Sample titles: open roles first, then extra, then the rest, in the order the rows came.
 const TITLE_RANK = { open: 0, extra: 1 };
-const COUNTED = new Set(['open', 'extra', 'gone', 'filtered', 'dup']);
+const COUNTED = new Set(['open', 'extra', 'gone', 'filtered', 'dup', 'unknown']);   // unknown: lifecycle on (nothing listed it for 14 d), never a close
 
 // ---------- grouping ----------
 
@@ -88,7 +88,7 @@ export function groupAggregatorRows(rows, meta = {}) {
     if (!key || key === 'undisclosed') continue;
     let e = byKey.get(key);
     if (!e) {
-      e = { key, spellings: new Map(), channels: new Map(), rows: 0, open: 0, extra: 0, gone: 0, filtered: 0, dup: 0, first_seen: '', last_seen: '',
+      e = { key, spellings: new Map(), channels: new Map(), rows: 0, open: 0, extra: 0, gone: 0, filtered: 0, dup: 0, unknown: 0, first_seen: '', last_seen: '',
         titles: [], employer_site: '', nuts: new Set(), esco: new Set(), contract: new Set(), with_meta: 0 };
       byKey.set(key, e);
     }
@@ -126,7 +126,7 @@ export function groupAggregatorRows(rows, meta = {}) {
     }
     out.push({
       key: e.key, name, channels: [...e.channels.keys()].sort(), per_channel: Object.fromEntries(e.channels),
-      rows: e.rows, open: e.open, extra: e.extra, gone: e.gone, filtered: e.filtered, dup: e.dup,
+      rows: e.rows, open: e.open, extra: e.extra, gone: e.gone, filtered: e.filtered, dup: e.dup, unknown: e.unknown,
       first_seen: e.first_seen, last_seen: e.last_seen, sample_titles,
       employer_site: e.employer_site, site: domainOf(e.employer_site), nuts: [...e.nuts].sort(), esco: [...e.esco].sort(), contract: [...e.contract].sort(),
       with_meta: e.with_meta,
