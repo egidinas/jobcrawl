@@ -15,6 +15,9 @@
 //
 // Breaker: when at least 50 % (minimum 3) of one provider's boards, among those tried in a cycle, fail with the same class, the rest
 // of that provider is skipped for 1, 2, 4, 8 cycles (a trip while the provider is still failing doubles; a clean cycle resets).
+// The key is the provider, or provider@host for the providers in PER_HOST whose boards each sit on their own host (2026-11-25,
+// fix/breaker-per-host): there a few slow boards on their own hosts cannot switch off unrelated employers, and several boards on one
+// host that fails still trip together, with the same levels and skip lengths.
 // State in <data>/provider-breaker.json. The alert is ONE flag file (CRAWL_PROVIDER_DOWN.flag) in the health folder, same
 // "<timestamp> <what is down>" shape as DOWN.flag, removed when no provider is open any more.
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -60,9 +63,29 @@ export const hostOf = (entry, slug) => {
   return '';
 };
 
+// A bare host name as a slug ("careers.nus.edu.sg"), or the host of a URL slug; '' for anything else (a tenant id, a path).
+const HOSTNAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,}$/i;
+export const slugHost = (slug) => {
+  const s = String(slug ?? '').trim();
+  if (/^https?:/i.test(s)) { try { return new URL(s).hostname.toLowerCase(); } catch { return ''; } }
+  return HOSTNAME.test(s) ? s.toLowerCase() : '';
+};
+
 const BACKOFF = [1, 2, 4, 8];
-// Providers whose boards live on arbitrary hosts (one board is one site): the breaker is per provider AND host there.
-const GENERIC = new Set(['jsonld_direct', 'paginated_list', 'sitemap']);
+// Providers whose boards each live on their own host: the breaker is per provider AND host there. The generic readers fetch the
+// board's own site. SuccessFactors tenants sit on their own domains (jobs.avl.com, jobs.esa.int; 2026-11-25: with one key for about 35
+// tenants, three large boards that each time out on their own in a third to half of the cycles tripped it for every tenant in 31 % of
+// cycles). The other providers serve their boards from the vendor's shared API, so for them the provider is the host and the key.
+const PER_HOST = new Set(['jsonld_direct', 'paginated_list', 'sitemap', 'successfactors']);
+/**
+ * The host a board's fetch goes to, as the breaker keys it. SuccessFactors fetches entry.api, else the slug (careers_url is often the
+ * employer's own careers page, not the tenant), so those come first there. Elsewhere hostOf(), and the slug as a host name when hostOf()
+ * finds none (nine SuccessFactors boards have only a bare host-name slug). '' when nothing names a host.
+ */
+export const breakerHostOf = (provider, entry, slug) => {
+  if (provider === 'successfactors') return slugHost(entry?.api) || slugHost(slug) || hostOf(entry, slug);
+  return hostOf(entry, slug) || slugHost(slug);
+};
 // Providers that never trip it: EURES has its own slow lane (answers come from lane files), usajobs is deferred.
 const EXEMPT = new Set(['eures', 'usajobs']);
 
@@ -72,14 +95,20 @@ export function makeBreaker({ dataDir, healthDir, dryRun = false, log = console.
   let state = { cycle: 0, providers: {} };
   try { if (file && existsSync(file)) state = JSON.parse(readFileSync(file, 'utf8')); } catch { /* fresh */ }
   state.providers ??= {};
+  // a bare key of a per-host provider is from before it was keyed per host: no board maps to it any more, so it would stay open in the
+  // flag until it ran out and then never be closed. It is dropped (its boards are judged per host from this cycle on).
+  for (const k of Object.keys(state.providers)) {
+    if (PER_HOST.has(k)) { log(`[breaker] ${k}: provider-wide key from before the per-host breaker dropped (level ${state.providers[k]?.level ?? '?'}, open until cycle ${state.providers[k]?.open_until ?? '?'})`); delete state.providers[k]; }
+  }
   state.cycle = (state.cycle ?? 0) + 1;
   const cycle = state.cycle;
   const run = new Map();   // key -> { tried, ok, fails: {cls: n}, skipped, tripped }
-  const keyOf = (provider, host) => (GENERIC.has(provider) ? `${provider}@${host || '?'}` : provider);
+  const keyOf = (provider, host) => (PER_HOST.has(provider) ? `${provider}@${host || '?'}` : provider);
   const r = (k) => run.get(k) ?? run.set(k, { tried: 0, ok: 0, fails: {}, skipped: 0, tripped: null }).get(k);
 
   return {
     cycle,
+    keyOf,
     /** true: the breaker of this provider is open this cycle, skip the board (counted, never a failure) */
     shouldSkip(provider, host) {
       if (EXEMPT.has(provider)) return false;

@@ -19,7 +19,7 @@ import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
-import { classifyError, makeBreaker, hostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
+import { classifyError, makeBreaker, hostOf, breakerHostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
 import { openLifecycle } from './lifecycle.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
@@ -525,7 +525,9 @@ async function scan() {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');
     const host = hostOf(entry, r.slug);
-    if (breaker.shouldSkip(r.provider, host)) return { entry, r, skipped: true, error: 'skipped: provider circuit breaker open', triage: { cls: 'SKIPPED', code: '', detail: 'circuit breaker open' } };
+    // the breaker's host is the one the fetch goes to (resilience.mjs breakerHostOf); the triage row keeps hostOf() as before
+    const bhost = breakerHostOf(r.provider, entry, r.slug);
+    if (breaker.shouldSkip(r.provider, bhost)) return { entry, r, skipped: true, error: 'skipped: provider circuit breaker open', triage: { cls: 'SKIPPED', code: '', detail: 'circuit breaker open' } };
     let timer;
     const ms = entryTimeoutMs(entry);   // entry.timeout_ms, default 35 s
     const timeoutPromise = new Promise((_, reject) => {
@@ -535,11 +537,11 @@ async function scan() {
     try {
       const fetchPromise = providers[r.provider].fetch(r.slug, entry);
       const jobs = await Promise.race([fetchPromise, timeoutPromise]);
-      breaker.record(r.provider, host, true);
+      breaker.record(r.provider, bhost, true);
       return { entry, r, jobs };
     } catch (e) {
       const triage = classifyError(e);
-      const cand = breaker.record(r.provider, host, false, triage);
+      const cand = breaker.record(r.provider, bhost, false, triage);
       if (cand) {   // enough failures of one class: look again before the rest of the provider is skipped (resilience.mjs commit)
         await new Promise((res) => setTimeout(res, 15000));
         let again = true;
