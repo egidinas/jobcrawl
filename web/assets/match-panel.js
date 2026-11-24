@@ -20,6 +20,7 @@ const ssSet = (k, v) => { try { if (v) sessionStorage.setItem(k, v); else sessio
 let onDevice = ssGet(LOCAL_KEY) === '1';
 const useService = () => !!SVC() && !onDevice;
 const HAS_SVC = !!SVC();
+const SVC_COOLDOWN_MS = 120000;
 // shadow: the in-browser model (EmbeddingGemma-2, a second vector space) stays hidden until an ax_b03 browser model is measured (size,
 // load time on a phone, same results as the NUC on 20 CVs); the NUC stays the default (owner 2026-11-14). Public is unchanged.
 const BROWSER_MODEL = !(window.MADE_B2_SHADOW === true || /^shadow\./.test(location.hostname));
@@ -156,8 +157,8 @@ function headNote() {
     : L('Paste your CV or describe what you want. Ranked open roles, computed on your device.', 'CV einfügen oder beschreiben, was Sie suchen. Passende offene Stellen, berechnet auf Ihrem Gerät.');
 }
 function privacyNote() {
-  if (useService()) return L('“Find roles” sends your text to our server once, to rank the open roles. It is used for this answer only: not stored, not logged. Your ratings and profile stay in this browser. “Match on this device” keeps everything in your browser; it downloads a role index once (about 30 MB).',
-    '„Stellen finden“ schickt Ihren Text einmal an unseren Server, um die offenen Stellen zu ordnen. Er wird nur für diese Antwort verwendet: nicht gespeichert, nicht protokolliert. Ihre Bewertungen und Ihr Profil bleiben in diesem Browser. „Auf diesem Gerät abgleichen“ hält alles in Ihrem Browser; dafür wird einmal ein Stellenindex geladen (etwa 30 MB).');
+  if (useService()) return L('“Find roles” sends your text to our server once, to rank the open roles. It is used for this answer only: not stored, not logged. Your ratings and profile stay in this browser. “Match on this device” keeps your text in your browser; it downloads a role index once (about 30 MB).',
+    '„Stellen finden“ schickt Ihren Text einmal an unseren Server, um die offenen Stellen zu ordnen. Er wird nur für diese Antwort verwendet: nicht gespeichert, nicht protokolliert. Ihre Bewertungen und Ihr Profil bleiben in diesem Browser. „Auf diesem Gerät abgleichen“ behält Ihren Text in Ihrem Browser; dafür wird einmal ein Stellenindex geladen (etwa 30 MB).');
   return LOCAL_NOTE;
 }
 
@@ -338,7 +339,8 @@ async function runService(text) {
     say(L(`Our server could not read this text (HTTP ${a.status}). Shorten or change it, or match on this device.`, `Unser Server konnte diesen Text nicht lesen (HTTP ${a.status}). Bitte kürzen oder ändern, oder auf diesem Gerät abgleichen.`) + LOCAL_BTN());
     return true;
   }
-  if (a.engine !== 'service') { console.warn('match service: ' + a.why + '; the browser engine answers'); st.svcFail = a.why; return false; }
+  // a failed or slow service is not asked again for 2 minutes: each further click would wait up to 5 s and count against the quota
+  if (a.engine !== 'service') { console.warn('match service: ' + a.why + '; the browser engine answers'); st.svcFail = a.why; st.svcDownUntil = Date.now() + SVC_COOLDOWN_MS; return false; }
   const o = settings(), scopeIds = cfg.scopes.map((s) => s.id);
   const p = pickServiceItems(a.items, { ...o, scopeIds, regionScope: svc.regionScope || {}, levelCodes: LEVEL_CODES });
   st.svc = new Map(a.items.map((x) => [x.sid, x]));
@@ -360,7 +362,8 @@ async function run(useModel, { fromTaste = false } = {}) {
     say(L('Paste a few lines about your work, select a target activity, or rate some roles.', 'Fügen Sie ein paar Zeilen zu Ihrer Arbeit ein, wählen Sie eine Zielaktivität, oder bewerten Sie Stellen.'));
     return;
   }
-  if (!fromTaste && text.length >= 20 && useService()) {
+  if (!fromTaste && text.length >= 20 && useService() && Date.now() < (st.svcDownUntil || 0)) fallback = FALLBACK_LINE();
+  else if (!fromTaste && text.length >= 20 && useService()) {
     if (await runService(text)) return;
     fallback = FALLBACK_LINE();
   }
