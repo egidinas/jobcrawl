@@ -69,6 +69,10 @@ const crawl = (prof, data) => new Promise((done) => {
 });
 const keptLine = (r) => { const l = r.stdout.split('\n').find((x) => x.includes('hides kept back')); assert.ok(l, r.stdout + r.stderr); return l; };
 const ok = (r) => assert.equal(r.status, 0, r.stdout + r.stderr);
+// R3: the live watcher counts lines matching LIVE in the cycle log, the batch watcher bare BATCH lines; each fallback must be one line of both
+const LIVE = /step failed|continuing with/, BATCH = /^\[degraded\] [^/\s]+\/[^:\s]+: .+ \((\d+)\)$/;
+const admissionLines = (out) => out.split(/\r?\n/).filter((l) => l.includes('crawl/admission') || l.startsWith('[admission]'));
+const counted = (out) => { const ls = admissionLines(out); return [ls.filter((l) => LIVE.test(l)).length, ls.filter((l) => BATCH.test(l)).reduce((t, l) => t + Number(l.match(BATCH)[1]), 0)]; };
 
 const sm = (base, name, extra = {}) => ({ name, provider: 'sitemap', slug: `${base}/t/sitemap.xml`, url_pattern: '/job/', ...extra });
 async function withServer(fn) {
@@ -83,6 +87,7 @@ test('one tenant, a site whitelist on one board (Leonardo / Kopter): the whiteli
   let p = profile(dir, [all, narrow]);
   let r = await crawl(p.prof, p.data); ok(r);
   assert.deepEqual(statuses(p.data), ['open', 'open', 'open'], 'run 1: both boards due, the all-sites board admitted all three');
+  assert.deepEqual(counted(r.stdout), [0, 0], 'a normal run prints no degraded line');
   assert.match(keptLine(r), /hides kept back \(another board admitted the role within 48 h\): 2 hides, 0 closes, by board pair \(hider > admitting board\): Munich Only > All Sites 2/);
   // only the whitelisted board is due (the case of 24 Nov 18:24): before the rule all but Munich became 'filtered'
   p = profile(dir, [{ ...all, enabled: false }, narrow]);
@@ -174,7 +179,8 @@ test('first run after the deploy (no state): open rows are seeded as admitted; a
   assert.deepEqual(statuses(p.data), ['open', 'open', 'open']);
   writeFileSync(join(p.data, 'admit-state.json'), '{not json');
   r = await crawl(p.prof, p.data); ok(r);
-  assert.match(r.stdout, /\[admission\] .*admit-state\.json unreadable/);
+  assert.deepEqual(counted(r.stdout), [1, 1], 'the unreadable state is counted once by each watcher');
+  assert.match(admissionLines(r.stdout)[0], /^\[degraded\] crawl\/admission: admit-state\.json unreadable \(.*\), continuing with a fresh seed from the history \(1\)$/);
   assert.deepEqual(statuses(p.data), ['open', 'open', 'open']);
   assert.ok(existsSync(join(p.data, 'admit-state.json')) && JSON.parse(readFileSync(join(p.data, 'admit-state.json'), 'utf8')).v === 1);
 }));
@@ -196,5 +202,33 @@ test('admission rule, unit: own hide withdraws, a suspect answer withdraws nothi
     assert.equal(a.mayClose('u8', 'B'), null, 'A said u8 is gone: B may close it');
     assert.equal(a.mayClose('u7', 'B'), 'A');
     assert.match(a.summaryLine(), /^hides kept back \(another board admitted the role within 48 h\): 2 hides, 1 closes, by board pair \(hider > admitting board\): B > A 3; 4 admissions withdrawn$/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('R3: a state file that cannot be written is counted once by each watcher and the run goes on', () => withServer(async ({ base, dir }) => {
+  const all = sm(base, 'All Sites', { any_location: true });
+  const p = profile(dir, [all]);
+  mkdirSync(join(p.data, 'admit-state.json.tmp'), { recursive: true });
+  const r = await crawl(p.prof, p.data); ok(r);
+  assert.deepEqual(statuses(p.data), ['open', 'open', 'open'], 'the crawl itself is complete');
+  assert.deepEqual(counted(r.stdout), [1, 1]);
+  assert.match(admissionLines(r.stdout).find((l) => l.startsWith('[degraded]')), /^\[degraded\] crawl\/admission: admit-state\.json not written \(.*\), continuing with a fresh seed at the next run \(1\)$/);
+}));
+
+test('R3: failed rule calls and an unreadable lifecycle state are each counted once per run, and the rule goes on as before', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jobcrawl-admission-r3-'));
+  try {
+    const lines = [];
+    const bad = { url: 'u-bad', company: 'X', last_seen: '2026-11-24', get status() { throw new Error('broken row'); } };
+    const good = { url: 'u-good', company: 'All Sites', last_seen: '2026-11-24', status: 'open' };
+    const a = openAdmissions(dir, { now: Date.parse('2026-11-25T12:00:00Z'), log: (m) => lines.push(m),
+      history: new Map([['u-bad', bad], ['u-bad2', bad], ['u-good', good]]), lifecycleState: () => { throw new Error('truncated'); } });
+    assert.equal(a.mayHide('u-good', 'Narrow', 'location (site whitelist)'), 'All Sites', 'the good row is still seeded and held');
+    const out = [...lines, a.degradedLine()].join(String.fromCharCode(10));
+    assert.deepEqual(counted(out), [2, 2], 'two cases, each one line: the lifecycle fallback and the failed calls (two rows, one line)');
+    assert.match(a.degradedLine(), /^\[degraded\] crawl\/admission: 2 rule call\(s\) failed, continuing with the hides and closes as before \(1\)$/);
+    assert.ok(lines.some((l) => /^\[degraded\] crawl\/admission: lifecycle state unreadable \(truncated\), continuing with a seed by company name \(1\)$/.test(l)));
+    const clean = openAdmissions(dir, { log: () => {} });
+    assert.equal(clean.degradedLine(), null, 'no failed call: no line');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

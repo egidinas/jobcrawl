@@ -22,7 +22,7 @@ import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { classifyError, makeBreaker, hostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
 import { openLifecycle } from './lifecycle.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
-import { openAdmissions } from './admission.mjs';
+import { openAdmissions, degraded, oneLine } from './admission.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
@@ -948,6 +948,7 @@ async function scan() {
   console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}${titleRel ? ` | title release: ${titleRel.released} released, ${titleRel.kept} kept open, ${titleRel.deferred} deferred (caps ${titleRel.maxCycle}/cycle, ${titleRel.maxBoard}/board${titleRel.outside ? `; ${titleRel.outside}` : ''}${titleRel.extra ? `; extra shift until ${titleRel.extra.data.until}` : ''})` : ''}${results.some((r) => r?.skipped) ? ` | ${results.filter((r) => r?.skipped).length} skipped by the provider breaker` : ''}`);
   // R3: one line per run, also when nothing was kept back (admission.mjs)
   problems.unshift(adm.summaryLine());
+  if (adm.degradedLine()) console.log(adm.degradedLine());
   const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
@@ -1024,7 +1025,7 @@ async function scan() {
   writeFileSync(HEALTH_FILE, JSON.stringify(health, null, 1) + '\n');
   for (const k of Object.keys(guardState)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete guardState[k];
   writeFileSync(GUARD_FILE, JSON.stringify(guardState, null, 1) + '\n');
-  try { adm.save(); } catch (e) { console.log(`[admission] state not written (${e.message}): the next run seeds it from the history`); }
+  try { adm.save(); } catch (e) { console.log(degraded(`admit-state.json not written (${oneLine(e.message)}), continuing with a fresh seed at the next run`)); }
   if (probationDirty || Object.keys(probation).length) {
     if (probationDirty) writeFileSync(PROB_FILE, JSON.stringify(probation, null, 1) + '\n');
     // Review list: companies disabled by the pruning rule. The companies file is never touched.

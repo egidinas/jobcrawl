@@ -25,6 +25,10 @@ import { resolve } from 'node:path';
 
 export const ADMIT_HOLD_H = 48;
 export const ADMIT_VERSION = 1;
+// R3: a fallback prints ONE line per case and run that both watchers count: the live pattern `step failed|continuing with` and the batch
+// form `[degraded] <stage>/<step>: <reason> (1)`.
+export const oneLine = (m) => String(m ?? '').split(/\r?\n/)[0].slice(0, 160);
+export const degraded = (reason) => `[degraded] crawl/admission: ${reason} (1)`;
 // verdicts that are policy, not a board's own view: they hide whatever any other board admitted
 export const POLICY_VERDICTS = new Set(['blocked-location']);
 // the guard's test (resilience.mjs GUARD) for an answer that lost most of what the board had admitted: such an answer withdraws nothing
@@ -59,14 +63,13 @@ export function openAdmissions(dataDir, { now = Date.now(), history = new Map(),
       loaded = true;
     }
   } catch (e) {
-    stats.errors++;
-    log(`[admission] ${file} unreadable (${e.message}): seeded from the history instead`);
+    log(degraded(`admit-state.json unreadable (${oneLine(e.message)}), continuing with a fresh seed from the history`));
   }
   if (!loaded) {
     // first run (or a lost file): every open or dup row counts as admitted by the board that last listed it, at that time
     let fromLc = 0, fromCompany = 0;
     if (typeof lifecycleState === 'function') {
-      try { lifecycleState = lifecycleState(); } catch (e) { lifecycleState = null; log(`[admission] lifecycle state unreadable (${e.message}): seed by company`); }
+      try { lifecycleState = lifecycleState(); } catch (e) { lifecycleState = null; log(degraded(`lifecycle state unreadable (${oneLine(e.message)}), continuing with a seed by company name`)); }
     }
     for (const row of history.values()) {
       try {
@@ -153,7 +156,11 @@ export function openAdmissions(dataDir, { now = Date.now(), history = new Map(),
       const list = top.slice(0, 15).map(([k, v]) => `${k} ${v}`).join(', ');
       const more = top.length > 15 ? ` (and ${top.length - 15} more pairs, ${top.slice(15).reduce((t, [, v]) => t + v, 0)} roles)` : '';
       return `hides kept back (another board admitted the role within ${ADMIT_HOLD_H} h): ${n ? `${stats.blockedHide} hides, ${stats.blockedClose} closes, by board pair (hider > admitting board): ${list}${more}` : 'none'}` +
-        `${stats.withdrawn ? `; ${stats.withdrawn} admissions withdrawn` : ''}${stats.errors ? `; ${stats.errors} rule errors (the hide went ahead as before)` : ''}`;
+        `${stats.withdrawn ? `; ${stats.withdrawn} admissions withdrawn` : ''}`;
+    },
+    /** R3: one watcher-counted line when rule calls failed this run (each went ahead as before), else null. */
+    degradedLine() {
+      return stats.errors ? degraded(`${stats.errors} rule call(s) failed, continuing with the hides and closes as before`) : null;
     },
     /** Write the state (atomic), dropping admissions older than the hold. */
     save() {
