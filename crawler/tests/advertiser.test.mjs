@@ -10,7 +10,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { foldName, loadRules, ruleFor, seedFromRawCapture, openAdvertisers } from '../advertiser.mjs';
+import { foldName, sameEntity, loadRules, ruleFor, seedFromRawCapture, openAdvertisers } from '../advertiser.mjs';
 import { providers } from '../providers.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -143,6 +143,9 @@ test('unit: folding drops entity codes and accents; first rule wins; bad rules f
   assert.equal(foldName('Y99000 General Electric Company'), 'general electric company');
   assert.equal(foldName('3D Systems GmbH'), '3d systems gmbh', 'a name that starts with a short token is not an entity code');
   assert.equal(foldName('AW PZL-Świdnik S.A.'), 'aw pzl swidnik s a');
+  assert.ok(sameEntity('Blue Origin Personnel, LLC', 'Blue Origin'), 'a legal form is not another company: not listed for review');
+  assert.ok(sameEntity('Rollsroyce (workday) [RRPS]', 'ROLLSROYCE'));
+  assert.ok(!sameEntity('Airbus Helicopters SAS', 'Airbus (Workday, all sites)'));
   const dir = mkdtempSync(join(tmpdir(), 'jobcrawl-advertiser-unit-'));
   try {
     const f = join(dir, 'a.json');

@@ -32,6 +32,14 @@ export function foldName(s) {
   return f.replace(LEAD_CODE, '').trim();
 }
 
+const LEGAL = new Set('gmbh ggmbh mbh ag se kg kgaa co ohg ug ev eg inc incorporated ltd limited llc llp lp plc corp corporation company sa sas sarl srl spa bv nv ab as asa oy oyj aps sro pte pty sl sau personnel the'.split(' '));
+/** Same entity for the review list: equal once folded, legal forms, brackets and crawl decorations ("(workday) [tenant]") are dropped. */
+export function sameEntity(a, b) {
+  const key = (s) => foldName(String(s ?? '').replace(/\([^)]*\)|\[[^\]]*\]/g, ' ')).split(' ').filter((w) => w && !LEGAL.has(w)).join(' ');
+  const x = key(a), y = key(b);
+  return Boolean(x) && x === y;
+}
+
 /** -> [{ rx, company }] (throws on a bad file: the caller falls back and counts it). */
 export function loadRules(file) {
   const t = JSON.parse(readFileSync(file, 'utf8'));
@@ -133,7 +141,7 @@ export function openAdvertisers(dataDir, { rulesFile = null, rawDir = '', histor
         const rec = urls.get(row.url);
         if (!rec) return null;
         const { hit, company } = ruleFor(rules, rec[0]);
-        if (!hit && foldName(rec[0]) !== foldName(row.company) && foldName(rec[0]) !== foldName(board)) {
+        if (!hit && !sameEntity(rec[0], row.company) && !sameEntity(rec[0], board)) {
           const k = rec[0]; const x = unknown.get(k) ?? unknown.set(k, { n: 0, boards: new Set(), url: row.url }).get(k);
           x.n++; x.boards.add(board); stats.unknownListed++;
         }
