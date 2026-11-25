@@ -971,6 +971,8 @@ export const providers = {
       const [tenant, wd, site] = slug.split('|');
       const path = job.externalPath ?? new URL(job.url).pathname.replace(new RegExp(`^/${site}`), '');
       const d = await get(`https://${tenant}.${wd}.myworkdayjobs.com/wday/cxs/${tenant}/${site}${path}`);
+      // the advertiser the posting declares (a legal entity): crawl.mjs maps it to a company (advertiser.mjs)
+      if (typeof d?.hiringOrganization?.name === 'string' && d.hiringOrganization.name.trim()) job.organization = d.hiringOrganization.name.trim();
       return plain(d.jobPostingInfo?.jobDescription ?? '');
     },
   },

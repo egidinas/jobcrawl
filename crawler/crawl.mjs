@@ -21,6 +21,7 @@ import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { classifyError, makeBreaker, hostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
 import { openLifecycle } from './lifecycle.mjs';
+import { openAdvertisers } from './advertiser.mjs';
 import { configurePolicy, policyFromProfile, installGuard, policySummary, flushPolicy, policySettled, interleaveByProvider } from './policy.mjs';
 
 const args = process.argv.slice(2);
@@ -580,9 +581,14 @@ async function scan() {
   }
   // The open rows of each board, grouped once (a role belongs to board X when its company is X or ends with "(via X)"): the liveness check
   // below used to scan the whole history (about 600,000 rows) for every board, about 500 boards a cycle.
+  // Advertiser attribution (advertiser.mjs): a role shows under the advertiser its posting declares; a relabelled row keeps the board
+  // that listed it as its owner here, so a declared name equal to another board's name never lets that board close it.
+  const adv = openAdvertisers(OUT_DIR, { rulesFile: PROFILE.advertisersFile, rawDir: process.env.JOBCRAWL_RAW_DIR ?? '', history });
   const openByBoard = new Map();
   for (const row of history.values()) {
     if (row.status !== 'open' || !row.company) continue;
+    const owner = adv.ownerBoard(row.url);
+    if (owner) { (openByBoard.get(owner) ?? openByBoard.set(owner, []).get(owner)).push(row); continue; }
     const keys = new Set([row.company]);
     for (let at = row.company.indexOf('(via '); at >= 0; at = row.company.indexOf('(via ', at + 1)) if (row.company.endsWith(')')) keys.add(row.company.slice(at + 5, -1));
     for (const k of keys) (openByBoard.get(k) ?? openByBoard.set(k, []).get(k)).push(row);
@@ -774,6 +780,12 @@ async function scan() {
       fresh.push({ ...row, seniority: compiledFilters.seniorityMatcher(normTitle) });
     }
     trow.kept = boardKept;
+    // Advertiser attribution, one place per board answer: the declared advertiser of every listed posting decides its company name.
+    // An aggregator never declares for the employer's own posting and never owns it: its "X (via Board)" rows stay as they are.
+    if (!fromAggregator) for (const j of res.jobs) {
+      if (j.organization) adv.declare(j.url, j.organization, 'jsonld', name);
+      adv.applyTo(history.get(j.url), name);
+    }
     if (isProb && !flag('dry-run')) {
       const employerMismatch = companies[i].employer_mismatch ? String(companies[i].employer_mismatch) : '';
       probationCycle(pst, { ok: true, total: res.jobs.length, relevant: pc.relevant, irrelevant: pc.irrelevant, samples: pc.samples, protectedNow, now: date, employerMismatch });
@@ -830,6 +842,11 @@ async function scan() {
     await pool([...native, ...generic], async ({ row, j, r }) => {
       const own = providers[r.provider].fetchDescription;
       j.description = own ? await own(j, r.slug).catch(() => '') : await pageDescription(j);
+      if (j.organization && r.provider === 'workday') {
+        const board = adv.ownerBoard(row.url) || row.company;
+        adv.declare(row.url, j.organization, 'workday_detail', board);
+        adv.applyTo(row, board);
+      }
       if (j.description) saveJd(row, j);
       else failed[row.url] = Date.now();
     });
@@ -912,6 +929,9 @@ async function scan() {
   fresh.sort((a, b) => Number(b.seniority) - Number(a.seniority) || a.company.localeCompare(b.company));
   console.log(`Scanned ${companies.length - results.filter((r) => !r || r.error).length}/${companies.length} companies${skipped ? ` (${skipped} not due)` : ""} | ${stats.fetched} postings | ${stats.seen} already known | ${stats.filtered} filtered | ${stats.extra ?? 0} kept as extra | ${stats.crosslisted} cross-listed | ${stats.shadowed} shadowed by ATS | ${fresh.length} NEW${gatedSg ? ` | ${gatedSg} dropped by the strict relevance gate` : ''}${gatedProbation ? ` | ${gatedProbation} held back by probation` : ''}${probationSkipped ? ` | ${probationSkipped} probation companies disabled` : ''}${stats.collectOnly ? ` | ${stats.collectOnly} collect-only` : ''}${titleRel ? ` | title release: ${titleRel.released} released, ${titleRel.kept} kept open, ${titleRel.deferred} deferred (caps ${titleRel.maxCycle}/cycle, ${titleRel.maxBoard}/board${titleRel.outside ? `; ${titleRel.outside}` : ''}${titleRel.extra ? `; extra shift until ${titleRel.extra.data.until}` : ''})` : ''}${results.some((r) => r?.skipped) ? ` | ${results.filter((r) => r?.skipped).length} skipped by the provider breaker` : ''}`);
   const locTop = Object.entries(locationDrops).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  // R3: the attribution line every run, and one watcher-counted line per fallback (advertiser.mjs)
+  problems.unshift(adv.summaryLine());
+  for (const l of adv.degradedLines()) console.log(l);
   if (locTop.length) problems.unshift(`title-passing roles dropped for their location, by board: ${locTop.slice(0, 10).map(([k, v]) => `${k} ${v}`).join(', ')}${locTop.length > 10 ? ` (and ${locTop.length - 10} more boards, ${locTop.slice(10).reduce((t, [, v]) => t + v, 0)} roles)` : ''}`);
   if (Object.keys(dropReasons).length) problems.unshift(`filtered by reason: ${Object.entries(dropReasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', ')}`);
   if (filling.length) problems.unshift(`partial answers (page or time budget spent; nothing marked gone for them, a page fill continues next cycle): ${filling.length} boards: ${filling.slice(0, 15).join(', ')}${filling.length > 15 ? ', ...' : ''}`);
@@ -987,6 +1007,7 @@ async function scan() {
   writeFileSync(HEALTH_FILE, JSON.stringify(health, null, 1) + '\n');
   for (const k of Object.keys(guardState)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete guardState[k];
   writeFileSync(GUARD_FILE, JSON.stringify(guardState, null, 1) + '\n');
+  try { adv.save(); } catch (e) { console.log(`[degraded] crawl/advertiser: advertisers.json not written (${String(e.message).split('\n')[0]}), continuing with a fresh record at the next run (1)`); }
   if (probationDirty || Object.keys(probation).length) {
     if (probationDirty) writeFileSync(PROB_FILE, JSON.stringify(probation, null, 1) + '\n');
     // Review list: companies disabled by the pruning rule. The companies file is never touched.

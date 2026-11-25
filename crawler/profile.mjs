@@ -68,6 +68,7 @@ export function loadProfile(dirArg) {
     name: raw.name ?? basename(dir),
     companiesFile: resolve(dir, crawl.companies_file ?? 'companies.json'),
     catalogueFile: crawl.catalogue_file ? resolve(dir, crawl.catalogue_file) : null,
+    advertisersFile: crawl.advertisers_file ? resolve(dir, crawl.advertisers_file) : null,   // advertiser attribution rules (advertiser.mjs)
     userAgent: crawl.user_agent || null,
     reviewDir: crawl.review_dir ? resolve(dir, crawl.review_dir) : null,
     relevance: {
