@@ -1003,11 +1003,11 @@ async function scan() {
   if (existsSync(JD_DIR) && jdRows.size) jdCleanup(jdRows, false);
   if (labelsDirty) saveLabels(OUT_DIR, boardLabels);
   writeFileSync(STATE_FILE, JSON.stringify(crawlState, null, 1) + '\n');
+  try { adv.save(); } catch (e) { console.log(`[degraded] crawl/advertiser: advertisers.json not written (${String(e.message).split('\n')[0]}), continuing with a fresh record at the next run (1)`); }
   for (const k of Object.keys(health)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete health[k];
   writeFileSync(HEALTH_FILE, JSON.stringify(health, null, 1) + '\n');
   for (const k of Object.keys(guardState)) if (!cfg.tracked_companies.some((c) => c.name === k)) delete guardState[k];
   writeFileSync(GUARD_FILE, JSON.stringify(guardState, null, 1) + '\n');
-  try { adv.save(); } catch (e) { console.log(`[degraded] crawl/advertiser: advertisers.json not written (${String(e.message).split('\n')[0]}), continuing with a fresh record at the next run (1)`); }
   if (probationDirty || Object.keys(probation).length) {
     if (probationDirty) writeFileSync(PROB_FILE, JSON.stringify(probation, null, 1) + '\n');
     // Review list: companies disabled by the pruning rule. The companies file is never touched.
