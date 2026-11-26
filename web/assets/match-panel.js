@@ -144,10 +144,21 @@ const st = {
 };
 const say = (html) => { $('match-status').innerHTML = html; };
 
-async function ensureIndex() {
-  if (st.ix) return st.ix;
+// one load per page: opening the panel starts it, "Find roles" waits for the same promise (two at once fetched the 31 MB index twice)
+function ensureIndex() {
+  if (st.ix) return Promise.resolve(st.ix);
+  if (!st.ixP) st.ixP = loadAll().catch((e) => { st.ixP = null; throw e; });
+  return st.ixP;
+}
+async function loadAll() {
   say(L('Loading the role index…', 'Lade den Stellenindex …'));
-  const [ix, rows] = await Promise.all([loadIndex(dataUrl('match/'), cfg.glossary), fetch(dataUrl('jobs-index.json')).then((r) => r.json())]);
+  const bar = $('match-bar'); let shown = false;
+  const prog = (done, total) => { if (!shown && done < total) { bar.hidden = false; shown = true; } if (total) bar.firstElementChild.style.width = Math.min(100, done / total * 100).toFixed(0) + '%';
+    const mb = (x) => (x / 1048576).toFixed(0);
+    say(total ? L(`Loading the role index (once, then kept in this browser): ${mb(done)} of about ${mb(total)} MB`, `Lade den Stellenindex (einmal, dann in diesem Browser gespeichert): ${mb(done)} von etwa ${mb(total)} MB`)
+      : L(`Loading the role index (once, then kept in this browser): ${mb(done)} MB`, `Lade den Stellenindex (einmal, dann in diesem Browser gespeichert): ${mb(done)} MB`)); };
+  let ix, rows;
+  try { [ix, rows] = await Promise.all([loadIndex(dataUrl('match/'), cfg.glossary, undefined, prog), fetch(dataUrl('jobs-index.json')).then((r) => r.json())]); } finally { bar.hidden = true; }
   st.prefDefs = await fetch(dataUrl('match/match-prefs.json')).then((r) => (r.ok ? r.json() : { prefs: [] })).then((j) => j.prefs.map((p) => ({ ...p, v: Float32Array.from(p.v) }))).catch(() => []);
   st.ix = ix; st.rows = rows;
   st.pData = PF.personaVectorsByLevel(st.ix, st.rows);

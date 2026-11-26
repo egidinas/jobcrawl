@@ -168,7 +168,7 @@ let coRows = {}; const loadCoRows = () => (cfg.company_texts ? fetch(dataUrl(cfg
 if (!ROLE_PAGE) await loadCoRows();
 // each role's function (family.function), second function, domain and level (jobcrawl functions), with the names and colours of config.json:
 // the same labels and colours as the job board
-let RF = null; const loadRF = () => (cfg.functions ? fetch(dataUrl(cfg.functions.file || 'match/role-functions.json')).then((r) => (r.ok ? r.json() : null)).then((d) => { RF = d; }).catch(() => null) : null);   // the cards' tags: after the first paint
+let RF = null, rfP = null; const loadRF = () => rfP || (rfP = cfg.functions ? fetch(dataUrl(cfg.functions.file || 'match/role-functions.json')).then((r) => (r.ok ? r.json() : null)).then((d) => { RF = d; }).catch(() => null) : null);   // the cards' tags: after the first paint
 const FN = new Map(((cfg.functions || {}).functions || []).concat((cfg.functions || {}).families || []).map((f) => [f.id, f]));
 const DOM = new Map((cfg.domains || []).map((d) => [d.id, d]));
 // each company's type (what it does: the company counterpart of a role's function), domain, stage and the family it hires for (jobcrawl
@@ -1861,7 +1861,10 @@ function fitTo() {
   const pad = co ? 1.18 : 1.12, bw = (x1 - x0) * pad, bh = (y1 - y0) * pad, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   // the lens goes to the visible point nearest the middle: on a map of separate islands the middle itself can be empty
   let best = 0, bd = Infinity; xs.forEach((x, i) => { const d = (x - cx) ** 2 + (ys[i] - cy) ** 2; if (d < bd) { bd = d; best = i; } });
-  st.z = { s: Math.max(1, Math.min(24, 1 / bw, 1 / bh)), cx, cy }; st.lens = { x: xs[best], y: ys[best] };
+  // the zoom buttons cover a strip at the right edge (8 + 30 px + a margin): the fitted points stay left of it, so a tap on a dot never
+  // lands on a button (phones: the first role of the list sat under the zoom column and could not be tapped)
+  const zr = Math.min(0.3, 46 / Math.max(1, W)), s1 = Math.max(1, Math.min(24, (1 - zr) / bw, 1 / bh));
+  st.z = { s: s1, cx: s1 > 1 ? cx + zr / 2 / s1 * (W / BW) : cx, cy }; st.lens = { x: xs[best], y: ys[best] };
 }
 // the view after a filter or a switch: fitted to the visible roles or companies (one map), else the whole map (as per_scope always did)
 const fitOrWhole = () => { if (!perScope || st.mode === 'geo') fitTo(); else st.z = { s: 1, cx: 0.5, cy: 0.5 }; };
@@ -2293,7 +2296,8 @@ else updateModeHeader();
 // 'draw' (after every frame, also the frames of a change of view), 'tap' (a point, or id null for the empty map), 'escape', 'data' (late files in);
 // setFilter(fn of a role's board index | null) narrows the roles like a field filter; setMask(Set of entity ids | null) lights those and dims the rest
 // (as a link does); setLabels(true) leaves the area names to the module; own(true) gives the taps to the module (no card)
-const hook = { on: (t, fn) => hookEv.addEventListener(t, (e) => fn(e.detail)), cfg, ix, rows, at, LAY, mount, stage, canvas: cv, dataUrl, roleLink, companyLink, L, esc, pick, isDe,
+const hook = { on: (t, fn) => hookEv.addEventListener(t, (e) => fn(e.detail)), cfg, ix, rows, at, LAY, mount, stage, canvas: cv, dataUrl, roleLink, companyLink, L, esc, pick, isDe, rf: () => Promise.resolve(loadRF()).then(() => RF),   // each role's own function labels (role-functions.json, one fetch)
+ 
   ready: () => rowsReady, st: () => ({ mode: st.mode, scope: st.scope, fields: [...st.fields], z: { ...st.z }, W, H, BW, BH }), layer: () => lay(), vis: () => vis, coN: () => coN,
   toScreen: (x, y) => [sx(x), sy(y)], toMap: (px, py) => [ux(px), uy(py)], visibleRoles: (e) => visibleRoles(e), coRow: (slug) => coRows[slug] || null, coLogo,
   setFilter: (fn) => { hk.filter = fn || null; if (lnk) linkBuild(lnk); }, setMask: (ids) => { hk.mask = ids || null; }, setLabels: (on) => { hk.ownLabels = !!on; }, own: (on) => { hk.own = !!on; },

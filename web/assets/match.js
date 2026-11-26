@@ -15,10 +15,38 @@ export function tokens(t) {
   return out;
 }
 
-export async function loadIndex(base, glossary = [], fetcher = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(u + ' ' + r.status); return r; })) {
+// The keyword index (match-bm25.json, about 96 MB, 31 MB on the wire) is the one big file: it is read once per build and kept in the
+// browser's Cache Storage under its own version (a hash of match-attrs.json, which the same index build writes), so a second
+// visit, a reload or the event laptop after a pre-warm reads it from the disk. The server's cache headers do not matter for it
+// (shadow answers signed-in pages with no-store). onProgress(done, total) follows the download in bytes (total 0 when unknown).
+const IX_CACHE = 'made-match-index-v1';
+export async function cachedJson(url, version, onProgress) {
+  const key = url + (url.includes('?') ? '&' : '?') + 'ixv=' + encodeURIComponent(version || '');
+  let cache = null;
+  try { cache = await caches.open(IX_CACHE); const hit = version ? await cache.match(key) : null; if (hit) return hit.json(); } catch (e) { cache = null; }
+  const r = await fetch(url); if (!r.ok) throw new Error(url + ' ' + r.status);
+  let total = 0; try { total = +(localStorage.getItem('made.ix.size') || 0); } catch (e) { total = 0; }   // the size of the last download (the wire is compressed: no length)
+  let body;
+  if (r.body && onProgress) {
+    const rd = r.body.getReader(), parts = []; let done = 0;
+    for (;;) { const { done: end, value } = await rd.read(); if (end) break; parts.push(value); done += value.length; onProgress(done, total); }
+    body = new Blob(parts); try { localStorage.setItem('made.ix.size', String(done)); } catch (e) { /* no storage */ }
+  } else body = await r.blob();
+  if (cache && version) {
+    try { const old = await cache.keys(); for (const q of old) if (q.url.split('?')[0] === new URL(url, location.href).href.split('?')[0]) await cache.delete(q); await cache.put(key, new Response(body, { headers: { 'content-type': 'application/json' } })); } catch (e) { /* no room: the next visit downloads again */ }
+  }
+  return JSON.parse(await body.text());
+}
+// the version of the keyword index: a hash (FNV-1a) of match-attrs.json's text, written by the same index build (a HEAD request has no
+// length here: the answer is compressed)
+export function textVersion(t) { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(36) + '.' + t.length; }
+
+export async function loadIndex(base, glossary = [], fetcher = (u) => fetch(u).then((r) => { if (!r.ok) throw new Error(u + ' ' + r.status); return r; }), onProgress = null) {
   // the vectors, neighbours and duplicate groups are optional here: without them the index still ranks by keywords
+  const atT = fetcher(base + 'match-attrs.json').then((r) => r.text()), atP = atT.then((t) => JSON.parse(t));
+  const bmP = atT.then((t) => cachedJson(base + 'match-bm25.json', textVersion(t), onProgress));
   const [bm, at, vj, vec, graph, nb] = await Promise.all([
-    fetcher(base + 'match-bm25.json').then((r) => r.json()), fetcher(base + 'match-attrs.json').then((r) => r.json()),
+    bmP, atP,
     fetcher(base + 'match-vec.json').then((r) => r.json()).catch(() => null), fetcher(base + 'match-vec.bin').then((r) => r.arrayBuffer()).then((b) => new Int8Array(b)).catch(() => null),
     fetcher(base + 'role-graph.json').then((r) => r.json()).catch(() => null), fetcher(base + 'role-nb.bin').then((r) => r.arrayBuffer()).then((b) => new Uint16Array(b)).catch(() => null)]);   // (the Match page reads the 16-bit file; the Atlas reads nb_bits 32)
   return makeIndex(bm, vec ? vj : null, at, vec, graph && nb ? { ...graph, nb } : null, glossary);
