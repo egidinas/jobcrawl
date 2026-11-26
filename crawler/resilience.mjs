@@ -91,8 +91,8 @@ export const breakerHostOf = (provider, entry, slug) => {
   return hostOf(entry, slug) || slugHost(slug);
 };
 // Per-host providers that also keep a platform-wide key (one vendor platform behind the tenant domains), and how many distinct failing
-// hosts trip it. 5 from the replay of the 148 recorded cycles (21-24 Nov, BREAKER_PER_HOST.md): no chance trip there.
-export const PLATFORM_MIN_HOSTS = 5;
+// hosts trip it. 6 from the replay of the 148 recorded cycles (21-24 Nov; REVIEWB, 26 Nov): 5 still tripped by chance (0.73 trips), 6 never.
+export const PLATFORM_MIN_HOSTS = 6;
 const PLATFORM = new Set(['successfactors']);
 // Providers that never trip it: EURES has its own slow lane (answers come from lane files), usajobs is deferred.
 const EXEMPT = new Set(['eures', 'usajobs']);

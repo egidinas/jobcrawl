@@ -174,13 +174,13 @@ const logOf = (d, boards, retryFails = true) => {
   return { skipped, lines, flag: existsSync(f) ? readFileSync(f, 'utf8') : '' };
 };
 
-test('platform key: 5 distinct SuccessFactors hosts fail before any answers: trip, the rest skipped, same flag and log line as before', () => {
+test('platform key: 6 distinct SuccessFactors hosts fail before any answers: trip, the rest skipped, same flag and log line as before', () => {
   const d = dirs();
-  const run = [...sfHosts(5), ...sfHosts(3, true, 10), ['reachmee', 'web103.reachmee.com', true]];
+  const run = [...sfHosts(6), ...sfHosts(3, true, 10), ['reachmee', 'web103.reachmee.com', true]];
   const r = logOf(d, run);
-  assert.equal(PLATFORM_MIN_HOSTS, 5);
-  assert.deepEqual(r.skipped, [5, 6, 7], 'the SuccessFactors boards after the trip are skipped, other providers are not');
-  assert.ok(r.lines.includes('[breaker] successfactors: 5 of 5 boards failed with TIMEOUT_TLS timeout, the retry failed too; the rest are skipped for 1 cycle(s) (level 1)'), r.lines.join('\n'));
+  assert.equal(PLATFORM_MIN_HOSTS, 6);
+  assert.deepEqual(r.skipped, [6, 7, 8], 'the SuccessFactors boards after the trip are skipped, other providers are not');
+  assert.ok(r.lines.includes('[breaker] successfactors: 6 of 6 boards failed with TIMEOUT_TLS timeout, the retry failed too; the rest are skipped for 1 cycle(s) (level 1)'), r.lines.join('\n'));
   assert.match(r.flag, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z crawl provider down \(circuit breaker\) successfactors: TIMEOUT_TLS timeout, skipped until cycle 2 \(level 1; Timed out after 35s\)\n$/);
   const st = stateOf(d).successfactors;
   assert.deepEqual([st.level, st.cls, st.code, st.tripped_cycle, st.open_until], [1, 'TIMEOUT_TLS', 'timeout', 1, 2]);
@@ -190,8 +190,8 @@ test('platform key: 5 distinct SuccessFactors hosts fail before any answers: tri
 });
 
 test('platform key: scattered failures do not trip it', () => {
-  // 4 hosts fail, the rest answer
-  let r = logOf(dirs(), [...sfHosts(4), ...sfHosts(10, true, 10)]); assert.deepEqual(r.skipped, []); assert.equal(r.flag, '');
+  // 5 hosts fail, the rest answer
+  let r = logOf(dirs(), [...sfHosts(5), ...sfHosts(10, true, 10)]); assert.deepEqual(r.skipped, []); assert.equal(r.flag, '');
   // one board answered first: 8 hosts failing after it are not a platform outage (each host on its own)
   r = logOf(dirs(), [...sfHosts(1, true, 50), ...sfHosts(8)]); assert.deepEqual(r.skipped, []); assert.equal(r.flag, '');
   // 5 hosts fail with different classes
@@ -202,18 +202,18 @@ test('platform key: scattered failures do not trip it', () => {
   const r5 = logOf(dirs(), [...Array(5).fill(['successfactors', 'jobs.one.example', false]), ['successfactors', 'jobs.two.example', true]]);
   assert.deepEqual(r5.skipped, [3, 4]); assert.match(r5.flag, /successfactors@jobs\.one\.example: /); assert.doesNotMatch(r5.flag, /successfactors: /);
   // the retry answers: no trip, and the count of failing hosts starts again
-  const d6 = dirs(), r6 = logOf(d6, [...sfHosts(5), ...sfHosts(4, false, 10)], false);
-  assert.deepEqual(r6.skipped, []); assert.ok(r6.lines.some((l) => /^\[breaker\] successfactors: 5 of 5 boards failed with TIMEOUT_TLS, but the retry answered: no trip/.test(l)));
+  const d6 = dirs(), r6 = logOf(d6, [...sfHosts(6), ...sfHosts(5, false, 10)], false);
+  assert.deepEqual(r6.skipped, []); assert.ok(r6.lines.some((l) => /^\[breaker\] successfactors: 6 of 6 boards failed with TIMEOUT_TLS, but the retry answered: no trip/.test(l)));
 });
 
 test('platform key: recovers like the provider breaker (level 1, still down: level 2 = 2 cycles, then a clean cycle closes it)', () => {
   const d = dirs();
-  const down = [...sfHosts(6)];
-  let r = logOf(d, down); assert.deepEqual(r.skipped, [5]);
-  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5]);
-  r = logOf(d, down); assert.deepEqual(r.skipped, [5]); assert.equal(stateOf(d).successfactors.level, 2);
-  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5]);
-  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5]);
+  const down = [...sfHosts(7)];
+  let r = logOf(d, down); assert.deepEqual(r.skipped, [6]);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5, 6]);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [6]); assert.equal(stateOf(d).successfactors.level, 2);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5, 6]);
+  r = logOf(d, down); assert.deepEqual(r.skipped, [0, 1, 2, 3, 4, 5, 6]);
   const up = sfHosts(6, true);
   r = logOf(d, up); assert.deepEqual(r.skipped, []); assert.equal(r.flag, ''); assert.deepEqual(stateOf(d), {});
   assert.ok(r.lines.includes('[breaker] successfactors: recovered (6 of 6 boards ok), breaker closed'));
