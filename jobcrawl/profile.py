@@ -236,15 +236,17 @@ def _links(check, v, path):
 
 WEB_STORAGE_KEYS = ('prefix', 'lang', 'model_cache', 'profile_kind', 'profile_file')
 WEB_TEXT_KEYS = ('role_url', 'company_url', 'company_texts', 'default_scope', 'model_url', 'atlas_maps')
+WEB_BOOL_KEYS = ('text_search_api',)   # switches the web app reads from config.json (text_search_api: the site's B2 text search kill switch)
 
 
 def _web(check, v, path, scope_ids):
     """The web app's site settings (config.json): link templates, default scope, model folder, browser storage names. All optional."""
     check.obj(v, path)
-    unknown = set(v) - set(WEB_TEXT_KEYS) - {'storage'}
+    unknown = set(v) - set(WEB_TEXT_KEYS) - set(WEB_BOOL_KEYS) - {'storage'}
     if unknown:
-        check.fail(path, f'unknown key {sorted(unknown)[0]!r} (use {", ".join(WEB_TEXT_KEYS + ("storage",))})')
+        check.fail(path, f'unknown key {sorted(unknown)[0]!r} (use {", ".join(WEB_TEXT_KEYS + WEB_BOOL_KEYS + ("storage",))})')
     out = {k: check.text(v[k], f'{path}.{k}') for k in WEB_TEXT_KEYS if v.get(k) is not None}
+    out.update({k: check.boolean(v[k], f'{path}.{k}') for k in WEB_BOOL_KEYS if v.get(k) is not None})
     if 'role_url' in out and '{id}' not in out['role_url']:
         check.fail(f'{path}.role_url', 'needs the placeholder {id}, e.g. "job.html?id={id}"')
     if 'company_url' in out and '{slug}' not in out['company_url']:

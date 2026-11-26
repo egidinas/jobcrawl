@@ -112,6 +112,15 @@ class Validation(unittest.TestCase):
             self.folders.append(folder)
             self.assertEqual(load_profile(folder)['web']['atlas_maps'], v)
 
+    def test_text_search_api_switch(self):
+        for v in (True, False):
+            folder = write_profile({'web': {'text_search_api': v}})
+            self.assertIs(load_profile(folder)['web']['text_search_api'], v)
+        self.assertNotIn('text_search_api', load_profile(write_profile({'web': {}}))['web'])
+
+    def test_text_search_api_must_be_boolean(self):
+        self.bad({'web': {'text_search_api': 'yes'}}, 'web.text_search_api')
+
     def test_atlas_maps_bad_value_names_key(self):
         self.bad({'web': {'atlas_maps': 'germany'}}, 'web.atlas_maps')
 
