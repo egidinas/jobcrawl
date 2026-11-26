@@ -109,7 +109,8 @@ def cmd_build(args):
     except board.BoardError as e:
         print(f"jobcrawl build: {e}", file=sys.stderr)
         return 2
-    print(f"jobcrawl build: {counts['roles']} roles, {counts['shards']} description shards, feed of {counts['feed']} -> {args.out}")
+    print(f"jobcrawl build: {counts['roles']} roles, {counts['shards']} description shards, feed of {counts['feed']} -> {args.out}"
+          + (f"; WARNING {counts['held']} role(s) held back for a shared id" if counts.get('held') else ''))
     return 0
 
 

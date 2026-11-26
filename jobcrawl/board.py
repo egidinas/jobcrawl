@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import sys
 
 from jobcrawl.classify.fields import field_matchers, field_tags, fold
 from jobcrawl.classify.levels import compile_levels, level_of
@@ -79,8 +80,10 @@ def _roles(items):
     return out
 
 
-def build_entries(items, profile, excerpt=None):
-    """[(id, entry)] for the catalog items, newest first (by fs, or by d when board.order is 'published')."""
+def build_entries(items, profile, excerpt=None, held=None):
+    """[(id, entry)] for the catalog items, newest first (by fs, or by d when board.order is 'published').
+    Two URLs that share the 8-hex id: the role seen first (fs, then url) keeps it, the other is left out with a WARNING on stderr
+    and appended to `held` as (id, held url, kept url) when a list is given. One collision never stops the board."""
     order = profile.get('board', {}).get('order', 'first_seen')
     if order not in ORDERS:
         raise BoardError(f'board.order {order!r} is not one of {", ".join(ORDERS)}')
@@ -116,10 +119,15 @@ def build_entries(items, profile, excerpt=None):
     entries.sort(key=lambda e: (e[1]['c'].lower(), e[1]['t'].lower()))
     entries.sort(key=lambda e: e[1]['d' if order == 'published' else 'fs'], reverse=True)
     ids = {}
-    for rid, e in entries:
+    for rid, e in sorted(entries, key=lambda x: (x[1]['fs'] or '9999', x[1]['u'])):
         if rid in ids:
-            raise BoardError(f'role id collision on {rid}: {ids[rid]} and {e["u"]}; lengthen role_id()')
-        ids[rid] = e['u']
+            print(f'jobcrawl board: WARNING role id collision on {rid}: held back {e["u"]}, kept {ids[rid]}', file=sys.stderr)
+            if held is not None:
+                held.append((rid, e['u'], ids[rid]))
+        else:
+            ids[rid] = e['u']
+    if len(ids) < len(entries):
+        entries = [(rid, e) for rid, e in entries if ids[rid] == e['u']]
     return entries
 
 
@@ -154,6 +162,7 @@ def _write(path, text):
 
 
 def build(profile, catalog_path, out_dir, excerpt=None):
-    """Catalog file -> board files. Returns the counts written."""
-    entries = build_entries(read_catalog(catalog_path), profile, excerpt)
-    return write_board(entries, out_dir)
+    """Catalog file -> board files. Returns the counts written (held = roles left out for a shared id)."""
+    held = []
+    entries = build_entries(read_catalog(catalog_path), profile, excerpt, held)
+    return dict(write_board(entries, out_dir), held=len(held))
