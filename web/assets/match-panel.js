@@ -6,7 +6,7 @@
 // Mounted by match.html into #match-panel.
 
 import { loadConfig, dataUrl, pageUrl, roleLink, companyLink, defaultScope, modelCache, L, LP, esc, isDe } from './app.js';
-import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields, chunkCvText, decomposeRating, queryVec } from './match.js';
+import { loadIndex, rank, rankByTaste, tasteWeight, sampleSpread, matchAny, matchFields, chunkCvText, decomposeRating, queryVec, apiQueryLike, apiSearchBody, fromApiAnswer, API_TIMEOUT_MS } from './match.js';
 import * as PF from './profile.js';
 
 const cfg = await loadConfig();
@@ -86,7 +86,7 @@ button.more-asp{all:unset;cursor:pointer;font-size:13px;color:var(--accent-text)
 document.head.appendChild(style);
 
 mount.innerHTML = `<details class="match-details">
-<summary class="match-head"><strong>${L('Match me', 'Passende Stellen für mich')}</strong><span class="small muted">${L('Paste your CV or describe what you want. Ranked open roles, computed on your device.', 'CV einfügen oder beschreiben, was Sie suchen. Passende offene Stellen, berechnet auf Ihrem Gerät.')}</span></summary>
+<summary class="match-head"><strong>${L('Match me', 'Passende Stellen für mich')}</strong><span class="small muted">${L('Paste your CV or describe what you want. Your CV stays on your device; a short one-line search is ranked on our server and not stored.', 'CV einfügen oder beschreiben, was Sie suchen. Ihr CV bleibt auf Ihrem Gerät; eine kurze einzeilige Suche wird auf unserem Server sortiert und nicht gespeichert.')}</span></summary>
 <div class="match-body">
 <textarea id="match-text" spellcheck="false" ${LP('Optional: paste your CV, or write a few lines on the work you want to do. Or leave this empty and rate roles instead (use the button below).', 'Optional: CV einfügen oder in wenigen Zeilen beschreiben, was Sie machen möchten. Oder leer lassen und stattdessen Stellen bewerten (Knopf darunter).')}></textarea>
 <div class="match-file"><label>${L('or read a CV file (PDF or text; read on this device, nothing is uploaded):', 'oder eine CV-Datei lesen (PDF oder Text; auf diesem Gerät gelesen, nichts wird hochgeladen):')} <input type="file" id="match-file" accept=".pdf,.txt,.md,application/pdf,text/plain"></label> <span class="match-note" id="match-file-status"></span></div>
@@ -131,7 +131,7 @@ mount.innerHTML = `<details class="match-details">
 <label class="match-file">${L('Load a saved profile: ', 'Gespeichertes Profil laden: ')}<input type="file" id="match-load" accept=".json,application/json"></label>
 <button type="button" class="button outline small-btn" id="match-copy">${L('Copy my ratings', 'Meine Bewertungen kopieren')}</button>
 </div>
-<p class="match-note">${L('Your text and ratings stay in this browser; nothing is uploaded. Ratings alone (no CV) need no download: the roles you like and dislike are looked up in the board\'s own meaning index. Meaning matching downloads a small language model once (about 200 MB) and keeps it in this browser.', 'Ihr Text und Ihre Bewertungen bleiben in diesem Browser; es wird nichts hochgeladen. Bewertungen allein (ohne CV) brauchen keinen Download: Die Stellen, die Sie mögen oder ablehnen, werden im Bedeutungsindex der Börse nachgeschlagen. Der Bedeutungsabgleich lädt einmalig ein kleines Sprachmodell (ca. 200 MB) und behält es in diesem Browser.')}</p>
+<p class="match-note">${L('Your CV, longer texts and ratings stay in this browser. A plain one-line search is sent to our server to rank the results and is not stored; with meaning matching on this device it is not sent at all. Ratings alone (no CV) need no download: the roles you like and dislike are looked up in the board\'s own meaning index. Meaning matching downloads a small language model once (about 200 MB) and keeps it in this browser.', 'Ihr CV, längere Texte und Ihre Bewertungen bleiben in diesem Browser. Eine einzeilige Suche wird zum Sortieren der Treffer an unseren Server gesendet und nicht gespeichert; mit Bedeutungsabgleich auf diesem Gerät wird sie gar nicht gesendet. Bewertungen allein (ohne CV) brauchen keinen Download: Die Stellen, die Sie mögen oder ablehnen, werden im Bedeutungsindex der Börse nachgeschlagen. Der Bedeutungsabgleich lädt einmalig ein kleines Sprachmodell (ca. 200 MB) und behält es in diesem Browser.')}</p>
 </div></details>`;
 
 const $ = (id) => mount.querySelector('#' + id);
@@ -284,6 +284,42 @@ function levelHint(items) {
   return ' ' + L('Your level answers point to ', 'Ihre Level-Antworten deuten auf ') + nm(lo) + (lo === hi ? '' : ' – ') + (lo === hi ? '' : nm(hi)) + L(' (set the level filter if you want to use that).', ' (Level-Filter setzen, um das zu nutzen).');
 }
 
+// Free-text search through the Worker (the NUC keyword-mixed route): only a short single line, never a CV. Any error, a timeout (3 s), an
+// empty answer or an answer of another route gives null, and the browser search below runs exactly as before. window.MADE_B2_TEXT_SEARCH = false turns it off.
+// Kill switch without a code change: web.text_search_api = false in jobcrawl-profile/profile.json (-> config.json), or window.MADE_B2_TEXT_SEARCH = false.
+const textSearchOn = () => cfg.text_search_api !== false && window.MADE_B2_TEXT_SEARCH !== false;
+let idRows = null;
+function catalogIds() {   // catalog id (first 16 hex of sha256 of the posting URL without its fragment) -> row number
+  if (idRows) return idRows;
+  idRows = (async () => {
+    const sub = globalThis.crypto && crypto.subtle, m = new Map();
+    if (!sub) return m;
+    const enc = new TextEncoder();
+    await Promise.all(st.rows.map(async (row, i) => {
+      const c = String(row[3] || '').trim().split('#', 1)[0];
+      if (!c) return;
+      const b = new Uint8Array(await sub.digest('SHA-256', enc.encode(c)));
+      m.set(Array.from(b.slice(0, 8), (x) => x.toString(16).padStart(2, '0')).join(''), i);
+    }));
+    return m;
+  })();
+  return idRows;
+}
+async function searchViaWorker(text, o, companyOf) {
+  if (!textSearchOn()) return null;
+  try {
+    const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), API_TIMEOUT_MS);
+    let d;
+    try {
+      const r = await fetch((window.MADE_B2_API || '/api/v1/') + 'search', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(apiSearchBody(text, isDe() ? 'de' : 'en')), credentials: 'same-origin', signal: ctl.signal });
+      if (!r.ok) return null;
+      d = await r.json();
+    } finally { clearTimeout(timer); }
+    return fromApiAnswer(d, st.ix, await catalogIds(), { ...o, top: 50, companyOf });
+  } catch (e) { return null; }
+}
+
 async function run(useModel) {
   const text = $('match-text').value.trim();
   const targetAmbition = $('match-target-text')?.value.trim() || '';
@@ -291,7 +327,20 @@ async function run(useModel) {
   const items = ratedItems().filter((x) => x.w !== null || x.r.reason);
   let note = '';
 
-  if (text.length < 20 && !hasTaste() && !targetAmbition) {
+  // a plain short query, only when the visitor did not ask for the on-device model (and it is not cached: both give useModel): no ratings, no target, no stored CV or preferences, no keyword box (the browser's last branch below)
+  const tgt = PF.targetState();
+  const plain = !useModel && textSearchOn() && apiQueryLike(text) && !items.length && !targetAmbition && !hasTaste() && !sharedCv() && !sharedPrefs().some((p) => p.val)
+    && !((tgt.ids && tgt.ids.length) ? tgt.ids : PF.chosenPersonas()).length && tgt.step !== 'stepup' && kwPlan(items).mode === 'none';
+  if (plain) {
+    say(L('Searching…', 'Suche …'));
+    const o = settings(), hit = await searchViaWorker(text, o, (i) => st.rows[i][2]);
+    if (hit) {
+      st.last = hit; st.shown = 20; render();
+      say(L('Keywords and meaning combined. Rate some roles to refine this. ', 'Stichwörter und Bedeutung kombiniert. Bewerten Sie einige Stellen, um das zu verfeinern. '));
+      return;
+    }
+  }
+  if (text.length < 20 && !(plain && text.length >= 3) && !hasTaste() && !targetAmbition) {
     say(L('Paste a few lines about your work, select a target activity, or rate some roles.', 'Fügen Sie ein paar Zeilen zu Ihrer Arbeit ein, wählen Sie eine Zielaktivität, oder bewerten Sie Stellen.'));
     return;
   }

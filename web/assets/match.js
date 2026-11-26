@@ -512,3 +512,34 @@ export function sampleSpread(ix, ok, n = 12, rng = Math.random) {
   }
   return pick.map((k) => pool[k]);
 }
+
+// ---- free-text search through the Worker (POST /api/v1/search, NUC keyword-mixed route): the pure parts ----
+// A short single line may go to the NUC (owner 2026-11-10: free-text search is encoded by the NUC service); a pasted CV never does.
+export const API_QUERY_MAX = 200, API_TIMEOUT_MS = 3000;
+export function apiQueryLike(text) {
+  const t = String(text || '').trim();
+  return t.length >= 3 && t.length <= API_QUERY_MAX && !/[\r\n]/.test(t) && t.split(/\s+/).length <= 20;
+}
+/** The request body: the page language is sent so a German query gets the German analyser. */
+export const apiSearchBody = (text, lang) => ({ model: 'atlas_v3', text: String(text).trim(), kind: 'query', lang: lang === 'de' ? 'de' : 'en', top_k: 50 });
+/**
+ * Worker answer -> {results, usedModel, viaNuc} in the shape of rank(), or null (use the browser search): not an answer of the keyword-mixed
+ * route (`route` must be "nuc_mixed"; the Vectorize route is a different list), no rows, or no row known to the site's index.
+ * `idToRow`: catalog id -> row number of the match index. The panel's filters (scope, level range, per employer) apply as in rank().
+ */
+export function fromApiAnswer(d, ix, idToRow, { scope = null, minLevel = 0, maxLevel = 99, perEmployer = 2, top = 50, companyOf = null } = {}) {
+  if (!d || d.route !== 'nuc_mixed' || !Array.isArray(d.results) || !d.results.length) return null;
+  const inScope = widest(ix, scope), out = [], per = new Map(), seenDup = new Set(), seen = new Set();
+  for (const r of d.results) {
+    const i = idToRow.get(r && r.job_id);
+    if (i === undefined || seen.has(i)) continue;
+    seen.add(i);
+    if (!((ix.attrs[i][0] >> inScope & 1) === 1 && ix.attrs[i][1] >= minLevel && ix.attrs[i][1] <= maxLevel)) continue;
+    const dk = ix.dupKey ? ix.dupKey[i] : -1; if (dk >= 0 && seenDup.has(dk)) continue;
+    const c = companyOf ? companyOf(i) : ''; if (c && (per.get(c) || 0) >= perEmployer) continue; per.set(c, (per.get(c) || 0) + 1);
+    if (dk >= 0) seenDup.add(dk);
+    out.push({ i, also: ix.dupSize ? ix.dupSize[i] - 1 : 0, score: r.score, why: [], dense: true });
+    if (out.length >= top) break;
+  }
+  return out.length ? { results: out, terms: [], usedModel: true, viaNuc: true } : null;
+}
