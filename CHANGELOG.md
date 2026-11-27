@@ -15,6 +15,15 @@ The commit log has the details of each change.
 - `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
   replay); `core/tests/`.
 
+## 2026-11-27: SuccessFactors classic career sites (opt-in)
+
+- **`successfactors_classic`** (`crawler/providers-sfclassic.mjs`): the classic career site `career<N>.successfactors.eu|com/career?company=<ID>`,
+  read the way the anonymous search page reads it (session cookie and CSRF key from the page, then its DWR search calls, 50 per page).
+  Opt-in: `detect()` never claims a URL; an entry sets the provider and slug = the career URL or `<host>|<company>`. Never logs in: a
+  login page or a non-DWR answer fails the board. Approach from career-ops (MIT), written afresh.
+- Detector v2 names it (`fingerprints.json` row `successfactors-classic`, slug = the link) instead of reading the career host as an RMK
+  site.
+
 ## 2026-11-27: junk gate for probation boards
 
 - **`crawler/junkgate.mjs`**: a not-yet-promoted probation board read by a generic reader (paginated_list, jsonld_direct, sitemap) whose

@@ -37,6 +37,7 @@
 // Not ported: peoplesoft (career-ops version replays PeopleSoft form postbacks with a cookie jar; ~460 lines even without comments).
 
 import { UA } from './useragent.mjs';
+import { sfClassicProvider } from './providers-sfclassic.mjs';
 import { entryTimeoutMs } from './profile.mjs';
 // crawl.mjs gives one entry 35 s; paging providers stop after this budget and keep what they have.
 const BUDGET_MS = 28000;
@@ -1383,6 +1384,8 @@ for (const d of fhDefs) {
   };
 }
 Object.assign(extraProviders, freehireProviders);
+// SuccessFactors classic career site (opt-in; providers-sfclassic.mjs)
+extraProviders.successfactors_classic = sfClassicProvider;
 // A walk that ran past its paging time budget (budgetMs) was cut short: the answer is partial, and crawl.mjs marks nothing of the board
 // gone for it (a role the walk did not reach is not a closed role).
 for (const p of Object.values(extraProviders)) {

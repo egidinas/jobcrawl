@@ -82,7 +82,12 @@ export function identifyPlatforms({ pages = [], cnames = {} } = {}) {
     let slug = null, slugVia = '';
     if (p.provider) {
       for (const u of urls) { slug = slugFromUrl(p.provider, u); if (slug) { slugVia = u; break; } }
-      if (!slug && p.slug) {
+      if (!slug && p.slug === 'url') {
+        // the link itself is the board (SuccessFactors classic: career<N>.successfactors.eu/career?company=<ID>)
+        const u = [...urls].find((x) => /[?&]company=[A-Za-z0-9_-]+/.test(x));
+        if (u) { slug = u; slugVia = 'link'; }
+      }
+      if (!slug && p.slug && p.slug !== 'url') {
         // the board sits on the employer's own host: the page the markup or CNAME was seen on names it
         const own = [...pagesSeen].find((u) => !isVendorHost(hostOf(u)));
         if (own) { const x = new URL(own); slug = p.slug === 'origin' ? x.origin : x.host; slugVia = `${p.slug} of ${own}`; }

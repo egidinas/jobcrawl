@@ -13,7 +13,7 @@ test('fingerprints.json: every row compiles, ids are unique, every named provide
   for (const p of PLATFORMS) {
     assert.ok(!ids.has(p.id), `duplicate id ${p.id}`); ids.add(p.id);
     if (p.provider) assert.ok(providers[p.provider], `${p.id}: provider ${p.provider} is not registered`);
-    assert.ok([null, 'origin', 'host'].includes(p.slug), `${p.id}: slug rule`);
+    assert.ok([null, 'origin', 'host', 'url'].includes(p.slug), `${p.id}: slug rule`);
   }
 });
 
@@ -73,4 +73,12 @@ test('detectHits: the CLI hit shape, with the CNAME of the requested host', asyn
   assert.deepEqual({ provider: h.provider, slug: h.slug, platform: h.platform }, { provider: 'teamtailor', slug: 'https://careers.acme.com', platform: 'teamtailor' });
   assert.equal(h.evidence[0].type, 'platform');
   assert.equal(h.evidence[0].kind, 'cname');
+});
+
+test('SuccessFactors classic link: named with the link as slug, not as an RMK host', () => {
+  const out = identifyPlatforms({ pages: [{ url: 'https://www.salzgitter-ag.com/de/jobs-karriere/stellenangebote.html', html: '<a href="https://career5.successfactors.eu/careers?company=gesisgesel&amp;navBarLevel=MY_PROFILE">Jobs</a>' }] });
+  const c = out.find((x) => x.id === 'successfactors-classic');
+  assert.equal(c.provider, 'successfactors_classic');
+  assert.match(c.slug, /company=gesisgesel/);
+  assert.ok(!out.some((x) => x.id === 'successfactors'));
 });
