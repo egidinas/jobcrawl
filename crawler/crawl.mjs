@@ -83,6 +83,13 @@ if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`
 // cooldowns, never a login page or an opted-out host. Installed after the raw capture, so a refused request is never captured.
 configurePolicy(policyFromProfile(PROFILE, OUT_DIR));
 if (!flag('jd-cleanup-only')) { installGuard(); console.log(`crawl: policy robots=${PROFILE.robots}${Object.keys(PROFILE.robotsHosts).length ? ` (${Object.keys(PROFILE.robotsHosts).length} host overrides)` : ''}, ${PROFILE.optOutHosts.length} opted-out hosts`); }
+// Conditional-request cache (core/fetch/conditional.mjs): off unless the profile lists hosts in crawl.conditional_cache.hosts.
+const CONDITIONAL = PROFILE.raw?.crawl?.conditional_cache;
+if (!flag('jd-cleanup-only') && Array.isArray(CONDITIONAL?.hosts) && CONDITIONAL.hosts.length) {
+  const { installConditionalCache } = await import('../core/fetch/conditional.mjs');
+  installConditionalCache({ dir: pathResolve(OUT_DIR, 'http-cache'), hosts: CONDITIONAL.hosts, maxMb: Number(CONDITIONAL.max_mb) || 20 });
+  console.log(`crawl: conditional requests on for ${CONDITIONAL.hosts.length} host pattern(s)`);
+}
 if (!flag('dry-run') && !flag('jd-cleanup-only')) {   // the cleanup frees space, so it runs even on a full disk
   const full = checkDisk(OUT_DIR, PROFILE.minFreeMb);
   if (full) { console.error(`crawl: ${full}`); process.exit(3); }
@@ -522,6 +529,12 @@ async function scan() {
   const results = await pool(companies, async (entry) => {
     try { return await crawlOne(entry); } finally { if (++boardsDone % 50 === 0 || boardsDone === companies.length) console.log(`[crawl] ${boardsDone}/${companies.length} boards done, ${((Date.now() - crawlStarted) / 60000).toFixed(1)} min`); }
   });
+  // Strangler fig (core/route/shadow-hook.mjs): off unless JOBCRAWL_SHADOW=1 and JOBCRAWL_ROUTING name a routing file. Then the answers of
+  // the boards routed shadow are teed into the new per-board path in its own folder (no extra request); the legacy crawl below is unchanged.
+  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) {
+    try { await (await import('../core/route/shadow-hook.mjs')).runShadow({ dataDir: OUT_DIR, companies, results }); }
+    catch (e) { console.error(`[shadow] skipped this cycle: ${e?.message ?? e}`); }
+  }
   async function crawlOne(entry) {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');

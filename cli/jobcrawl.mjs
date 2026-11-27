@@ -23,8 +23,10 @@ commands (phase 0):
                                              one board on the new per-board path, into its own data folder (never a live one);
                                              a live read (no --replay) needs the board routed shadow or new and the kill switch off
   dual-run --profile <dir> --data <dir> --legacy-data <dir> --replay <recording> [--routing <file>] [--ledger <file>]
-           [--boards all|routed] [--report <file>] [--json]
+           [--boards all|routed] [--companies <file>] [--report <file>] [--json]
                                              shadow run from a recording (no second live crawl), compared with the legacy history
+  import --profile <dir> --data <dir> --legacy-data <dir> [--companies <file>] [--boards all|routed] [--routing <file>] [--replace] [--json]
+                                             baseline epoch from the legacy history, without events (read-only on the legacy side)
   snapshot --data <dir> [--status open|departed|all]   full read as NDJSON (header with per-board watermarks, then postings)
   feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}']   committed delta events as NDJSON
   doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json] [--strict]
@@ -61,8 +63,16 @@ function companiesOf(profileDir) {
   const { loadProfile } = PROFILE_MOD;
   const p = loadProfile(profileDir);
   if (!p) fail('--profile <dir> is required');
-  const cfg = JSON.parse(readFileSync(p.companiesFile, 'utf8'));
-  return { profile: p, companies: (cfg.tracked_companies ?? []).filter((e) => e.enabled !== false && e.name) };
+  const file = opt('companies') ? pathResolve(opt('companies')) : p.companiesFile;
+  const cfg = JSON.parse(readFileSync(file, 'utf8'));
+  const seen = new Set();
+  return { profile: p, companies: (cfg.tracked_companies ?? []).filter((e) => e.enabled !== false && e.name && !seen.has(e.name) && seen.add(e.name)) };
+}
+/** The per-board outcome lines of a recording (bench/record.mjs boards.jsonl): Map(board -> line). */
+function recordedOutcomes(recDir) {
+  const f = join(recDir, 'boards.jsonl'), m = new Map();
+  if (existsSync(f)) for (const l of readFileSync(f, 'utf8').split('\n')) { try { const o = JSON.parse(l); m.set(o.board, o); } catch {} }
+  return m;
 }
 let PROFILE_MOD;
 
@@ -156,12 +166,15 @@ switch (cmd) {
       .filter(({ e, provider }) => all || routeFor(routing, { board: e.name, provider }).route !== 'legacy');
     const t0 = Date.now();
     console.error(`[dual-run] start boards=${picked.length} replay=${rec} legacy=${legacy} data=${data}`);
+    const outcomes = recordedOutcomes(pathResolve(rec));
     const legacyRows = await legacyRowsByBoard(join(pathResolve(legacy), 'scan-history.tsv'), picked.map(({ e }) => e.name));
     const reports = [];
     let k = 0;
     for (const { e, provider } of picked) {
       const read = loadRecordedRun(pathResolve(rec), e.name, boardKey);
-      if (!read) reports.push({ board: e.name, provider, error: 'not in the recording' });
+      const recLine = outcomes.get(e.name);
+      if (!read && recLine && !recLine.ok) reports.push({ board: e.name, provider, error: `recorded failure ${recLine.cls ?? 'OTHER'}` });
+      else if (!read) reports.push({ board: e.name, provider, error: 'not in the recording' });
       else {
         const r = await runBoard(data, e, { read, rules: LEGACY_RULES });
         if (r.skipped) reports.push({ board: e.name, provider, error: r.skipped });
@@ -183,6 +196,26 @@ switch (cmd) {
     console.error(`[dual-run] result boards=${reports.length} ${JSON.stringify(v)} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     out({ verdicts: v, ledger: summary, report: opt('report') ?? null }, `verdicts ${JSON.stringify(v)}${summary ? `; ledger ${JSON.stringify(summary)}` : ''}`);
     process.exit(v.error ? 1 : 0);
+  }
+  case 'import': {
+    const data = guardDataDir(opt('data'));
+    const legacy = opt('legacy-data');
+    if (!legacy) fail('--legacy-data <dir> is required (read-only: its scan-history.tsv)');
+    if (pathResolve(legacy) === data) fail('--data must differ from --legacy-data');
+    PROFILE_MOD = await import('../crawler/profile.mjs');
+    const { companies } = companiesOf(opt('profile'));
+    let boards = companies.map((e) => e.name);
+    if (opt('boards', 'all') === 'routed') {
+      const { loadRouting, routeFor } = await import('../core/route/router.mjs');
+      const { resolve } = await import('../crawler/providers.mjs');
+      let routing;
+      try { routing = loadRouting(opt('routing') ?? process.env.JOBCRAWL_ROUTING); } catch (e) { fail(e.message); }
+      boards = companies.filter((e) => routeFor(routing, { board: e.name, provider: resolve(e)?.provider ?? null }).route !== 'legacy').map((e) => e.name);
+    }
+    const { importBaseline } = await import('../core/route/baseline.mjs');
+    const sum = await importBaseline({ historyFile: join(pathResolve(legacy), 'scan-history.tsv'), root: data, boards, replace: flag('replace'), log: (m) => console.error(m) });
+    out(sum, `imported ${sum.imported} boards (${sum.rows} rows), kept ${sum.kept}, without rows ${sum.empty}`);
+    break;
   }
   case 'snapshot': {
     const data = pathResolve(opt('data') ?? fail('--data <dir> is required'));
