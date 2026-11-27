@@ -94,3 +94,12 @@ test('rexx: a row whose first job link is an image link takes its next link with
   const jobs = parseRexxListing(html, 'https://acme-portal.rexx-systems.com');
   assert.deepEqual(jobs.map((j) => [j.id, j.title, j.location]), [['21', 'Test Engineer (m/w/d)', 'Gilching']]);
 });
+
+test('rexx: session-id links and div table rows (karriere.berlinerluft.de, recorded 2026-11-27)', () => {
+  const jobs = parseRexxListing(fx('rexx-sid-listing.html'), 'https://karriere.berlinerluft.de');
+  assert.equal(jobs.length, 25);
+  const w = jobs.find((j) => j.id === '1023');
+  assert.equal(w.url, 'https://karriere.berlinerluft.de/Schweisser-fuer-WIGMAG-mwd-de-j1023.html');
+  assert.equal(w.location, '84419 Obertaufkirchen');
+  assert.ok(jobs.every((j) => !j.url.includes('sid=')));
+});

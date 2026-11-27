@@ -7,7 +7,7 @@
     "  cname     regexes over the CNAME target of the careers host (careers.acme.com -> acme.teamtailor.com)",
     "  markup    regexes over the page HTML that only this platform writes (class names, asset paths, footers, global objects)",
     "  slug      how to make the provider slug when the board sits on the employer's own host and no link gives it: 'origin' (https://host),",
-    "            'host' (host only) or null (only a provider's own detect() on a link can give the slug)",
+    "            'host' (host only), 'page' (the careers page URL itself), 'url' (the vendor link itself) or null (only a provider's own detect() on a link can give the slug)",
     "Seeded 2026-11-27 from the providers in providers.mjs / providers-extra.mjs and career-ops' SUPPORTED_JOB_BOARDS.md (MIT). A row's",
     "patterns must not match another platform's pages: the evaluation (eval-detect.mjs) reports precision per platform."
   ],
@@ -31,7 +31,7 @@
     { "id": "teamtailor", "provider": "teamtailor", "hosts": ["\\.teamtailor\\.com$"], "cname": ["teamtailor"], "markup": ["teamtailor-cdn\\.com", "assets\\.teamtailor"], "slug": "origin" },
     { "id": "odoo", "provider": "odoo", "hosts": ["\\.odoo\\.com$"], "cname": ["odoo"], "markup": ["o_website_hr_recruitment", "website_hr_recruitment"], "slug": null },
     { "id": "bamboohr", "provider": "bamboohr", "hosts": ["\\.bamboohr\\.com$"], "cname": ["bamboohr"], "markup": [], "slug": null },
-    { "id": "jobylon", "provider": null, "hosts": ["\\.jobylon\\.com$"], "cname": ["jobylon"], "markup": ["jobylon"], "slug": null },
+    { "id": "jobylon", "provider": "jobylon", "hosts": ["\\.jobylon\\.com$"], "cname": ["jobylon"], "markup": ["jobylon"], "slug": "page" },
     { "id": "lever", "provider": "lever", "hosts": ["^jobs\\.(?:eu\\.)?lever\\.co$"], "cname": ["lever"], "markup": [], "slug": null },
     { "id": "ashby", "provider": "ashby", "hosts": ["ashbyhq\\.com$"], "cname": ["ashby"], "markup": [], "slug": null },
     { "id": "greenhouse", "provider": "greenhouse", "hosts": ["greenhouse\\.io$"], "cname": ["greenhouse"], "markup": [], "slug": null },

@@ -62,12 +62,17 @@ async function json(url, opts) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const posInt = (v, dflt, max) => (Number.isInteger(v) && v > 0 ? Math.min(v, max) : dflt);
 
+// combining marks for the named Latin letter entities decode() reads
+const MARKS = { acute: '\u0301', grave: '\u0300', circ: '\u0302', uml: '\u0308', tilde: '\u0303', cedil: '\u0327', ring: '\u030a' };
 const decode = (s = '') =>
   String(s)
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
     .replace(/&#(\d+);/g, (_, n) => { const c = Number(n); return c <= 0x10ffff ? String.fromCodePoint(c) : ''; })
     .replace(/&#x([0-9a-f]+);/gi, (_, h) => { const c = parseInt(h, 16); return c <= 0x10ffff ? String.fromCodePoint(c) : ''; })
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    // named Latin letters (Taleo Business Edition writes "Ing&eacute;nieur"): &Xacute; &Xgrave; &Xcirc; &Xuml; &Xtilde; &Xcedil; &Xring; &szlig;
+    .replace(/&([A-Za-z])(acute|grave|circ|uml|tilde|cedil|ring);/g, (_, l, k) => (l + MARKS[k]).normalize('NFC'))
+    .replace(/&szlig;/g, 'ß').replace(/&euro;/g, '€').replace(/&ndash;/g, '–').replace(/&mdash;/g, '—').replace(/&rsquo;/g, '’')
     .replace(/&amp;/g, '&');
 /** Markup to a single line of plain text. */
 const strip = (s = '') => decode(String(s).replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
@@ -312,6 +317,17 @@ export function parseEploy(xml, host) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 export const extraProviders = {
+  // Jobylon (Sweden): the employer's own careers page lists its postings as links to emp.jobylon.com/jobs/<id>-<slug>/ (as <a> links or
+  // in the page's inline JSON); each posting page carries JobPosting JSON-LD. A preset of jsonld_direct: slug = the employer's careers
+  // page URL. Nothing is read from Jobylon but the public posting pages (no API, no feed; their robots.txt allows "*").
+  jobylon: {
+    detect: () => null,
+    async fetch(slug, entry = {}) {
+      const { genericProviders } = await import('./providers-generic.mjs');
+      return genericProviders.jsonld_direct.fetch(slug, { ...entry, link_hosts: ['emp.jobylon.com', ...(entry.link_hosts ?? [])],
+        job_url_pattern: entry.job_url_pattern ?? '^/jobs/[0-9]+-', jsonld_only: true, json_links: true, max_jobs: entry.max_jobs ?? 300 });
+    },
+  },
   // Jobvite (jobs.jobvite.com/<slug>). slug = vanity name or "eid:<companyEId>"; entry.company_eid skips the board lookup.
   jobvite: {
     detect: (u) => {
@@ -1050,13 +1066,16 @@ export function parseRexxListing(html, origin) {
   // One chunk per row in each theme; a row's first job link carries the title, the rest of the chunk the place.
   for (const row of body.split(/(?=<article\b|<div[^>]*class=["'][^"']*\bjoboffer_container\b|<tr\b)/i)) {
     // the row's first job link that carries text (a theme may put an image link to the same posting first)
-    const a = [...row.matchAll(/<a\b[^>]*\bhref=["']([^"']*-j(\d+)\.html)["'][^>]*>([\s\S]*?)<\/a>/gi)].find((m) => strip(m[3]));
+    // a portal may append a session id (".html?sid=..."): read past it, and drop it from the URL so a posting keeps one identity
+    const a = [...row.matchAll(/<a\b[^>]*\bhref=["']([^"']*-j(\d+)\.html(?:\?[^"']*)?)["'][^>]*>([\s\S]*?)<\/a>/gi)].find((m) => strip(m[3]));
     if (!a || byId.has(a[2])) continue;
     const title = strip(a[3]);
-    const url = new URL(decode(a[1]), origin + '/').href;
+    const u = new URL(decode(a[1]), origin + '/');
+    u.searchParams.delete('sid');
+    const url = u.href;
     const loc = strip(row.match(/job_standort[^>]*>([\s\S]*?)<\/(?:div|span|p|td)>/i)?.[1]
       ?? row.match(/joboffer_informations[^>]*>([\s\S]*?)<div/i)?.[1]
-      ?? row.match(/class=["'][^"']*real_table_col2\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1] ?? '');
+      ?? row.match(/class=["'][^"']*real_table_col2\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:td|div)>/i)?.[1] ?? '');
     byId.set(a[2], { id: a[2], title, url, location: loc, postedAt: '' });
   }
   return [...byId.values()];
@@ -1075,6 +1094,37 @@ export function parseRexxFeed(xml) {
     if (!link) continue;
     const raw = it.match(/<(?:summary|description)\b[^>]*>([\s\S]*?)<\/(?:summary|description)>/i)?.[1] ?? '';
     out.set(link, { postedAt: isoDate(xmlPart(it, 'updated') || xmlPart(it, 'published') || xmlPart(it, 'pubDate')), description: block(raw) });
+  }
+  return out;
+}
+
+// ---- Taleo Business Edition helpers (exported for tests) ----
+/** { base, org, cws } of a TBE careers search URL (".../ats/careers/v2/searchResults?org=X&cws=N"); null otherwise. */
+export function taleoBeConfig(b) {
+  let u;
+  try { u = new URL(decode(String(b))); } catch { return null; }
+  if (!/\.tbe\.taleo\.net$/i.test(u.hostname) || u.protocol !== 'https:') return null;
+  const m = u.pathname.match(/^(\/[\w-]+\/ats\/careers\/v2)\//i);
+  const org = u.searchParams.get('org'), cws = u.searchParams.get('cws');
+  if (!m || !/^[\w-]{1,40}$/.test(org ?? '') || !/^\d{1,4}$/.test(cws ?? '')) return null;
+  return { base: `https://${u.hostname.toLowerCase()}${m[1]}`, org, cws };
+}
+/** The canonical board URL for any TBE careers URL that names org and cws (search, list or requisition page); null otherwise. */
+export function taleoBeBoard(u) {
+  const c = taleoBeConfig(u);
+  return c ? `${c.base}/searchResults?org=${c.org}&cws=${c.cws}` : null;
+}
+/** Rows of one TBE search page: [{ id, title, url, location, postedAt }]. */
+export function parseTaleoBe(html, cfg) {
+  const out = [];
+  for (const m of String(html).matchAll(/<a\b[^>]*href=["']([^"']*viewRequisition\?[^"']*\brid=(\d+)[^"']*)["'][^>]*class=["'][^"']*viewJobLink[^"']*["'][^>]*>([\s\S]*?)<\/a>([\s\S]{0,600})/gi)) {
+    const title = strip(m[3]);
+    if (!title) continue;
+    // the head block lists the department, then the location, as plain divs after the title
+    const head = m[4].split(/<!--|<span\b/i)[0];
+    const divs = [...head.matchAll(/<div\b[^>]*>([^<]*)<\/div>/gi)].map((d) => strip(d[1]));
+    const location = divs.filter(Boolean).slice(-1)[0] ?? '';
+    out.push({ id: m[2], title, url: `${cfg.base}/viewRequisition?org=${cfg.org}&cws=${cfg.cws}&rid=${m[2]}`, location, postedAt: '' });
   }
   return out;
 }
@@ -1150,6 +1200,30 @@ fhDefs.push(
         } catch { /* the listing alone is enough */ }
       }
       return { jobs, more: false };
+    },
+  },
+  { // Oracle Taleo Business Edition (TBE, *.tbe.taleo.net), not the Enterprise Edition of `taleo`. Board = the careers search URL
+    // "https://<host>/<instance>/ats/careers/v2/searchResults?org=<ORG>&cws=<N>". The first answer sets a session cookie; further
+    // pages are "searchResults?next&rowFrom=<10, 20, ...>" in that session, 10 rows a page, until a page adds nothing.
+    id: 'taleobe',
+    hosts: [/\.tbe\.taleo\.net/i],
+    boardId: (u) => taleoBeBoard(u),
+    delayMs: 500,
+    async page(b, n, st) {
+      const cfg = taleoBeConfig(b);
+      if (!cfg) throw new Error(`taleobe: board must be a searchResults URL with org and cws: ${b}`);
+      const url = n === 1 ? `${cfg.base}/searchResults?org=${encodeURIComponent(cfg.org)}&cws=${encodeURIComponent(cfg.cws)}`
+        : `${cfg.base}/searchResults?next&rowFrom=${(n - 1) * 10}&act=null&sortColumn=null&sortOrder=null`;
+      const res = await req(url, { headers: { accept: 'text/html', ...(st.cookie ? { cookie: st.cookie } : {}) } });
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+      if (n === 1) st.cookie = cookiesOf(res);
+      const html = await res.text();
+      if (/<title>[^<]*Come Back Soon/i.test(html) && !/viewJobLink/.test(html)) throw new Error(`taleobe: ${cfg.org} answered the maintenance/login page`);
+      const jobs = parseTaleoBe(html, cfg);
+      st.seen ??= new Set();
+      const fresh = jobs.filter((j) => !st.seen.has(j.id));
+      for (const j of fresh) st.seen.add(j.id);
+      return { jobs: fresh, more: fresh.length > 0 && /searchResults\?next&(?:amp;)?rowFrom=/.test(html) };
     },
   },
   { // Varbi (Sweden): <tenant>.varbi.com/en/ lists vacancies as table rows (what:job/jobID:N); the date shown is the application deadline, so no postedAt.
