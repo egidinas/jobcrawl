@@ -60,3 +60,9 @@ test('plain company page: nothing found; vendor hosts recognised', () => {
   assert.deepEqual(r.embeds, ['https://cdn.x.com/a.js']);
   assert.ok(r.links.includes('https://acme.de/jobs'));
 });
+
+test('WP Job Manager markup is named (the cascade then tries its ?feed=job_feed RSS)', () => {
+  const [top] = identifyPlatforms({ pages: [{ url: 'https://www.acme.de/jobs/', html: '<ul class="job_listings"><li class="job_listing"><a href="/job/engineer/">Engineer</a></li></ul><script src="/wp-content/plugins/wp-job-manager/assets/js/x.js"></script>' }] });
+  assert.equal(top.id, 'wp-job-manager');
+  assert.equal(top.provider, null);
+});

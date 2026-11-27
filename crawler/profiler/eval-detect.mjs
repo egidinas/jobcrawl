@@ -6,7 +6,7 @@
 //
 // Without --fetch nothing goes to the network: pages come from --cache only (a missing page is counted as "not fetched").
 // With --fetch each careers page is fetched once (redirects followed, 15 s timeout, one request per company, its CNAME looked up) and
-// stored in --cache, so a re-run after tuning fingerprints.json costs no requests.
+// stored in --cache (network errors are retried by the next --fetch run), so a re-run after tuning fingerprints.json costs no requests.
 //
 // Labelled rows: enabled entries on an ATS provider whose careers_url is on the EMPLOYER's host (a careers_url on the vendor's host is
 // trivially identified and left out), capped at --per-label per provider (Teamtailor alone has ~500); negatives: entries on the generic
@@ -61,8 +61,9 @@ say(`start rows=${rows.length} labels=${byLabel.size} fetch=${flag('fetch')} cac
 const cacheFile = (u) => join(CACHE, h8(u).slice(0, 16) + '.json');
 async function page(u) {
   const f = cacheFile(u);
-  if (existsSync(f)) return JSON.parse(readFileSync(f, 'utf8'));
-  if (!flag('fetch')) return null;
+  const cached = existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null;
+  if (cached && !(cached.error && flag('fetch'))) return cached;   // a network error is fetched again on the next --fetch run
+  if (!flag('fetch')) return cached;
   const rec = { url: u, final: u, status: 0, html: '', cname: '', error: '' };
   try {
     const res = await fetch(u, { headers: { 'user-agent': UA, accept: 'text/html,*/*' }, redirect: 'follow', signal: AbortSignal.timeout(15000) });
@@ -117,7 +118,10 @@ const report = {
   unusable: Object.entries(preds.filter((r) => !usable.includes(r)).reduce((a, r) => { const k = r.error || (r.fetched ? `HTTP ${r.status}` : 'not fetched'); a[k] = (a[k] ?? 0) + 1; return a; }, {})),
   holdout: Object.fromEntries(['links', 'multi', 'either'].map((k) => [k, score(usable.filter((r) => r.fold === 0), k)])),
   tuning: Object.fromEntries(['links', 'multi', 'either'].map((k) => [k, score(usable.filter((r) => r.fold !== 0), k)])),
-  misses_tuning: usable.filter((r) => r.fold !== 0 && r.either !== r.label).map((r) => ({ name: r.name, url: r.url, label: r.label, links: r.links, multi: r.multi })),
+  misses_tuning: usable.filter((r) => r.fold !== 0 && r.label !== 'none' && r.either !== r.label).map((r) => ({ name: r.name, url: r.url, label: r.label, links: r.links, multi: r.multi })),
+  // generic-provider boards whose careers page names an ATS: often a real board the generic reader is standing in for (or a false
+  // positive); either way worth a look, and the reason the 'none' precision is a lower bound
+  negatives_with_platform: usable.filter((r) => r.label === 'none' && r.either && !r.either.startsWith('(')).map((r) => ({ name: r.name, url: r.url, links: r.links, multi: r.multi, slug: r.multiSlug })),
 };
 writeFileSync(opt('out'), JSON.stringify(report, null, 1));
 say(`result holdout either micro ${JSON.stringify(report.holdout.either.micro)} links micro ${JSON.stringify(report.holdout.links.micro)} usable=${usable.length}/${rows.length}`);

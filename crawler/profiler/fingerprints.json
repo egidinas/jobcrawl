@@ -75,6 +75,12 @@
     { "id": "perbility", "provider": null, "hosts": ["perbility\\.(?:de|com)$"], "cname": ["perbility"], "markup": [], "slug": null },
     { "id": "erecruiter", "provider": null, "hosts": ["erecruiter\\.pl$"], "cname": [], "markup": [], "slug": null },
     { "id": "inrecruiting", "provider": null, "hosts": ["inrecruiting\\.com$", "altamirahrm\\.com$"], "cname": [], "markup": [], "slug": null },
+    { "id": "wp-job-manager", "provider": null, "hosts": [], "cname": [], "markup": ["wp-job-manager", "class=[\"']job_listings\\b", "job_manager_"], "slug": null },
+    { "id": "homerun", "provider": null, "hosts": ["\\.homerun\\.co$"], "cname": ["homerun"], "markup": ["feed\\.homerun\\.co"], "slug": null },
+    { "id": "bizneo", "provider": null, "hosts": ["bizneohr\\.com$"], "cname": ["bizneo"], "markup": [], "slug": null },
+    { "id": "taleez", "provider": null, "hosts": ["taleez\\.com$"], "cname": ["taleez"], "markup": [], "slug": null },
+    { "id": "viterbit", "provider": null, "hosts": ["viterbit\\.(?:site|com)$"], "cname": ["viterbit"], "markup": [], "slug": null },
+    { "id": "sage-hr", "provider": null, "hosts": ["talent\\.sage\\.hr$", "\\.sage\\.hr$"], "cname": [], "markup": [], "slug": null },
     { "id": "manatal", "provider": "manatal", "hosts": ["careers-page\\.com$"], "cname": ["manatal", "careers-page"], "markup": [], "slug": null }
   ]
 }

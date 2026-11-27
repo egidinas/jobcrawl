@@ -235,7 +235,10 @@ export async function profileSite(site, env) {
       } else steps.sitemap = sm?.robots ? 'fail:robots' : 'fail:no_sitemap';
     } else steps.sitemap = 'skip:budget';
     for (const p of want("rss") ? pages : []) {
-      const feed = feedLinks(p.html, p.url).find((u) => /job|karriere|career|stellen|vacanc/i.test(u));
+      let feed = feedLinks(p.html, p.url).find((u) => /job|karriere|career|stellen|vacanc/i.test(u));
+      // WP Job Manager (WordPress plugin, named by fingerprints.json) serves every listing as RSS at ?feed=job_feed even when the page
+      // links no feed (approach from career-ops providers/wp-job-manager.mjs, MIT)
+      if (!feed && p === main && plats.some((x) => x.id === 'wp-job-manager')) feed = new URL('/?feed=job_feed&posts_per_page=100', p.url).href;
       if (!feed || ctx.requests >= ctx.budget - 1) continue;
       const f = await fetchPage(feed, 'rss');
       const items = f && !f.robots ? rssItems(f.html) : [];
