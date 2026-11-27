@@ -80,3 +80,18 @@ test('profile: crawl.http_cache is off unless enabled, and checked', () => {
     assert.throws(() => write({ http_cache: { enabled: 'yes' } }));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('httpcache: bytes are kept as received (a Latin-1 page decodes the same after a 304)', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jc-hc-'));
+  try {
+    const latin1 = Buffer.from([0x3c, 0x70, 0x3e, 0x50, 0x72, 0xfc, 0x66, 0x65, 0x72, 0x3c, 0x2f, 0x70, 0x3e]);   // <p>Prüfer</p> in ISO-8859-1
+    const base = async (url, init = {}) => (new Headers(init.headers ?? {}).get('if-none-match')
+      ? new Response(null, { status: 304 })
+      : new Response(latin1, { status: 200, headers: { etag: '"l"', 'content-type': 'text/html; charset=iso-8859-1' } }));
+    const f = makeConditionalFetch(base, { dir });
+    const a = Buffer.from(await (await f('https://x.example/l1')).arrayBuffer());
+    const b = Buffer.from(await (await f('https://x.example/l1')).arrayBuffer());
+    assert.deepEqual(a, latin1);
+    assert.deepEqual(b, latin1);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

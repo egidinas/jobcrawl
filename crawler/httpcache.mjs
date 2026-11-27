@@ -2,7 +2,7 @@
 // (crawl.http_cache: { enabled: true, max_body_kb }); with it off nothing here runs and requests are exactly as before.
 //
 // How it works: a GET whose answer carried a validator (ETag or Last-Modified) and a text body (HTML, XML, JSON, RSS, plain text) of
-// at most max_body_kb is stored in <data>/http-cache/ (one small JSON file per URL + Accept). The next GET of that URL sends
+// at most max_body_kb is stored (bytes as received, for at most 14 days) in <data>/http-cache/ (one small JSON file per URL + Accept). The next GET of that URL sends
 // If-None-Match / If-Modified-Since; a 304 answer is turned back into a 200 with the stored body, so every provider, the sitemap
 // cache and the profiler read it unchanged, at the cost of a few hundred bytes on the wire. A request that brings its own conditional
 // headers, a body, or a method other than GET passes through untouched, as does every answer without a validator.
@@ -31,12 +31,13 @@ const withHeaders = (h, extra) => {
  * A fetch that revalidates stored text answers. opts: { dir (required), maxBodyBytes = 5 MB }.
  * @param {typeof fetch} base
  */
-export function makeConditionalFetch(base, { dir, maxBodyBytes = 5 * 1024 * 1024 } = {}) {
+export function makeConditionalFetch(base, { dir, maxBodyBytes = 5 * 1024 * 1024, maxAgeDays = 14 } = {}) {
   if (!dir) throw new Error('http cache: dir is required');
   mkdirSync(dir, { recursive: true });
   const keyOf = (url, accept) => createHash('sha1').update(`${url}\n${accept ?? ''}`).digest('hex');
   const pathOf = (k) => join(dir, k.slice(0, 2), `${k}.json`);
-  const load = (k) => { try { return JSON.parse(readFileSync(pathOf(k), 'utf8')); } catch { return null; } };
+  // an entry older than maxAgeDays is not used (the next answer replaces it), so the store never serves a body from long ago
+  const load = (k) => { try { const r = JSON.parse(readFileSync(pathOf(k), 'utf8')); return Date.now() - Date.parse(r.at) <= maxAgeDays * 864e5 ? r : null; } catch { return null; } };
   const save = (k, rec) => {
     try {
       const p = pathOf(k);
@@ -60,8 +61,9 @@ export function makeConditionalFetch(base, { dir, maxBodyBytes = 5 * 1024 * 1024
     if (Object.keys(cond).length) stats.sent++;
     const res = await base(url, Object.keys(cond).length ? { ...init, headers: withHeaders(hdrs, cond) } : init);
     if (res.status === 304 && old) {
-      stats.revalidated++; stats.savedBytes += Buffer.byteLength(old.body);
-      const out = new Response(old.body, { status: 200, statusText: 'OK', headers: withHeaders(old.headers, { 'x-jobcrawl-cache': 'revalidated' }) });
+      const bytes = Buffer.from(old.body64, 'base64');
+      stats.revalidated++; stats.savedBytes += bytes.length;
+      const out = new Response(bytes, { status: 200, statusText: 'OK', headers: withHeaders(old.headers, { 'x-jobcrawl-cache': 'revalidated' }) });
       Object.defineProperty(out, 'url', { value: old.url || url });
       return out;
     }
@@ -69,11 +71,14 @@ export function makeConditionalFetch(base, { dir, maxBodyBytes = 5 * 1024 * 1024
     const type = res.headers.get('content-type') ?? '';
     const len = Number(res.headers.get('content-length') ?? 0);
     if (res.status !== 200 || (!etag && !lastModified) || !TEXTUAL.test(type) || len > maxBodyBytes) return res;
-    // store a copy of the body and hand the caller an equivalent response
-    const body = await res.text();
+    // store the body bytes as received (decoded transfer encoding, original charset: the caller decodes as before) and hand the
+    // caller an equivalent response
+    const bytes = Buffer.from(await res.arrayBuffer());
     const keep = { 'content-type': type };
-    if (Buffer.byteLength(body) <= maxBodyBytes) save(k, { url: res.url || url, etag, lastModified, headers: keep, body, at: new Date().toISOString() });
-    const out = new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+    if (bytes.length <= maxBodyBytes) save(k, { url: res.url || url, etag, lastModified, headers: keep, body64: bytes.toString('base64'), at: new Date().toISOString() });
+    const headers = new Headers(res.headers);
+    headers.delete('content-encoding'); headers.delete('content-length');
+    const out = new Response(bytes, { status: res.status, statusText: res.statusText, headers });
     Object.defineProperty(out, 'url', { value: res.url || url });
     if (res.redirected) Object.defineProperty(out, 'redirected', { value: true });
     return out;

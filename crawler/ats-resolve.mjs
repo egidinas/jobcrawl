@@ -343,11 +343,16 @@ function rec(name, source) {
 }
 const AGGREGATOR_HOST = /spacetalent\.org|eurosciencejobs|eurotechjobs|googleapis\.|gstatic\.|linkedin\.|indeed\.|glassdoor\.|spacecapital\.com|getro\.com|space-careers|spaceindividuals|spacejobsearch|google\.|facebook\.|twitter\.|x\.com|xing\.|stepstone|monster\.|jobs\.ch|euroengineerjobs|eurojobsites|euroclimatejobs|browsehappy|applytojob\.com|workday\.com\/?$/i;
 const JUNK_SLUG = new Set(['www', 'app', 'apply', 'jobs', 'careers', 'api', 'static', 'cdn', 'help', 'support']);
-// ATS vendors the crawler has no provider for: an unresolved company that applies through one is reported as such.
+// ATS vendors the crawler has no provider for: an unresolved company that applies through one is reported as such. Systems that have a
+// provider but need a hand-set slug (branded domain, no slug in the URL) are reported with that provider's name instead; keep this list
+// in step with the registry (2026-11-27: careers-page.com = manatal, Dayforce, Zoho Recruit, Phenom, Radancy and Amazon were listed here
+// long after their providers landed).
 const UNSUPPORTED = [[/clarityloop|hr\.clarity/i, 'Clarity'],
-  [/careers-page\.com/i, 'careers-page.com'], [/brassring/i, 'BrassRing'], [/werecruit\.io/i, 'WeRecruit'], [/hrmos\.co/i, 'HRMOS'], [/applicantpro/i, 'ApplicantPro'], [/jobylon/i, 'Jobylon'],
-  [/dayforce|ceridian/i, 'Dayforce'], [/paychex|isolvedhire|trinet|zohorecruit|zoho\./i, 'Payroll-ATS'], [/phenom|radancy|tmp\./i, 'Phenom/Radancy'],
-  [/amazon\.jobs/i, 'Amazon Jobs'], [/github\.io/i, 'own page (github.io)']];
+  [/brassring/i, 'BrassRing'], [/werecruit\.io/i, 'WeRecruit'], [/hrmos\.co/i, 'HRMOS'], [/applicantpro/i, 'ApplicantPro'], [/jobylon/i, 'Jobylon'],
+  [/paychex|isolvedhire|trinet/i, 'Payroll-ATS'],
+  [/phenompeople|phenom\.com/i, 'Phenom (supported: provider phenom, slug = careers origin, set by hand)'],
+  [/radancy|tmpwebeng/i, 'Radancy (supported: provider radancy, slug = careers URL, set by hand)'],
+  [/amazon\.jobs/i, 'Amazon Jobs (supported: provider amazon, query slug set by hand)'], [/github\.io/i, 'own page (github.io)']];
 function link(r, url) {
   if (!r || !url) return;
   for (const [rx, label] of UNSUPPORTED) if (rx.test(url)) r.unsupported = (r.unsupported ?? new Set()).add(label);
