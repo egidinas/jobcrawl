@@ -202,7 +202,7 @@ first provider whose detect() recognises the entry's `careers_url` is used (regi
 | `gupy` | `.gupy.io` |  |
 | `dayforce` | `jobs.dayforcehcm.com` |  |
 | `talentsoft` | `.talent-soft.com` |  |
-| `rexx` | `.rexx-systems.com`; a portal on the employer's own domain is set by the entry (`slug` = its host, e.g. `karriere.n3eos.com`) | all three listing themes; dates from the portal's Atom feed when linked |
+| `rexx` | `.rexx-systems.com` |  |
 | `varbi` | `.varbi.com` |  |
 | `emply` | `.career.emply.com` |  |
 | `easycruit` | `.easycruit.com` |  |
