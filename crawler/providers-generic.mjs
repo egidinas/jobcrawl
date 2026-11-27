@@ -93,13 +93,17 @@ export function fieldsOf(item, list) {
 }
 
 /** The posting links of a list page: absolute, on the page's host (or list of hosts), matching pattern, not the page itself. */
-export function jobLinks(html, pageUrl, pattern, hosts) {
+export function jobLinks(html, pageUrl, pattern, hosts, { jsonLinks = false } = {}) {
   const base = new URL(pageUrl);
   const allow = new Set([base.host, ...(hosts ?? [])]);
   const out = new Set();
-  for (const m of html.matchAll(/href=["']([^"'#]+)["']/gi)) {
+  // <a href="...">, and with jsonLinks (entry.json_links) also the links a page ships in its inline JSON state ("href":"...",
+  // "url":"...": a list rendered by script, e.g. the Jobylon widget whose data the server writes into the page)
+  const raws = [...html.matchAll(/href=["']([^"'#]+)["']/gi)].map((m) => decode(m[1]))
+    .concat(!jsonLinks ? [] : [...html.matchAll(/"(?:href|url|link)"\s*:\s*"(https?:(?:\\?\/|\\u002[fF]){2}[^"\s]+)"/gi)].map((m) => m[1].replace(/\\u002[fF]/g, '/').replace(/\\\//g, '/')));
+  for (const raw of raws) {
     let u;
-    try { u = new URL(decode(m[1]), base); } catch { continue; }
+    try { u = new URL(raw, base); } catch { continue; }
     if (!/^https?:$/.test(u.protocol) || !allow.has(u.host)) continue;
     u.hash = '';
     const s = u.href;
@@ -205,7 +209,7 @@ export const genericProviders = {
       for (const p of pages) {
         const html = await fetchText(p);
         for (const j of jobsFromJsonLd(html, p)) found.set(j.url, j);
-        for (const u of jobLinks(html, p, pattern, entry.link_hosts)) if (!found.has(u)) found.set(u, null);
+        for (const u of jobLinks(html, p, pattern, entry.link_hosts, { jsonLinks: entry.json_links === true })) if (!found.has(u)) found.set(u, null);
         await sleep(300);
       }
       if (![...found.keys()].length && entry.sitemap) {

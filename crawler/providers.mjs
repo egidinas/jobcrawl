@@ -902,9 +902,18 @@ export const providers = {
       const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
       const CLAMP = 2000;
       const out = new Map();
+      // entry.workday_session (opt-in): some tenants (Novartis, 2026-11-27) answer the search API with 429 unless the call comes from
+      // a visitor of the board page: read the page once, then send its cookies with origin and referer, as the page's own script does
+      let session = {};
+      if (entry.workday_session === true) {
+        const page = await request(`${base}/${site}`, { headers: { 'user-agent': BROWSER_UA, accept: 'text/html' } });
+        const cookie = (page.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0].trim()).filter(Boolean).join('; ');
+        try { await page.body?.cancel(); } catch { /* nothing to drop */ }
+        session = { ...(cookie ? { cookie } : {}), origin: base, referer: `${base}/${site}` };
+      }
       const post = async (appliedFacets, offset) => (await request(api, {
         method: 'POST',
-        headers: { 'user-agent': BROWSER_UA, 'content-type': 'application/json', accept: 'application/json' },
+        headers: { 'user-agent': BROWSER_UA, 'content-type': 'application/json', accept: 'application/json', ...session },
         body: JSON.stringify({ appliedFacets, limit: 20, offset, searchText }),
       })).json();
       // Facets can nest (a group holding facets); flatten to { facetParameter, values }. Date buckets overlap, so never split on them.

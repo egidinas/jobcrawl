@@ -90,7 +90,7 @@ export function identifyPlatforms({ pages = [], cnames = {} } = {}) {
       if (!slug && p.slug && p.slug !== 'url') {
         // the board sits on the employer's own host: the page the markup or CNAME was seen on names it
         const own = [...pagesSeen].find((u) => !isVendorHost(hostOf(u)));
-        if (own) { const x = new URL(own); slug = p.slug === 'origin' ? x.origin : x.host; slugVia = `${p.slug} of ${own}`; }
+        if (own) { const x = new URL(own); slug = p.slug === 'origin' ? x.origin : p.slug === 'page' ? x.href : x.host; slugVia = `${p.slug} of ${own}`; }
       }
     }
     out.push({ id: p.id, provider: p.provider, confidence: +confidence.toFixed(3), signals: [...kinds].map(([kind, value]) => ({ kind, value })), slug, slugVia });

@@ -54,7 +54,7 @@ test('sfclassic: fetch replays the anonymous flow with cookie and CSRF key, page
   const page1 = search(Array.from({ length: 50 }, (_, i) => ({ id: 6000 + i, title: `Ingeniero ${i}`, date: '20/11/2026' })), 51);
   const page2 = search([{ id: 5035, title: 'Operario de montaje', date: '23/11/2026' }], 51);
   await withSite({ getInitialJobSearchData: INIT, updateUserSelectedValues: UPDATE, search: [page1, page2] }, async (asked) => {
-    const jobs = await providers.successfactors_classic.fetch('https://career2.successfactors.eu/career?company=acme', {});
+    const jobs = await providers.successfactors_classic.fetch('https://career2.successfactors.eu/career?company=acme', { detail_places: false });
     assert.equal(jobs.length, 51);
     assert.equal(jobs[50].url, 'https://career2.successfactors.eu/career?career_ns=job_listing&company=acme&navBarLevel=JOB_SEARCH&rcm_site_locale=es_ES&career_job_req_id=5035');
     assert.equal(jobs[50].postedAt, '2026-11-23');
@@ -73,4 +73,32 @@ test('sfclassic: a login page instead of the search fails the board', async () =
 
 test('sfclassic: dotted German dates', () => {
   assert.equal(sfDates(['27.11.2026'], 'de-DE')('27.11.2026'), '2026-11-27');
+});
+
+test('sfclassic: places come from the microdata of each posting page, read once (cached)', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { setCacheDir } = await import('../providers.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'jc-sfc-'));
+  setCacheDir(dir);
+  const page1 = search([{ id: 13954, title: 'Einkäufer (w/m/d)', date: '27.11.2026' }], 1);
+  const detail = '<html><span itemprop="jobLocation" itemscope itemtype="http://schema.org/Place"><span itemprop="address" itemscope itemtype="http://schema.org/PostalAddress"><meta itemprop="addressLocality" content="Salzgitter"><meta itemprop="addressRegion" content="NI"><meta itemprop="addressCountry" content="DE"></span></span><span itemprop="title">Einkäufer (w/m/d)</span></html>';
+  const real = globalThis.fetch;
+  let details = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('career_job_req_id=')) { details++; return new Response(detail, { status: 200, headers: { 'content-type': 'text/html' } }); }
+    if (u.includes('/career?company=')) return new Response(BOOT, { status: 200, headers: { 'set-cookie': 'JSESSIONID=abc' } });
+    const m = u.match(/\.(\w+)\.dwr$/)?.[1];
+    return new Response({ getInitialJobSearchData: INIT, updateUserSelectedValues: UPDATE, search: page1 }[m] ?? 'x', { status: 200 });
+  };
+  try {
+    const a = await providers.successfactors_classic.fetch('career5.successfactors.eu|gesisgesel', {});
+    assert.match(a[0].location, /Salzgitter/);
+    assert.equal(a[0].postedAt, '2026-11-27');
+    const b = await providers.successfactors_classic.fetch('career5.successfactors.eu|gesisgesel', {});
+    assert.match(b[0].location, /Salzgitter/);
+    assert.equal(details, 1, 'the posting page is read once');
+  } finally { globalThis.fetch = real; rmSync(dir, { recursive: true, force: true }); }
 });

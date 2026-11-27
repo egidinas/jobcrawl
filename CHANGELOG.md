@@ -29,6 +29,20 @@ The commit log has the details of each change.
 - `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
   replay); `core/tests/`.
 
+## 2026-11-27: Taleo Business Edition, Jobylon, places for SuccessFactors classic
+
+- **`taleobe`** (Oracle Taleo Business Edition, `*.tbe.taleo.net`): slug = the careers search URL with `org` and `cws`; pages of 10 in the
+  session the first answer sets. Detected from careers and requisition links.
+- **`jobylon`**: a preset of `jsonld_direct` for employer careers pages that list `emp.jobylon.com/jobs/<id>-...` postings (as links or in
+  the page's inline JSON); each posting page carries JobPosting JSON-LD. No Jobylon API or feed is read. Generic readers take links from
+  inline JSON state only with `json_links: true` (the preset sets it).
+- **`successfactors_classic`**: places from each posting page's microdata, read once per posting into the page cache within the board's
+  page budget (`detail_places: false` turns it off); German dotted dates; the first filter value as department.
+- **`workday`**: opt-in `workday_session: true` reads the board page once and sends its cookies, origin and referer with the search calls
+  (a tenant that answers 429 to bare API calls).
+- **rexx**: posting links with a session id (`.html?sid=...`) and div-based table rows; the session id is dropped from the URL.
+- Named Latin letter entities (`&eacute;` ...) are decoded by the extra providers.
+
 ## 2026-11-27: SuccessFactors classic career sites (opt-in)
 
 - **`successfactors_classic`** (`crawler/providers-sfclassic.mjs`): the classic career site `career<N>.successfactors.eu|com/career?company=<ID>`,

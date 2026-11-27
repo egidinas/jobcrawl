@@ -13,7 +13,7 @@ test('fingerprints.json: every row compiles, ids are unique, every named provide
   for (const p of PLATFORMS) {
     assert.ok(!ids.has(p.id), `duplicate id ${p.id}`); ids.add(p.id);
     if (p.provider) assert.ok(providers[p.provider], `${p.id}: provider ${p.provider} is not registered`);
-    assert.ok([null, 'origin', 'host', 'url'].includes(p.slug), `${p.id}: slug rule`);
+    assert.ok([null, 'origin', 'host', 'url', 'page'].includes(p.slug), `${p.id}: slug rule`);
   }
 });
 
@@ -46,10 +46,17 @@ test('CNAME to the vendor identifies a branded careers host with no markup at al
 });
 
 test('unsupported platforms are named without a provider or slug', () => {
-  const [top] = identifyPlatforms({ pages: [{ url: 'https://www.acme.se/jobb', html: '<script src="https://cdn.jobylon.com/embedder.js"></script>' }] });
-  assert.equal(top.id, 'jobylon');
+  const [top] = identifyPlatforms({ pages: [{ url: 'https://www.acme.se/jobb', html: '<script src="https://cdn.homerun.co/embed.js"></script><a href="https://acme.homerun.co/">jobs</a>' }] });
+  assert.equal(top.id, 'homerun');
   assert.equal(top.provider, null);
   assert.equal(top.slug, null);
+});
+
+test('Jobylon: the careers page that links emp.jobylon.com postings is the board', () => {
+  const [top] = identifyPlatforms({ pages: [{ url: 'https://www.acme.se/karriar/lediga-jobb', html: '<link href="/gce-jobylon.min.css"><a href="https://emp.jobylon.com/jobs/391777-acme-engineer/">Engineer</a>' }] });
+  assert.equal(top.id, 'jobylon');
+  assert.equal(top.provider, 'jobylon');
+  assert.equal(top.slug, 'https://www.acme.se/karriar/lediga-jobb');
 });
 
 test('plain company page: nothing found; vendor hosts recognised', () => {

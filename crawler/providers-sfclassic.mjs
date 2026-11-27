@@ -119,6 +119,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const sfClassicProvider = {
   detect: () => null,   // opt-in only
   async fetch(slug, entry = {}) {
+    const t0 = Date.now();
     const cfg = sfClassicConfig(slug || entry.careers_url);
     if (!cfg) throw new Error(`successfactors_classic: slug must be a career?company= URL on a successfactors host or "<host>|<company>": ${slug}`);
     const searchPage = `/career?company=${encodeURIComponent(cfg.company)}&navBarLevel=JOB_SEARCH`;
@@ -167,6 +168,32 @@ export const sfClassicProvider = {
       if (r.raw < PAGE_SIZE || !fresh || (total !== null && seen.size >= total)) { complete = true; break; }
     }
     if (total && !out.length) throw new Error('successfactors_classic: postings counted but none read (protocol changed?)');
+    // Places: the list carries none. Each posting page has schema.org microdata (addressLocality/Region/Country); it is read once per
+    // posting and kept in the page cache, within the board's page budget, so a first fill spreads over cycles (entry.detail_places:
+    // false turns it off).
+    let placesLeft = 0;
+    if (entry.detail_places !== false && out.length) {
+      const { loadSitemapCache, saveSitemapCache, parseJobPage, pageBudget } = await import('./providers.mjs');
+      const key = `sfclassic-${cfg.origin.replace(/^https:\/\//, '')}-${cfg.company}`;
+      const cache = loadSitemapCache(key), keep = {}, budget = pageBudget(entry, t0);
+      let dirty = false;
+      for (const j of out) {
+        let c = cache[j.url];
+        if (!c && !budget.spent()) {
+          try {
+            const res = await fetch(j.url, { headers: { 'user-agent': UA, accept: 'text/html' }, signal: AbortSignal.timeout(budget.pageTimeout(15000)) });
+            if (res.ok) { const p = parseJobPage(await res.text(), j.url); c = { location: p?.location ?? '', postedAt: p?.postedAt ?? '' }; dirty = true; }
+          } catch { /* next cycle */ }
+          await sleep(PAGE_DELAY_MS);
+        }
+        if (!c) { placesLeft++; continue; }
+        keep[j.url] = c;
+        j.location = c.location || j.location;
+        if (!j.postedAt && c.postedAt) j.postedAt = c.postedAt;
+      }
+      if (dirty || Object.keys(keep).length !== Object.keys(cache).length) saveSitemapCache(key, keep);
+    }
+    if (placesLeft && complete) Object.defineProperty(out, 'incomplete', { value: { left: placesLeft, note: `${placesLeft} posting pages left to read for places` }, enumerable: false });
     if (!complete) Object.defineProperty(out, 'incomplete', { value: { left: 0, note: `page stop: ${maxPages} pages read` }, enumerable: false });
     return out;
   },
