@@ -10,6 +10,7 @@
 import { providers, parseJobPage } from '../providers.mjs';
 import { jobsFromJsonLd } from '../providers-generic.mjs';
 import { getPage, BudgetError, RobotsError } from './net.mjs';
+import { identifyPlatforms, cnameOf } from './platforms.mjs';
 import {
   atsFingerprints, careerLinks, listLinks, feedLinks, linkGroups, htmlListConfig, pagination, jobArrays, pagingParam, sitemapLocs,
   robotsSitemaps, sitemapJobGroup, rssItems, RSS_LIST, inlineJsonJobs, titleScore, jobAnchors, commonJobDir, isJobLike, regDomain, hostOf, reEscape, JOB_URL_TOKENS, textOf,
@@ -140,8 +141,18 @@ export async function profileSite(site, env) {
       x.hits += f.hits; ats.set(k, x);
     }
     const atsList = [...ats.values()].sort((a, b) => b.hits - a.hits);
+    // Multi-signal identification (fingerprints.json): names the platform even when no link gives a slug, and makes the slug for boards
+    // served on the employer's own host (rexx, Phenom, Teamtailor, Avature, umantis, SuccessFactors CSB ...). Candidates not already
+    // found above are tried after them, through the same verification.
+    const cname = env.dns === false ? '' : await cnameOf(hostOf(main.url));
+    const plats = identifyPlatforms({ pages, cnames: cname ? { [hostOf(main.url)]: cname } : {} });
+    if (plats.length) rec.platforms = plats.slice(0, 3).map((x) => ({ id: x.id, provider: x.provider, confidence: x.confidence, slug: x.slug, signals: x.signals.map((g) => g.kind) }));
+    for (const x of plats) {
+      if (!x.provider || !x.slug || x.confidence < 0.5 || ats.has(`${x.provider}\t${x.slug}`)) continue;
+      atsList.push({ provider: x.provider, slug: x.slug, via: `platform ${x.id} (${x.confidence})`, hits: 0, page: main.url });
+    }
     if (atsList.length && want("ats")) {
-      for (const a of atsList.slice(0, 2)) {
+      for (const a of [...atsList.slice(0, 2), ...atsList.slice(2).filter((a) => a.via?.startsWith('platform ')).slice(0, 1)]) {
         const entry = { name: site.name, careers_url: a.page, provider: a.provider, slug: a.slug };
         ctx.budget += 6;   // an ATS API may need a few requests (pages, a token); they are the ATS's, not the employer's
         const before = ctx.trace.length;

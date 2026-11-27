@@ -23,6 +23,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { UA } from './useragent.mjs';
+import { makeConditionalFetch } from './httpcache.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -106,7 +107,7 @@ const file = (name) => (st.dataDir ? join(st.dataDir, name) : null);
  * robots: 'advisory' | 'strict'; robotsHosts: { host: 'advisory'|'strict' }; optOutHosts: [host | { host, reason }];
  * optOutCleared: [host] (flags the owner reviewed); dataDir: where the audit, caches and flags live (none: memory only).
  */
-export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutHosts = [], optOutCleared = [], dataDir = null } = {}) {
+export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutHosts = [], optOutCleared = [], dataDir = null, httpCache = null } = {}) {
   flushPolicy();
   st = fresh();
   if (robots !== 'advisory' && robots !== 'strict') throw new Error(`crawl.robots must be "advisory" or "strict", not ${JSON.stringify(robots)}`);
@@ -115,6 +116,8 @@ export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutH
   st.optOut = (optOutHosts ?? []).map((o) => (typeof o === 'string' ? { host: normHost(o), reason: 'listed in crawl.opt_out_hosts' } : { host: normHost(o.host), reason: o.reason || 'listed in crawl.opt_out_hosts' }));
   st.cleared = (optOutCleared ?? []).map(normHost);
   st.dataDir = dataDir;
+  // conditional GET under the guard (crawl.http_cache; off by default): needs a data folder for its store
+  st.httpCache = httpCache && dataDir ? { dir: join(dataDir, 'http-cache'), maxBodyBytes: httpCache.maxBodyBytes } : null;
   if (dataDir) {
     st.authWalls = readJson(file('auth-walls.json'), {});
     st.optFlags = readJson(file('optout-flags.json'), {});
@@ -128,7 +131,7 @@ export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutH
 /** configurePolicy options from a loaded profile (profile.mjs) and the data folder. */
 export const policyFromProfile = (profile, dataDir) => ({
   robots: profile?.robots ?? 'advisory', robotsHosts: profile?.robotsHosts ?? {}, optOutHosts: profile?.optOutHosts ?? [],
-  optOutCleared: profile?.optOutCleared ?? [], dataDir,
+  optOutCleared: profile?.optOutCleared ?? [], dataDir, httpCache: profile?.httpCache ?? null,
 });
 
 /** The robots mode for a host: the most specific crawl.robots_hosts entry, else crawl.robots. */
@@ -382,7 +385,7 @@ let installed = null;
 export function installGuard() {
   if (installed) return installed;
   const base = globalThis.fetch;
-  globalThis.fetch = makeGuard(base);
+  globalThis.fetch = makeGuard(st.httpCache ? makeConditionalFetch(base, st.httpCache) : base);
   installed = () => { globalThis.fetch = base; installed = null; };
   return installed;
 }
