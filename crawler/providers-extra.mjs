@@ -1032,6 +1032,52 @@ const cookiesOf = (res) => (res.headers.getSetCookie?.() ?? []).map((c) => c.spl
 const xmlPart = (frag, tag) => strip(frag.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, 'i'))?.[1] ?? '');
 const labelOk = (v) => /^[a-z0-9][a-z0-9-]*$/i.test(v);
 
+// ---- rexx systems helpers (exported for tests) ----
+/** https origin of a rexx board: a bare label is the vendor-hosted portal, a dotted host is a portal on the employer's domain. */
+export function rexxOrigin(b) {
+  const v = String(b).trim().replace(/^https?:\/\//i, '').replace(/\/.*$/, '').toLowerCase();
+  if (labelOk(v)) return `https://${v}-portal.rexx-systems.com`;
+  if (hostOk(v)) return `https://${v}`;
+  throw new Error(`rexx: bad board "${b}"`);
+}
+/** Rows of a rexx stellenangebote.html page, any theme: [{ id, title, url, location, postedAt }]. Only links after the listing
+ *  container (#joboffers / .joboffer...) count, so job links in the intro text (unsolicited application, internships) stay out. */
+export function parseRexxListing(html, origin) {
+  const start = html.search(/id=["']joboffers["']|class=["'][^"']*\bjoboffer/i);
+  const body = start >= 0 ? html.slice(start) : html;
+  const byId = new Map();
+  // One chunk per row in each theme; a row's first job link carries the title, the rest of the chunk the place.
+  for (const row of body.split(/(?=<article\b|<div[^>]*class=["'][^"']*\bjoboffer_container\b|<tr\b)/i)) {
+    const a = row.match(/<a\b[^>]*\bhref=["']([^"']*-j(\d+)\.html)["'][^>]*>([\s\S]*?)<\/a>/i);
+    if (!a || byId.has(a[2])) continue;
+    const title = strip(a[3]);
+    if (!title) continue;
+    const url = new URL(decode(a[1]), origin + '/').href;
+    const loc = strip(row.match(/job_standort[^>]*>([\s\S]*?)<\/(?:div|span|p|td)>/i)?.[1]
+      ?? row.match(/joboffer_informations[^>]*>([\s\S]*?)<div/i)?.[1]
+      ?? row.match(/class=["'][^"']*real_table_col2\b[^"']*["'][^>]*>([\s\S]*?)<\/td>/i)?.[1] ?? '');
+    byId.set(a[2], { id: a[2], title, url, location: loc, postedAt: '' });
+  }
+  return [...byId.values()];
+}
+/** The portal's Atom/RSS feed URL when the listing links one (same origin only), else ''. */
+export function rexxFeedUrl(html, origin) {
+  const raw = html.match(/["']((?:https?:\/\/[^"'\s]+)?\/?rss_generator[^"'\s]*\.php[^"'\s]*)["']/i)?.[1];
+  if (!raw) return '';
+  try { const u = new URL(decode(raw), origin + '/'); return u.origin === origin ? u.href : ''; } catch { return ''; }
+}
+/** A rexx Atom (or RSS) feed as Map(url -> { postedAt, description }). */
+export function parseRexxFeed(xml) {
+  const out = new Map();
+  for (const it of String(xml).split(/<entry\b|<item\b/i).slice(1)) {
+    const link = decode(it.match(/<link\b[^>]*\bhref=["']([^"']+)["']/i)?.[1] ?? xmlPart(it, 'link'));
+    if (!link) continue;
+    const raw = it.match(/<(?:summary|description)\b[^>]*>([\s\S]*?)<\/(?:summary|description)>/i)?.[1] ?? '';
+    out.set(link, { postedAt: isoDate(xmlPart(it, 'updated') || xmlPart(it, 'published') || xmlPart(it, 'pubDate')), description: block(raw) });
+  }
+  return out;
+}
+
 fhDefs.push(
   { // Dayforce candidate portal: board = "<namespace>[/<siteCode>]" (jobs.dayforcehcm.com/en-US/<namespace>/<siteCode>). A CSRF token plus its
     // cookie come from /api/auth/csrf; the search POST then pages with paginationStart (25 per page). Shape cross-checked in open-jobs (CC0).
@@ -1082,22 +1128,26 @@ fhDefs.push(
       return { jobs, more: false };
     },
   },
-  { // rexx systems (Germany): <tenant>-portal.rexx-systems.com/stellenangebote.html lists every vacancy as an article card. Listing only.
+  { // rexx systems (Germany/Austria). Board = the tenant label ("<tenant>-portal.rexx-systems.com") or the host of a portal on the
+    // employer's own domain ("karriere.n3eos.com", "career.schiebel.net"; recognised by the "rexx systems" footer, not by URL).
+    // <origin>/stellenangebote.html lists every open vacancy; tenants use one of three themes (article cards, div.joboffer_container,
+    // table#joboffers rows), so rows are read by the job-link shape "-<lang>-j<id>.html" inside the listing, not by theme. When the
+    // page links the portal's Atom feed (rss_generator-*.php), its <updated> dates are joined by URL (its
+    // summaries are cut-off teasers, so the description stays with the detail backfill).
     id: 'rexx',
     hosts: [/\.rexx-systems\.com/i],
     boardId: (u) => okSlug(u.match(/^https?:\/\/([a-z0-9-]+?)-portal\.rexx-systems\.com/i)?.[1]?.toLowerCase()),
     async page(b) {
-      if (!labelOk(b)) throw new Error(`rexx: bad tenant "${b}"`);
-      const origin = `https://${b}-portal.rexx-systems.com`;
+      const origin = rexxOrigin(b);
       const html = await text(`${origin}/stellenangebote.html`);
-      const jobs = html.split(/<article\b/i).slice(1).map((card) => {
-        const a = card.match(/joboffer_title_text[\s\S]*?<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/i);
-        if (!a) return null;
-        const url = new URL(decode(a[1]), origin + '/').href;
-        const id = url.match(/-(?:de|en|fr)?-?j(\d+)\.html/i)?.[1];
-        const loc = strip(card.match(/job_standort[^>]*>([\s\S]*?)<\/(?:div|span|p)>/i)?.[1] ?? '');
-        return id ? { id, title: strip(a[2]), url, location: loc, postedAt: '' } : null;
-      }).filter((j) => j && j.title);
+      const jobs = parseRexxListing(html, origin);
+      const feed = rexxFeedUrl(html, origin);
+      if (feed && jobs.length) {
+        try {
+          const byUrl = parseRexxFeed(await text(feed, { headers: { accept: 'application/atom+xml,application/rss+xml,*/*' } }));
+          for (const j of jobs) { const f = byUrl.get(j.url); if (f?.postedAt) j.postedAt = f.postedAt; }
+        } catch { /* the listing alone is enough */ }
+      }
       return { jobs, more: false };
     },
   },

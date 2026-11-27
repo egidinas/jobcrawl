@@ -3,6 +3,15 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-27: rexx on employer domains, discover notes
+
+- **`rexx`**: the slug may be the host of a rexx portal on the employer's own domain (`karriere.n3eos.com`, `career.schiebel.net`), not only the
+  `<tenant>-portal.rexx-systems.com` label. Rows are read by the job-link shape (`-<lang>-j<id>.html`) inside the listing, so the table and
+  `joboffer_container` themes work beside the article cards; posting dates come from the portal's Atom feed when the listing links one.
+- **`discover.mjs --sites`**: a careers page that links a board we already track now says so instead of "uses <ATS> - not supported yet", and
+  systems with a provider that needs a hand-set slug (Phenom, rexx, Avature, Radancy, d.vinci, Breezy, iCIMS, SuccessFactors) say which
+  provider and slug to use. The stale list had made the 2026-11-27 seed run file supported companies as "no provider yet".
+
 ## 2026-11-22: geography pills and pins
 
 - **`web/assets/atlas-geo-pills.js`** (loaded by `atlas.js` beside the place data): country pills zoomed out, city pills zoomed in (only roles with a real
