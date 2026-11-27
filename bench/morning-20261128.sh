@@ -30,7 +30,7 @@ run() {   # run <step> <cmd...>: logs the command; in a dry run only prints it
 say "start dry_run=$DRY code=$CODE ($(git -C "$CODE" rev-parse --short HEAD 2>/dev/null || echo 'no git')) node=$(node --version) free_gb=$(freegb) R=$R"
 [ -d "$CODE/.git" ] || die 0 "code checkout $CODE missing"
 git -C "$CODE" merge-base --is-ancestor 64e66868484366680a71eaf905aa2930e7653c2f HEAD || die 0 "code checkout does not contain jobcrawl main 64e6686"
-[ -f "$R/out/boards.jsonl" ] || die 0 "no recording at $R/out (boards.jsonl missing)"
+if [ ! -f "$R/out/boards.jsonl" ]; then [ $DRY = 1 ] && say "dry-run: no recording at $R/out yet (boards.jsonl missing); continuing the dry run" || die 0 "no recording at $R/out (boards.jsonl missing)"; fi
 [ -f "$LIVE_SCAN/scan-history.tsv" ] || die 0 "live history $LIVE_SCAN/scan-history.tsv missing"
 cd "$CODE" || die 0 "cannot cd to $CODE"
 
@@ -48,8 +48,9 @@ say "step 1 result: jcx-record.service is $(systemctl --user show jcx-record.ser
 # 2 ---------------------------------------------------------------------------------------------------------------------
 guard 2
 say "step 2 start: re-read the boards that timed out"
-TO=$(grep -c '"cls":"TIMEOUT' "$R/out/boards.jsonl" || true)
-say "step 2: $TO TIMEOUT lines in boards.jsonl ($(wc -l < "$R/out/boards.jsonl") lines)"
+TO=0; NL=0
+if [ -f "$R/out/boards.jsonl" ]; then TO=$(grep -c '"cls":"TIMEOUT' "$R/out/boards.jsonl" || true); NL=$(wc -l < "$R/out/boards.jsonl"); fi
+say "step 2: $TO TIMEOUT lines in boards.jsonl ($NL lines)"
 if [ "$TO" -gt 0 ]; then
   BK="$R/out/boards.jsonl.bak-$(date +%Y%m%d-%H%M%S)"
   SUB="$R/companies-timeout.json"
