@@ -66,6 +66,8 @@ export function loadProfile(dirArg) {
   const hc = obj(crawl.http_cache, 'crawl.http_cache');
   if (hc.enabled !== undefined && typeof hc.enabled !== 'boolean') throw new ProfileError('crawl.http_cache.enabled must be true or false');
   if (hc.max_body_kb !== undefined && (typeof hc.max_body_kb !== 'number' || !(hc.max_body_kb > 0))) throw new ProfileError('crawl.http_cache.max_body_kb must be a number > 0');
+  // Junk gate for probation boards (junkgate.mjs): "report" (default), "hold" or "off".
+  if (crawl.junk_gate !== undefined && !['off', 'report', 'hold'].includes(crawl.junk_gate)) throw new ProfileError('crawl.junk_gate must be "off", "report" or "hold"');
   return {
     dir,
     file,
@@ -89,6 +91,7 @@ export function loadProfile(dirArg) {
     optOutHosts: crawl.opt_out_hosts ?? [],
     optOutCleared: strList(crawl.opt_out_cleared, 'crawl.opt_out_cleared'),
     euresLane: crawl.eures_lane === true,
+    junkGate: crawl.junk_gate ?? 'report',
     httpCache: hc.enabled === true ? { maxBodyBytes: Math.round((hc.max_body_kb ?? 5120) * 1024) } : null,   // EURES boards come from the slow lane's answers (crawler/eures-lane.mjs)
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,

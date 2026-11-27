@@ -14,6 +14,7 @@ import { isRelevantRole, makeEmployerIndex, protectedFromHistory, loadCatalogueN
   useRelevance, INDUSTRY_AGGREGATOR_PROVIDERS, INDUSTRY_VIA, PROBATION_VERDICT } from './relevance.mjs';
 import { loadProfile, profileDirFromArgs, resolveDataDir, applyProfileFilters, entryTimeoutMs } from './profile.mjs';
 import { setUserAgent } from './useragent.mjs';
+import { junkVerdict } from './junkgate.mjs';
 import { reprofileCycle } from './profiler/health.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
@@ -804,7 +805,18 @@ async function scan() {
     trow.kept = boardKept;
     if (isProb && !flag('dry-run')) {
       const employerMismatch = companies[i].employer_mismatch ? String(companies[i].employer_mismatch) : '';
-      probationCycle(pst, { ok: true, total: res.jobs.length, relevant: pc.relevant, irrelevant: pc.irrelevant, samples: pc.samples, protectedNow, now: date, employerMismatch });
+      // junk gate (junkgate.mjs, crawl.junk_gate): a not-yet-promoted board whose list does not look like a job list is recorded
+      // ("report", the default) or kept from promotion ("hold")
+      let junkHold = '';
+      if (PROFILE.junkGate !== 'off' && probGated) {
+        const jv = junkVerdict(res.jobs, { ...companies[i], provider: res.r.provider });
+        if (jv.hold) {
+          pst.junk = { at: date, reasons: jv.reasons, n: jv.n, job_like: jv.jobLikeFrac, token: jv.tokenFrac };
+          problems.push(`JUNK GATE (${PROFILE.junkGate}): ${name} - ${jv.reasons.join('; ')}`);
+          if (PROFILE.junkGate === 'hold') junkHold = jv.reasons.join('; ');
+        } else delete pst.junk;
+      }
+      probationCycle(pst, { ok: true, total: res.jobs.length, relevant: pc.relevant, irrelevant: pc.irrelevant, samples: pc.samples, protectedNow, now: date, employerMismatch, junkHold });
       if (employerMismatch) problems.push(`EMPLOYER MISMATCH: ${name} stays on probation (${employerMismatch})`);
       probationDirty = true;
       if (pst.state === 'disabled') problems.push(`PROBATION: ${name} disabled - ${pst.reason}`);

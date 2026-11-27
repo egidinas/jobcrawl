@@ -15,6 +15,14 @@ The commit log has the details of each change.
 - `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
   replay); `core/tests/`.
 
+## 2026-11-27: junk gate for probation boards
+
+- **`crawler/junkgate.mjs`**: a not-yet-promoted probation board read by a generic reader (paginated_list, jsonld_direct, sitemap) whose
+  list does not look like a job list (titles mostly not job-like, or navigation/product link text) is recorded in `probation-state.json`
+  (`junk`) and in the cycle notes. Profile setting `crawl.junk_gate`: `report` (default, nothing else changes), `hold` (a relevant title
+  no longer promotes such a board) or `off`. Calibrated on the 14 junk boards of the PROVIDERS review (13 held) and 3 good link-group
+  boards (0 held).
+
 ## 2026-11-27: board detection v2 and the PROVIDERS review fixes
 
 - **Detector v2** (`crawler/profiler/platforms.mjs` over `crawler/profiler/fingerprints.json`): page/redirect host, CNAME, embeds, links and

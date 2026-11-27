@@ -157,7 +157,9 @@ export function probationCycle(st, cyc) {
   // employer_mismatch (registry, 2026-11-07): the board's own company name does not match the tracked employer; it stays on
   // probation (gated, never promoted) until the mismatch is resolved by hand
   if (cyc.relevant > 0 && cyc.employerMismatch) { st.employer_mismatch = cyc.employerMismatch; return st; }
-  if (cyc.relevant > 0) { st.state = 'promoted'; st.wrong_streak = 0; st.promoted_at = cyc.now; delete st.employer_mismatch; return st; }
+  // junk gate in "hold" mode (junkgate.mjs): the list does not look like a job list, so a relevant title does not promote the board
+  if (cyc.relevant > 0 && cyc.junkHold) { st.junk_hold = cyc.junkHold; return st; }
+  if (cyc.relevant > 0) { st.state = 'promoted'; st.wrong_streak = 0; st.promoted_at = cyc.now; delete st.employer_mismatch; delete st.junk_hold; return st; }
   if (cyc.irrelevant > 0) {
     st.wrong_streak += 1;
     if (st.wrong_streak >= needed) {
