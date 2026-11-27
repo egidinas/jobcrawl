@@ -6,6 +6,7 @@
 // fetched instead of fetching them again. Redirects of GET requests are followed hop by hop, each hop checked. The site a request
 // belongs to is tracked with AsyncLocalStorage.
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { assertPublicUrl } from '../../core/fetch/ssrf.mjs';
 import { UA } from '../useragent.mjs';
 import { parseRobots, robotsAllows, RobotsError, NoFetchError, CooldownError, noFetchReason, checkResponse, robotsModeFor, auditRobots, MAX_SLOT_WAIT_MS } from '../policy.mjs';
 
@@ -21,7 +22,9 @@ export { parseRobots, robotsAllows, RobotsError };
  * A network for one profiling run. token: the user-agent product token robots groups are matched against (e.g. "MADE-jobs-crawler").
  * Returns { run(site, fn), install(), uninstall(), robotsFor(origin), stats }.
  */
-export function makeNet({ token = 'jobcrawl', minGapMs = 1000, budget = 10, maxBytes = 6e6, timeoutMs = 20000, log = () => {} } = {}) {
+// allowPrivate: false (default) checks every hop with the SSRF guard (core/fetch/ssrf.mjs): the profiler reads registry and seed URLs,
+// and a redirect or a name resolving into a private address is refused before it is requested.
+export function makeNet({ token = 'jobcrawl', minGapMs = 1000, budget = 10, maxBytes = 6e6, timeoutMs = 20000, log = () => {}, allowPrivate = false, lookupImpl } = {}) {
   const lastAt = new Map();      // host -> time of the last request start
   const robots = new Map();      // origin -> Promise<parsed>
   const stats = { requests: 0, robots_blocked: 0, robots_ignored: 0, policy_refused: 0, budget_hits: 0 };
@@ -74,6 +77,10 @@ export function makeNet({ token = 'jobcrawl', minGapMs = 1000, budget = 10, maxB
     for (;;) {
       const why = noFetchReason(cur.href);
       if (why) { stats.policy_refused++; throw new NoFetchError(`not fetched: ${cur.href} (${hops ? `redirect from ${url}: ` : ''}${why})`); }
+      if (!allowPrivate) {
+        try { await assertPublicUrl(cur.href, lookupImpl ? { lookupImpl } : {}); }
+        catch (e) { stats.policy_refused++; throw new NoFetchError(`not fetched: ${cur.href} (${hops ? `redirect from ${url}: ` : ''}${e.message})`); }
+      }
       if (cur.pathname === '/robots.txt') {
         // robots.txt was (or is now) read once per origin for the checks below: serve the same bytes to the provider's own robots reader
         const rb = await robotsFor(cur.origin);

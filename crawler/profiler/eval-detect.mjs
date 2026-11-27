@@ -80,7 +80,9 @@ async function page(u) {
   if (!flag('fetch')) return cached;
   const rec = { url: u, final: u, status: 0, html: '', cname: '', error: '' };
   try {
-    const res = await fetch(u, { headers: { 'user-agent': UA, accept: 'text/html,*/*' }, redirect: 'follow', signal: AbortSignal.timeout(15000) });
+    // every hop through the SSRF guard (public addresses only) and, under it, the crawl policy guard installed above
+    const { safeFetch } = await import('../../core/fetch/ssrf.mjs');
+    const res = await safeFetch(u, { headers: { 'user-agent': UA, accept: 'text/html,*/*' }, signal: AbortSignal.timeout(15000) });
     rec.status = res.status; rec.final = res.url;
     if (/html|xml|text/i.test(res.headers.get('content-type') ?? '')) rec.html = (await res.text()).slice(0, 1_500_000);
   } catch (e) { rec.error = String(e.cause?.code ?? e.name ?? e.message).slice(0, 60); }

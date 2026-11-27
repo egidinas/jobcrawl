@@ -254,6 +254,10 @@ export async function profileSite(site, env) {
     // ---------- 4. repeated link group on the raw HTML -> paginated_list html ----------
     const domGroups = allGroups.filter((g) => g.titleFrac >= 0.5 && g.n >= 3 && (ownHost(g.hp.host) || g.hp.sameHost));
     for (const g of want("dom") ? domGroups.slice(0, 2) : []) {
+      // hold rule (PROVIDERS review 2026-11-27: 14 of 55 link-group boards were navigation, product or project links): a group whose
+      // URLs carry no job-like token, whose titles are mostly not job-like, or that sits on the site root stays on the watchlist
+      const why = linkGroupHold(g);
+      if (why) { rec.held_link_group = { page: g.page.url, n: g.n, why, titles: g.titles.slice(0, 3) }; steps.dom = `held:${why}`; continue; }
       const pg = pagination(g.page.html, g.page.url, g.n);
       const list = htmlListConfig(g, g.page.url, g.page.html, pg);
       const entry = { name: site.name, careers_url: g.page.url, provider: 'paginated_list', slug: `profiled-${slugify(hostOf(g.page.url))}`, list };
@@ -342,8 +346,17 @@ export async function profileSite(site, env) {
 }
 
 const NO_OPENINGS = /(?:derzeit|aktuell|momentan|zur zeit|zurzeit)\s+(?:haben wir\s+)?(?:leider\s+)?keine\s+(?:offenen|vakanten|freien|ausgeschriebenen)?\s*(?:stellen|positionen|vakanzen|stellenangebote|jobs)|keine (?:offenen|vakanten) stellen|(?:no|not any) (?:open |current )?(?:positions|vacancies|openings|jobs)(?: available)?(?: at the moment| currently| right now)?|don[’']t have any open (?:positions|roles)|no vacancies|currently no (?:open )?(?:positions|vacancies|openings)/i;
+/** Why a repeated link group is not made a board ('' = it may be verified): see the dom step. */
+export function linkGroupHold(g) {
+  if (!(g.tokenFrac > 0)) return 'no job-like URL token';
+  if (!(g.titleFrac >= 0.5)) return 'titles not job-like';
+  try { const u = new URL(g.page.url); if ((u.pathname === '/' || u.pathname === '') && !u.search) return 'list is the site root'; } catch { /* not a URL: no rule */ }
+  return '';
+}
+
 function failureReason(rec, pages) {
   const s = rec.steps;
+  if (rec.held_link_group && !/^ok:/.test(String(s.dom ?? ''))) return 'link_group_held';
   const txt = pages.filter((p) => !/sitemap|robots/.test(p.role)).map((p) => textOf(p.html.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' '))).join(' ');
   if (NO_OPENINGS.test(txt)) return 'no_openings';
   const pdfs = pages.flatMap((p) => [...p.html.matchAll(/<a\b[^>]*href=["']([^"']+\.pdf)["'][^>]*>([\s\S]*?)<\/a>/gi)].map((m) => textOf(m[2]) || m[1])).filter((t) => /stelle|job|position|m\/w\/d|w\/m\/d|m\/f\/d|engineer|ingenieur|techniker/i.test(t));

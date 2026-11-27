@@ -1048,10 +1048,10 @@ export function parseRexxListing(html, origin) {
   const byId = new Map();
   // One chunk per row in each theme; a row's first job link carries the title, the rest of the chunk the place.
   for (const row of body.split(/(?=<article\b|<div[^>]*class=["'][^"']*\bjoboffer_container\b|<tr\b)/i)) {
-    const a = row.match(/<a\b[^>]*\bhref=["']([^"']*-j(\d+)\.html)["'][^>]*>([\s\S]*?)<\/a>/i);
+    // the row's first job link that carries text (a theme may put an image link to the same posting first)
+    const a = [...row.matchAll(/<a\b[^>]*\bhref=["']([^"']*-j(\d+)\.html)["'][^>]*>([\s\S]*?)<\/a>/gi)].find((m) => strip(m[3]));
     if (!a || byId.has(a[2])) continue;
     const title = strip(a[3]);
-    if (!title) continue;
     const url = new URL(decode(a[1]), origin + '/').href;
     const loc = strip(row.match(/job_standort[^>]*>([\s\S]*?)<\/(?:div|span|p|td)>/i)?.[1]
       ?? row.match(/joboffer_informations[^>]*>([\s\S]*?)<div/i)?.[1]

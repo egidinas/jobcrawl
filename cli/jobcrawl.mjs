@@ -77,28 +77,9 @@ switch (cmd) {
   case 'detect': {
     const url = rest.find((a) => !a.startsWith('--'));
     if (!url) fail('detect <url>');
-    const { resolve } = await import('../crawler/providers.mjs');
-    const hit = resolve({ careers_url: url });
-    const res = { url, hits: hit ? [{ provider: hit.provider, slug: hit.slug, evidence: [{ type: 'url' }] }] : [] };
-    if (flag('page')) {
-      const { safeFetch } = await import('../core/fetch/ssrf.mjs');
-      const { atsFingerprints } = await import('../crawler/profiler/detect.mjs');
-      const { UA } = await import('../crawler/useragent.mjs');
-      try {
-        const r = await safeFetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20000) });
-        const html = await r.text();
-        for (const f of atsFingerprints(html, url) ?? []) res.hits.push({ provider: f.provider, slug: f.slug, evidence: [{ type: 'page', via: f.via, hits: f.hits }] });
-        // detector v2 (crawler/profiler/platforms.mjs over fingerprints.json): scored platform signals incl. the careers host's CNAME;
-        // adds what the links did not give (a board on the employer's own host, an unsupported platform named by provider null)
-        const { detectHits, cnameOf } = await import('../crawler/profiler/platforms.mjs');
-        const seen = new Set(res.hits.map((h) => `${h.provider}\t${h.slug}`));
-        for (const h of detectHits({ url, finalUrl: r.url || url, html, cname: await cnameOf(new URL(url).hostname) })) {
-          if (h.provider && seen.has(`${h.provider}\t${h.slug}`)) continue;
-          res.hits.push(h);
-        }
-        res.page = { status: r.status, bytes: html.length };
-      } catch (e) { res.page = { error: String(e?.message ?? e) }; }
-    }
+    // crawler/profiler/detect-page.mjs: URL match, and with --page the page through the SSRF guard, link fingerprints and detector v2
+    const { detectPage } = await import('../crawler/profiler/detect-page.mjs');
+    const res = await detectPage(url, { page: flag('page') });
     out(res, res.hits.length ? res.hits.map((h) => `${h.provider}:${h.slug} (${h.evidence.map((e) => e.type).join(',')})`).join('\n') : 'no source recognised');
     break;
   }

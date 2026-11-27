@@ -15,6 +15,17 @@ The commit log has the details of each change.
 - `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
   replay); `core/tests/`.
 
+## 2026-11-27: board detection v2 and the PROVIDERS review fixes
+
+- **Detector v2** (`crawler/profiler/platforms.mjs` over `crawler/profiler/fingerprints.json`): page/redirect host, CNAME, embeds, links and
+  markup scored per platform; makes the slug for boards on the employer's own host; in the profiler cascade and in `jobcrawl detect --page`
+  (`crawler/profiler/detect-page.mjs`, through the SSRF guard). `crawler/profiler/eval-detect.mjs` scores it on the companies file.
+- **SSRF guard on every hop** of the profiler (`profiler/net.mjs`) and of `eval-detect --fetch`, not only of `detect --page`.
+- **Profiler hold rule for link-group boards**: no job-like URL token, titles mostly not job-like, or the list on the site root ->
+  reason `link_group_held` (stays on the watchlist, never spliced).
+- **rexx**: a row whose first job link is an image link takes its next link with text.
+- **`crawl.http_cache`** (off by default): conditional GET (ETag / Last-Modified) under the policy guard, bytes kept as received.
+
 ## 2026-11-27: rexx on employer domains, discover notes
 
 - **`rexx`**: the slug may be the host of a rexx portal on the employer's own domain (`karriere.n3eos.com`, `career.schiebel.net`), not only the

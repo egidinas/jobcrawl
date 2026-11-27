@@ -85,3 +85,12 @@ test('rexx: a broken feed does not lose the listing', async () => {
     assert.ok(jobs.every((j) => j.postedAt === ''));
   });
 });
+
+test('rexx: a row whose first job link is an image link takes its next link with text', () => {
+  const html = `<div id="joboffers"><div class="joboffer_container">
+<a href="https://acme-portal.rexx-systems.com/Test-Engineer-de-j21.html"><img src="/logo.png" alt=""></a>
+<div class="joboffer_title_text"><a href="https://acme-portal.rexx-systems.com/Test-Engineer-de-j21.html">Test Engineer (m/w/d)</a></div>
+<div class="joboffer_informations joboffer_box">Gilching<div id="job_location"></div></div></div></div>`;
+  const jobs = parseRexxListing(html, 'https://acme-portal.rexx-systems.com');
+  assert.deepEqual(jobs.map((j) => [j.id, j.title, j.location]), [['21', 'Test Engineer (m/w/d)', 'Gilching']]);
+});

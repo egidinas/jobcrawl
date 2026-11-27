@@ -168,7 +168,7 @@ async function withWeb(web, fn) {
   try {
     const { makeNet } = await import(`../profiler/net.mjs?web=${Math.random()}`);   // a fresh module captures the stub as its "real" fetch
     const { profileSite } = await import('../profiler/cascade.mjs');
-    const net = makeNet({ token: 'MADE-jobs-crawler', minGapMs: 0, budget: 10 });
+    const net = makeNet({ token: 'MADE-jobs-crawler', minGapMs: 0, budget: 10, lookupImpl: async () => [{ address: '93.184.216.34', family: 4 }] });
     net.install();
     try { return await fn({ net, profileSite, calls }); } finally { net.uninstall(); }
   } finally { globalThis.fetch = real; }
@@ -256,4 +256,29 @@ test('splice: verified entries appended with probation and profile, tracked name
     assert.equal(old.slug, 'profiled-b');
     assert.equal(cfg2.tracked_companies.length, 3);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('profiler net: a redirect into a private address is refused by the SSRF guard before it is requested', async () => {
+  const real = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (url) => { asked.push(String(url)); return String(url).includes('robots.txt') ? new Response('', { status: 404 }) : new Response(null, { status: 302, headers: { location: 'http://intra.acme.example/' } }); };
+  try {
+    const { makeNet } = await import(`../profiler/net.mjs?ssrf=${Math.random()}`);
+    const DNS = { 'www.acme.example': '93.184.216.34', 'intra.acme.example': '10.1.2.3' };
+    const net = makeNet({ minGapMs: 0, lookupImpl: async (h) => [{ address: DNS[h] ?? '93.184.216.34', family: 4 }] });
+    net.install();
+    try {
+      await assert.rejects(net.run({ key: 'k', name: 'Acme' }, () => fetch('https://www.acme.example/karriere')), /non-public/);
+      assert.ok(!asked.some((u) => u.includes('intra.acme.example')), asked.join(' '));
+    } finally { net.uninstall(); }
+  } finally { globalThis.fetch = real; }
+});
+
+test('cascade hold rule: link groups without job-like URL tokens, with non-job titles or on the site root are held', async () => {
+  const { linkGroupHold } = await import('../profiler/cascade.mjs');
+  const g = (over) => ({ tokenFrac: 0.8, titleFrac: 0.9, page: { url: 'https://www.acme.de/karriere/' }, ...over });
+  assert.equal(linkGroupHold(g({})), '');
+  assert.equal(linkGroupHold(g({ tokenFrac: 0 })), 'no job-like URL token');
+  assert.equal(linkGroupHold(g({ titleFrac: 0.4 })), 'titles not job-like');
+  assert.equal(linkGroupHold(g({ page: { url: 'https://www.acme.de/' } })), 'list is the site root');
 });
