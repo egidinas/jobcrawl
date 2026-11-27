@@ -39,19 +39,22 @@ const key = (p, s) => `${p}:${String(s).toLowerCase()}`;
 
 const known = new Set(cfg.tracked_companies.map((c) => resolveEntry(c)).filter(Boolean).map((r) => key(r.provider, r.slug)));
 const found = new Map();   // key -> { provider, slug, names:Set, urls:Set }
+// Returns the board key it matched (tracked or new), or null. A tracked board is not "found" again, but the caller needs to know the
+// page linked one: without that, a careers page of a company we already crawl was reported as "uses <ATS> - not supported yet".
 function consider(url, name) {
   for (const p of ATS) {
     let slug = null;
     try { slug = providers[p].detect(url); } catch {}
     if (!slug) continue;
     const k = key(p, slug);
-    if (known.has(k)) return;
+    if (known.has(k)) return k;
     if (!found.has(k)) found.set(k, { provider: p, slug, names: new Set(), urls: new Set() });
     const f = found.get(k);
     if (name) f.names.add(name.replace(/\s*\(via [^)]*\)\s*$/, ''));
     if (f.urls.size < 2) f.urls.add(url);
-    return;
+    return k;
   }
+  return null;
 }
 
 const HISTORY = resolve(DATA, 'scan-history.tsv');
@@ -115,19 +118,27 @@ const page = async (u) => {
   } catch { return null; }
 };
 const urlsIn = (html) => [...new Set([...html.matchAll(/(?:https?:)?\/\/[\w.-]+\.[a-z]{2,}[^\s"'<>)\\]*/gi)].map((m) => (m[0].startsWith('//') ? 'https:' + m[0] : m[0])))];
-// Job systems we have no provider for yet (Taleo, Jobvite, PageUp and the freehire vendors are supported now, see providers-extra.mjs), with the career-ops (MIT) implementation to read before writing one.
-// Rule of thumb for an unknown system: look it up in SUPPORTED_JOB_BOARDS.md first; if career-ops has a provider,
-// port the approach into providers.mjs (own code, one function, same output shape) and add a detect marker here.
+// Job systems seen in a careers page's markup when no board URL was detected from its links. Two kinds:
+// - supported, but the slug cannot be read from a link (branded domain, embed): the note names the provider and the slug to set;
+// - not supported yet: the note links the career-ops (MIT) implementation to read before writing one (port it into providers.mjs or
+//   providers-extra.mjs, own code, same output shape, and move the row up to the supported kind).
+// Keep this list in step with the registry: a supported system listed as unsupported makes seed runs write "no provider yet" for
+// companies we can crawl (2026-11-27: Phenom, Breezy and rexx were listed here long after their providers landed).
 const CAREER_OPS = 'https://github.com/career-ops-hq/career-ops/blob/main';
 const KNOWN_SYSTEMS = [
-  ['SAP SuccessFactors', /successfactors|sapsf\./i, 'successfactors', 'Try provider "sitemap" first (real dates).'],
-  ['BITE jobs-api', /b-ite\.com\/jobs-api|data-bite-jobs-api-listing/i, 'bite', 'Supported: slug = the data-bite-jobs-api-listing value "<customer>:<listing>".'],
-  ['iCIMS', /icims\.com/i, 'icims'], ['Phenom', /phenompeople|phenom\.com/i, 'phenom'],
-  ['Avature', /avature\.net/i, 'avature'], ['Breezy HR', /breezy\.hr/i, 'breezy'],
-  ['Comeet', /comeet\.(?:co|com)/i, 'comeet'], ['Pinpoint', /pinpointhq\.com/i, 'pinpoint'], ['JazzHR', /applytojob\.com|jazz\.co/i, 'jazzhr'],
-  ['UKG Pro / UltiPro', /ultipro\.com|ukg\.com/i, 'ultipro'], ['JibeApply', /jibeapply|jibe\.com/i, 'jibeapply'],
-  ['Radancy / TMP', /radancy|tmpwebeng/i, 'radancy'], ['Gem', /jobs\.gem\.com/i, 'gem'], ['Getro', /getro\.com/i, 'getro'],
-  ['d.vinci', /d-vinci/i, null], ['rexx', /rexx-systems/i, null],
+  // [name, markup pattern, provider id when supported (else null), hint, career-ops reference when unsupported]
+  ['SAP SuccessFactors', /successfactors|sapsf\.|jobs2web/i, 'successfactors', 'slug = the RMK host (jobs.<company>.com, often linked as "Search jobs"); a bare career5/career2.successfactors.eu?company= link has no public listing, look for the RMK host or a jobs sitemap (provider "sitemap").'],
+  ['BITE jobs-api', /b-ite\.com\/jobs-api|data-bite-jobs-api-listing/i, 'bite', 'slug = the data-bite-jobs-api-listing value "<customer>:<listing>".'],
+  ['Phenom', /phenompeople|phenom\.com|"phApp"|cdn\.phenompeople/i, 'phenom', 'slug = the careers origin; optional entry.phenom { lang, country, urlPrefix }. Many Phenom fronts sit on Workday/Oracle/SF: check the apply links first.'],
+  ['rexx systems', /rexx-systems|rexx systems gmbh/i, 'rexx', 'slug = the tenant label ("<t>" of <t>-portal.rexx-systems.com) or the portal host on the employer domain ("karriere.example.com").'],
+  ['Avature', /avature\.net/i, 'avature', 'slug = the Avature careers origin.'],
+  ['Radancy / TMP', /radancy|tmpwebeng/i, 'radancy', 'slug = any URL on the careers origin.'],
+  ['d.vinci', /d-vinci|dvinci/i, 'dvinci', 'slug = the d.vinci tenant host.'],
+  ['Breezy HR', /breezy\.hr/i, 'breezy', 'slug = the <tenant> of <tenant>.breezy.hr (the board link may be in a script or iframe).'],
+  ['iCIMS', /icims\.com/i, 'icims', 'slug = the iCIMS tenant host.'],
+  ['Comeet', /comeet\.(?:co|com)/i, 'comeet', ''], ['Pinpoint', /pinpointhq\.com/i, 'pinpoint', ''], ['JazzHR', /applytojob\.com|jazz\.co/i, 'jazzhr', ''],
+  ['UKG Pro / UltiPro', /ultipro\.com|ukg\.com/i, 'ultipro', ''], ['JibeApply', /jibeapply|jibe\.com/i, 'jibe', ''], ['Gem', /jobs\.gem\.com/i, 'gem', ''],
+  ['Getro', /getro\.com/i, null, '', 'getro'],
 ];
 
 
@@ -145,12 +156,17 @@ if (opt('sites')) {
       return /career|karriere|jobs?\b|stellen|join/i.test(u) && !/\.(png|jpe?g|svg|css|js|pdf)(\?|$)/i.test(u);
     }).slice(0, 4);
     for (const h of hops) { const p = await page(h); if (p) pages.push(p); }
-    const before = found.size;
-    for (const p of pages) for (const u of urlsIn(p.html)) consider(u, a);
+    const before = found.size, tracked = new Set();
+    for (const p of pages) for (const u of urlsIn(p.html)) { const k = consider(u, a); if (k && known.has(k)) tracked.add(k); }
     if (found.size > before) return;
+    if (tracked.size) return notes.push(`${a || b}: links a board we already track (${[...tracked].join(', ')})`);
     const html = pages.map((p) => p.html).join(' ');
     const hits = KNOWN_SYSTEMS.filter(([, rx]) => rx.test(html));
-    for (const [name, , ref, hint] of hits) notes.push(`${a || b}: uses ${name} - not supported yet. ${hint ? hint + ' ' : ''}Reference implementation: ${ref ? `${CAREER_OPS}/providers/${ref}.mjs` : `${CAREER_OPS}/docs/SUPPORTED_JOB_BOARDS.md`}`);
+    for (const [name, , id, hint, ref] of hits) {
+      notes.push(id && providers[id]
+        ? `${a || b}: uses ${name} - supported by provider "${id}" but no board link was detected; add it by hand. ${hint}`.trim()
+        : `${a || b}: uses ${name} - not supported yet. ${hint ? hint + ' ' : ''}Reference implementation: ${ref ? `${CAREER_OPS}/providers/${ref}.mjs` : `${CAREER_OPS}/docs/SUPPORTED_JOB_BOARDS.md`}`);
+    }
     const origin = new URL(first.url).origin;
     const sm = await page(origin + '/sitemap.xml');
     const jobUrls = sm ? [...sm.html.matchAll(/<loc>([^<]*\/(?:jobs?|stellen|stellenangebote|karriere|career|careers)\/[^<]+)<\/loc>/gi)].map((m) => m[1]) : [];

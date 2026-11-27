@@ -16,7 +16,8 @@ const USAGE = `jobcrawl <command> [options]
 
 commands (phase 0):
   providers [--json]                         list the sources (ATS adapters and readers)
-  detect <url> [--page] [--json]             which source reads this URL; --page also fetches the page (public addresses only)
+  detect <url> [--page] [--json]             which source reads this URL; --page also fetches the page (public addresses only) and
+                                             scores platform signals (fingerprints.json: hosts, CNAME, embeds, markup)
   route [--routing <file>] [--board <name>] [--provider <id>] [--json]
                                              the strangler-fig route of a board (legacy | shadow | new)
   crawl --board <name> --profile <dir> --data <dir> [--replay <recording>] [--json]
@@ -83,6 +84,14 @@ switch (cmd) {
         const r = await safeFetch(url, { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(20000) });
         const html = await r.text();
         for (const f of atsFingerprints(html, url) ?? []) res.hits.push({ provider: f.provider, slug: f.slug, evidence: [{ type: 'page', via: f.via, hits: f.hits }] });
+        // detector v2 (crawler/profiler/platforms.mjs over fingerprints.json): scored platform signals incl. the careers host's CNAME;
+        // adds what the links did not give (a board on the employer's own host, an unsupported platform named by provider null)
+        const { detectHits, cnameOf } = await import('../crawler/profiler/platforms.mjs');
+        const seen = new Set(res.hits.map((h) => `${h.provider}\t${h.slug}`));
+        for (const h of detectHits({ url, finalUrl: r.url || url, html, cname: await cnameOf(new URL(url).hostname) })) {
+          if (h.provider && seen.has(`${h.provider}\t${h.slug}`)) continue;
+          res.hits.push(h);
+        }
         res.page = { status: r.status, bytes: html.length };
       } catch (e) { res.page = { error: String(e?.message ?? e) }; }
     }

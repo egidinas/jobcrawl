@@ -62,6 +62,10 @@ export function loadProfile(dirArg) {
   if (crawl.opt_out_hosts !== undefined && (!Array.isArray(crawl.opt_out_hosts) || crawl.opt_out_hosts.some((o) => typeof o !== 'string' && !(o && typeof o === 'object' && typeof o.host === 'string')))) {
     throw new ProfileError('crawl.opt_out_hosts must be a list of host names or { host, reason } objects');
   }
+  // Conditional GET (httpcache.mjs): off unless crawl.http_cache.enabled is true.
+  const hc = obj(crawl.http_cache, 'crawl.http_cache');
+  if (hc.enabled !== undefined && typeof hc.enabled !== 'boolean') throw new ProfileError('crawl.http_cache.enabled must be true or false');
+  if (hc.max_body_kb !== undefined && (typeof hc.max_body_kb !== 'number' || !(hc.max_body_kb > 0))) throw new ProfileError('crawl.http_cache.max_body_kb must be a number > 0');
   return {
     dir,
     file,
@@ -84,7 +88,8 @@ export function loadProfile(dirArg) {
     robotsHosts,
     optOutHosts: crawl.opt_out_hosts ?? [],
     optOutCleared: strList(crawl.opt_out_cleared, 'crawl.opt_out_cleared'),
-    euresLane: crawl.eures_lane === true,   // EURES boards come from the slow lane's answers (crawler/eures-lane.mjs)
+    euresLane: crawl.eures_lane === true,
+    httpCache: hc.enabled === true ? { maxBodyBytes: Math.round((hc.max_body_kb ?? 5120) * 1024) } : null,   // EURES boards come from the slow lane's answers (crawler/eures-lane.mjs)
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,
   };
