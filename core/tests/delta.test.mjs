@@ -99,7 +99,7 @@ test('delta of two full reads equals their set difference', () => {
   assert.ok(m.ok, JSON.stringify(m));
 });
 
-test('store: commit, replay from a watermark, crash repair, lease, snapshot', () => {
+test('store: commit, replay from a watermark, crash repair, lease, snapshot', async () => {
   const root = mkdtempSync(join(tmpdir(), 'jcx-store-'));
   let s = openBoard(root, B);
   let r = applyRun(s, ok([job(1), job(2)]), { board: B, now: at(0) });
@@ -113,24 +113,26 @@ test('store: commit, replay from a watermark, crash repair, lease, snapshot', ()
   appendFileSync(join(root, 'boards', boardKey(B), 'events.ndjson'), JSON.stringify({ schema: 'delta/v1', board: B, seq: 6, op: 'added' }) + '\n');
   openBoard(root, B);
   assert.deepEqual([...readEvents(root)].map((e) => e.seq), [1, 2, 3, 4, 5]);
-  const rel = lease(root, B, 60e3);
+  const rel = await lease(root, B, 60e3);
   assert.ok(rel);
-  assert.equal(lease(root, B, 60e3), null, 'a second run cannot take a held lease');
+  assert.equal(await lease(root, B, 60e3), null, 'a second run cannot take a held lease');
   rel();
-  assert.ok(lease(root, B, 60e3), 'released lease can be taken')?.call();
+  const rel2 = await lease(root, B, 60e3);
+  assert.ok(rel2, 'released lease can be taken');
+  rel2();
   const snap = [...snapshot(root)];
   assert.equal(snap[0].schema, 'snapshot/v1');
   assert.equal(snap[0].watermarks[B], 5);
   assert.equal(snap.length - 1, 3, 'open postings 1, 2, 3 (2 has one miss only)');
 });
 
-test('expired lease is taken over', () => {
+test('expired lease is taken over', async () => {
   const root = mkdtempSync(join(tmpdir(), 'jcx-lease-'));
   let t = 0;
   const now = () => t;
-  assert.ok(lease(root, B, 1000, now));
+  assert.ok(await lease(root, B, 1000, now));
   t = 5000;
-  assert.ok(lease(root, B, 1000, now));
+  assert.ok(await lease(root, B, 1000, now));
 });
 
 test('events, states, snapshot headers and postings validate against the schemas', () => {

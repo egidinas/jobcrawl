@@ -7,7 +7,7 @@
 //   { "schema": "routing/v1", "kill_switch": false, "default": "legacy",
 //     "providers": { "greenhouse": "shadow" }, "boards": { "Stripe": "new" }, "allow_new": false }
 // Precedence: kill switch -> board -> provider -> default. Global kill switch back to legacy: "kill_switch": true in the file, or the
-// environment variable JOBCRAWL_ROUTE_KILL=1 (no file edit needed in an incident). "new" is honoured only with "allow_new": true, a
+// environment variable JOBCRAWL_ROUTE_KILL=1|true|yes|on (no file edit needed in an incident). "new" is honoured only with "allow_new": true, a
 // second explicit switch set after the review of this façade; until then a board routed "new" runs as "shadow".
 import { existsSync, readFileSync } from 'node:fs';
 
@@ -37,12 +37,16 @@ export function validateRouting(r) {
   return errs;
 }
 
+/** JOBCRAWL_ROUTE_KILL set to 1, true, yes or on (any case) = kill switch on. */
+export const killSwitchEnv = (env = process.env) => /^(1|true|yes|on)$/i.test(String(env.JOBCRAWL_ROUTE_KILL ?? '').trim());
+
 /** The route of one board: { route, why }. */
 export function routeFor(routing, { board, provider }, env = process.env) {
-  if (env.JOBCRAWL_ROUTE_KILL === '1' || routing.kill_switch) return { route: 'legacy', why: 'kill switch' };
-  let route = routing.default ?? 'legacy', why = 'default';
-  if (provider && routing.providers?.[provider]) { route = routing.providers[provider]; why = `provider ${provider}`; }
-  if (board && routing.boards?.[board]) { route = routing.boards[board]; why = `board ${board}`; }
+  if (killSwitchEnv(env) || routing.kill_switch === true) return { route: 'legacy', why: 'kill switch' };
+  let route = ROUTES.includes(routing.default) ? routing.default : 'legacy', why = 'default';
+  const own = (o, k) => o && typeof o === 'object' && k != null && Object.hasOwn(o, k) && ROUTES.includes(o[k]);
+  if (own(routing.providers, provider)) { route = routing.providers[provider]; why = `provider ${provider}`; }
+  if (own(routing.boards, board)) { route = routing.boards[board]; why = `board ${board}`; }
   if (route === 'new' && !routing.allow_new) return { route: 'shadow', why: `${why} (new not allowed yet: allow_new is false)` };
   return { route, why };
 }

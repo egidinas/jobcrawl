@@ -5,7 +5,7 @@
   "description": "Crawl the public job boards of any field: per-board jobs, full snapshots or deltas, open and extensible (sources, backends, enrichment, outputs).",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": { "node": ">=22.5" },
   "repository": { "type": "git", "url": "git+https://github.com/egidinas/jobcrawl.git" },
   "bin": { "jobcrawl": "cli/jobcrawl.mjs" },
   "exports": {

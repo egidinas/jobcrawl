@@ -19,18 +19,22 @@ commands (phase 0):
   detect <url> [--page] [--json]             which source reads this URL; --page also fetches the page (public addresses only)
   route [--routing <file>] [--board <name>] [--provider <id>] [--json]
                                              the strangler-fig route of a board (legacy | shadow | new)
-  crawl --board <name> --profile <dir> --data <dir> [--replay <recording>] [--json]
-                                             one board on the new per-board path, into its own data folder (never a live one)
+  crawl --board <name> --profile <dir> --data <dir> [--replay <recording>] [--routing <file>] [--json]
+                                             one board on the new per-board path, into its own data folder (never a live one);
+                                             a live read (no --replay) needs the board routed shadow or new and the kill switch off
   dual-run --profile <dir> --data <dir> --legacy-data <dir> --replay <recording> [--routing <file>] [--ledger <file>]
            [--boards all|routed] [--report <file>] [--json]
                                              shadow run from a recording (no second live crawl), compared with the legacy history
   snapshot --data <dir> [--status open|departed|all]   full read as NDJSON (header with per-board watermarks, then postings)
-  feed --data <dir> [--since <board=seq,...>]          delta events as NDJSON
-  doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json]
-                                             read-only checks: Node, node:sqlite, profile, user agent, data folder, routing
+  feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}']   committed delta events as NDJSON
+  doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json] [--strict]
+                                             read-only checks: Node, node:sqlite, profile, user agent, data folder, routing;
+                                             --strict exits 5 when a check warns
 
   --help, -h, help                           this text (no network, no writes)
-exit codes: 0 ok, 1 some boards failed, 2 usage or config error, 3 lease held`;
+exit codes: 0 ok, 1 some boards failed, 2 usage or config error (or a live read the routing does not allow), 3 lease held,
+            5 doctor --strict found a warning
+environment: JOBCRAWL_ROUTE_KILL=1|true|yes|on sends every board to legacy (no live read by this tool); JOBCRAWL_ROUTING=<file>`;
 
 const out = (obj, text) => { if (JSON_OUT) process.stdout.write(JSON.stringify(obj) + '\n'); else console.log(text ?? JSON.stringify(obj, null, 1)); };
 const fail = (msg, code = 2) => { if (JSON_OUT) process.stdout.write(JSON.stringify({ error: msg }) + '\n'); else console.error(`jobcrawl ${cmd}: ${msg}`); process.exit(code); };
@@ -109,6 +113,13 @@ switch (cmd) {
     let read;
     if (opt('replay')) { read = loadRecordedRun(pathResolve(opt('replay')), board, boardKey); if (!read) fail(`board "${board}" is not in the recording ${opt('replay')}`); }
     else {
+      // a live read obeys the strangler-fig façade: kill switch off and the board routed shadow or new
+      const { loadRouting, routeFor } = await import('../core/route/router.mjs');
+      let routing;
+      try { routing = loadRouting(opt('routing') ?? process.env.JOBCRAWL_ROUTING); } catch (e) { fail(e.message); }
+      const { resolve: resolveEntry } = await import('../crawler/providers.mjs');
+      const rt = routeFor(routing, { board, provider: resolveEntry(entry)?.provider ?? null });
+      if (rt.route === 'legacy') fail(`board "${board}" is routed legacy (${rt.why}): no live read on the new path (use --replay, or route it shadow)`);
       (await import('../crawler/useragent.mjs')).setUserAgent(profile.userAgent);
       const pol = await import('../crawler/policy.mjs');
       pol.configurePolicy({ ...pol.policyFromProfile(profile, data) });
@@ -171,7 +182,7 @@ switch (cmd) {
     for (const r of reports) v[r.error ? 'error' : r.verdict]++;
     console.error(`[dual-run] result boards=${reports.length} ${JSON.stringify(v)} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     out({ verdicts: v, ledger: summary, report: opt('report') ?? null }, `verdicts ${JSON.stringify(v)}${summary ? `; ledger ${JSON.stringify(summary)}` : ''}`);
-    break;
+    process.exit(v.error ? 1 : 0);
   }
   case 'snapshot': {
     const data = pathResolve(opt('data') ?? fail('--data <dir> is required'));
@@ -182,7 +193,9 @@ switch (cmd) {
   }
   case 'feed': {
     const data = pathResolve(opt('data') ?? fail('--data <dir> is required'));
-    const since = Object.fromEntries(String(opt('since', '')).split(',').filter(Boolean).map((p) => { const i = p.lastIndexOf('='); return [p.slice(0, i), Number(p.slice(i + 1))]; }));
+    let since;
+    if (opt('since-json')) { try { since = JSON.parse(opt('since-json')); } catch (e) { fail(`--since-json: ${e.message}`); } }
+    else since = Object.fromEntries(String(opt('since', '')).split(',').filter(Boolean).map((p) => { const i = p.lastIndexOf('='); return [p.slice(0, i), Number(p.slice(i + 1))]; }));
     const { readEvents } = await import('../core/state/board-store.mjs');
     for (const e of readEvents(data, since)) process.stdout.write(JSON.stringify(e) + '\n');
     break;
@@ -218,7 +231,7 @@ switch (cmd) {
     if (opt('routing')) {
       try { const { loadRouting } = await import('../core/route/router.mjs'); const r = loadRouting(opt('routing')); add('routing', true, `default ${r.default}, kill_switch ${r.kill_switch}, allow_new ${r.allow_new}`); } catch (e) { add('routing', false, e.message); }
     }
-    add('route kill switch (env)', true, process.env.JOBCRAWL_ROUTE_KILL === '1' ? 'ON: every board on legacy' : 'off');
+    { const { killSwitchEnv } = await import('../core/route/router.mjs'); add('route kill switch (env)', true, killSwitchEnv() ? 'ON: every board on legacy' : 'off'); }
     const bad = checks.filter((c) => !c.ok).length;
     out({ checks, ok: bad === 0 }, checks.map((c) => `${c.ok ? 'ok  ' : 'WARN'} ${c.name}: ${c.detail}`).join('\n'));
     process.exit(flag('strict') && bad ? 5 : 0);

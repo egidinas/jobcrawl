@@ -11,10 +11,13 @@ import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 
 export const ARTIFACT_SCHEMA = 'artifact-ref/v1';
+const SHA = /^[0-9a-f]{64}$/;
+/** Only a 64-hex sha256 is ever turned into a path (a ref from another machine is untrusted). */
+export function checkSha(sha) { if (typeof sha !== 'string' || !SHA.test(sha)) throw new Error(`not a sha256: ${String(sha).slice(0, 80)}`); return sha; }
 
 export class LocalArtifacts {
   constructor(dir) { this.dir = dir; }
-  _path(sha) { return join(this.dir, 'objects', sha.slice(0, 2), `${sha}.gz`); }
+  _path(sha) { checkSha(sha); return join(this.dir, 'objects', sha.slice(0, 2), `${sha}.gz`); }
   has(sha) { return existsSync(this._path(sha)); }
   put(bytes, { type = 'application/octet-stream', meta } = {}) {
     const buf = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);

@@ -34,7 +34,7 @@ export async function readBoard(entry, { providers = defaultProviders, resolve =
  */
 export async function runBoard(root, entry, { read, rules = DEFAULT_RULES, now = () => new Date(), leaseMs = 15 * 60e3, ...readOpts } = {}) {
   const board = entry.name;
-  const release = lease(root, board, leaseMs);
+  const release = await lease(root, board, leaseMs);
   if (!release) return { board, skipped: 'lease held by another run' };
   try {
     const run = read ?? (await readBoard(entry, readOpts));
