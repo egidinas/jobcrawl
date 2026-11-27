@@ -66,3 +66,11 @@ test('WP Job Manager markup is named (the cascade then tries its ?feed=job_feed 
   assert.equal(top.id, 'wp-job-manager');
   assert.equal(top.provider, null);
 });
+
+test('detectHits: the CLI hit shape, with the CNAME of the requested host', async () => {
+  const { detectHits } = await import('../profiler/platforms.mjs');
+  const [h] = detectHits({ url: 'https://careers.acme.com/', html: '<p>jobs</p>', cname: 'acme.teamtailor.com' });
+  assert.deepEqual({ provider: h.provider, slug: h.slug, platform: h.platform }, { provider: 'teamtailor', slug: 'https://careers.acme.com', platform: 'teamtailor' });
+  assert.equal(h.evidence[0].type, 'platform');
+  assert.equal(h.evidence[0].kind, 'cname');
+});

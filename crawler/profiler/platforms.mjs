@@ -102,3 +102,14 @@ export async function cnameOf(host, timeoutMs = 3000) {
     return String(r?.[0] ?? '').toLowerCase();
   } catch { return ''; }
 }
+
+/**
+ * Detector v2 for one fetched page, in the hit shape of the CLI's `detect` command (cli/jobcrawl.mjs, JOBCRAWLX phase 0):
+ * [{ provider, slug, platform, confidence, evidence: [{ type: 'platform', kind, value }] }], best first. Platforms without a provider
+ * come back with provider null (named, not readable yet). The caller fetches the page (through its SSRF guard) and looks up the CNAME.
+ */
+export function detectHits({ url, finalUrl = url, html = '', cname = '' } = {}) {
+  const host = hostOf(url);
+  return identifyPlatforms({ pages: [{ url: finalUrl, requested: url, html }], cnames: cname && host ? { [host]: cname } : {} })
+    .map((x) => ({ provider: x.provider, slug: x.slug, platform: x.id, confidence: x.confidence, evidence: x.signals.map((s) => ({ type: 'platform', kind: s.kind, value: s.value })) }));
+}
