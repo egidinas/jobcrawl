@@ -18,7 +18,11 @@
 // Departure grace. Only a COMPLETE read can count a miss: not marked incomplete by the source, not capped, and non-empty unless the
 // source gave its positive empty signal (emptyOk). Rules:
 //   { mode: 'misses', k: 3, floorH: 24 }   departed after k consecutive complete misses AND floorH hours since last seen (package default)
-//   { mode: 'age', days: 3 }               departed when not seen for `days` days, checked on complete reads (today's live rule: madenetwork)
+//   { mode: 'age', days: 3 }               departed when not seen for `days` days, checked on complete reads
+// Today's live rule (crawl.mjs on madenetwork origin/main, MADE_LIFECYCLE=shadow on the NUC): the FIRST complete miss closes a role
+// (crawl.mjs ~834-838, after the liveness guard and the admission hold), i.e. LEGACY_RULES = misses k=1, floor 0. The "3 days" rule is
+// only the fallback sweep for rows no feed confirms any more (~985-995), which the resolver applies across boards, not this module.
+// With MADE_LIFECYCLE=on the live rule becomes k=3 + 24 h (DEFAULT_RULES) and unseen rows become 'unknown' instead of closed.
 // Mass-departure guard: when a complete read would drop more than (1 - keepRatio) of a board's open postings (with at least minOpen
 // open), the misses are held until `confirm` consecutive reads say the same (the crawl's livenessGuard, resilience.mjs GUARD).
 import { postingId, sha256 } from '../id.mjs';
@@ -26,7 +30,8 @@ import { postingId, sha256 } from '../id.mjs';
 export const STATE_SCHEMA = 'board-state/v1';
 export const DELTA_SCHEMA = 'delta/v1';
 export const DEFAULT_RULES = Object.freeze({ mode: 'misses', k: 3, floorH: 24 });
-export const LEGACY_RULES = Object.freeze({ mode: 'age', days: 3 });
+export const LEGACY_RULES = Object.freeze({ mode: 'misses', k: 1, floorH: 0 });
+export const SWEEP_RULES = Object.freeze({ mode: 'age', days: 3 });
 export const DEFAULT_GUARD = Object.freeze({ minOpen: 5, keepRatio: 0.5, confirm: 3 });
 export const CAPPED_COUNTS = new Set([500, 1000, 2000, 5000, 10000]);
 const HOUR = 3600e3;

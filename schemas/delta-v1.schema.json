@@ -12,7 +12,7 @@
     "event_id": { "type": "string", "description": "optional global id (planned: store-wide order for consumer bookmarks)" },
     "run": { "type": "string" },
     "t": { "type": "string", "format": "date-time" },
-    "op": { "enum": ["added", "changed", "reappeared", "departed", "board-ok", "board-failed"] },
+    "op": { "enum": ["added", "changed", "reappeared", "departed", "unknown", "board-ok", "board-failed"], "description": "unknown: nothing has listed the posting for the unknown window and no complete read confirmed a departure (lifecycle on); not a close" },
     "id": { "type": "string", "pattern": "^jc1_[a-z2-7]{32}$" },
     "fields": { "type": "array", "items": { "enum": ["title", "location", "posted", "dh"] } },
     "posting": { "$ref": "posting-v1.schema.json" },

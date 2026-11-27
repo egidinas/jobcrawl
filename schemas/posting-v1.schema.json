@@ -22,7 +22,7 @@
         "schema": { "const": "posting/v1" },
         "id": { "type": "string", "pattern": "^jc1_[a-z2-7]{32}$" },
         "board": { "type": "string" },
-        "status": { "enum": ["open", "departed"] },
+        "status": { "enum": ["open", "departed", "unknown"] },
         "first_seen": { "type": "string" },
         "last_seen": { "type": "string" },
         "content_hash": { "type": "string" },

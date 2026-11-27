@@ -21,7 +21,7 @@
         "properties": {
           "url": { "type": "string" }, "title": { "type": "string" }, "location": { "type": "string" }, "posted": { "type": "string" },
           "dh": { "type": ["string", "null"] }, "first_seen": { "type": "string" }, "last_seen": { "type": "string" },
-          "misses": { "type": "integer", "minimum": 0 }, "status": { "enum": ["open", "departed"] }, "departed_at": { "type": "string" }
+          "misses": { "type": "integer", "minimum": 0 }, "status": { "enum": ["open", "departed", "unknown"] }, "departed_at": { "type": "string" }
         }
       }
     }

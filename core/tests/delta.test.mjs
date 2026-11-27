@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, appendFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { applyRun, isComplete, LEGACY_RULES, openPostings } from '../delta/board-delta.mjs';
+import { applyRun, isComplete, LEGACY_RULES, SWEEP_RULES, openPostings } from '../delta/board-delta.mjs';
 import { commitRun, lease, openBoard, readEvents, snapshot, boardKey } from '../state/board-store.mjs';
 import { postingId, normaliseUrl } from '../id.mjs';
 import { deltaMatchesDiff, compareBoard } from '../route/parity.mjs';
@@ -63,14 +63,19 @@ test('an empty answer without emptyOk is not complete; with emptyOk it is', () =
   assert.equal(isComplete({ ok: true, items: [job(1), job(2)] }, 2), false, 'max_jobs reached is never complete');
 });
 
-test('the legacy age rule (3 days unseen) departs on a complete read only', () => {
-  let { state } = applyRun(null, ok([job(1), job(2)]), { board: B, now: at(0), rules: LEGACY_RULES });
-  let r = applyRun(state, ok([job(1)]), { board: B, now: at(71), rules: LEGACY_RULES });
-  assert.ok(!r.events.some((e) => e.op === 'departed'));
-  r = applyRun(r.state, { ok: false, error: { cls: 'DNS' } }, { board: B, now: at(80), rules: LEGACY_RULES });
+test('the legacy rule closes on the first complete miss; the age (sweep) rule after 3 days unseen', () => {
+  let r = applyRun(null, ok([job(1), job(2)]), { board: B, now: at(0), rules: LEGACY_RULES });
+  r = applyRun(r.state, { ok: false, error: { cls: 'DNS' } }, { board: B, now: at(1), rules: LEGACY_RULES });
   assert.ok(!r.events.some((e) => e.op === 'departed'), 'a failed read departs nothing');
-  r = applyRun(r.state, ok([job(1)]), { board: B, now: at(73), rules: LEGACY_RULES });
-  assert.equal(r.events.filter((e) => e.op === 'departed').length, 1);
+  r = applyRun(r.state, ok([job(1)], { complete: false }), { board: B, now: at(2), rules: LEGACY_RULES });
+  assert.ok(!r.events.some((e) => e.op === 'departed'), 'a partial read departs nothing');
+  r = applyRun(r.state, ok([job(1)]), { board: B, now: at(3), rules: LEGACY_RULES });
+  assert.equal(r.events.filter((e) => e.op === 'departed').length, 1, 'first complete miss');
+  let s2 = applyRun(null, ok([job(1), job(2)]), { board: B, now: at(0), rules: SWEEP_RULES });
+  s2 = applyRun(s2.state, ok([job(1)]), { board: B, now: at(71), rules: SWEEP_RULES });
+  assert.ok(!s2.events.some((e) => e.op === 'departed'));
+  s2 = applyRun(s2.state, ok([job(1)]), { board: B, now: at(73), rules: SWEEP_RULES });
+  assert.equal(s2.events.filter((e) => e.op === 'departed').length, 1);
 });
 
 test('mass departure is held until confirmed', () => {
