@@ -3,6 +3,20 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-28: multitool phase 1 (branch feat/jobcrawlx-phase1; everything off by default)
+
+- **Shadow hook in the crawl** (`core/route/shadow-hook.mjs`, 6 lines in `crawler/crawl.mjs`): with `JOBCRAWL_SHADOW=1` and a routing file
+  in `JOBCRAWL_ROUTING`, the cycle's own answers of the boards routed `shadow` are applied to the new per-board path in
+  `<data>/jcx-shadow` (or `JOBCRAWL_SHADOW_DATA`): state and deltas, no extra request, nothing published. The kill switch wins; without the
+  arm switch the module is not even loaded. A test runs the crawl with and without it: the legacy history is identical.
+- **Baseline import** (`jobcrawl import`, `core/route/baseline.mjs`): the legacy history becomes the new path's starting state as an epoch
+  without events, so the first shadow read emits only real changes.
+- **Recording replay + parity**: `jobcrawl dual-run --replay <recording> --companies <file>` names the boards that failed in the recording.
+- **Conditional requests** (`core/fetch/conditional.mjs`): off unless `crawl.conditional_cache.hosts` lists hosts; a 304 is turned back
+  into the cached 200 body, so sources parse the same bytes.
+- **`bench/analyse.mjs`**: wire bytes, true 304 rate per provider and host, change rates from the live index, projected list bytes per day
+  and the hosts to switch on.
+
 ## 2026-11-27: multitool phase 0 (branch feat/jobcrawlx-phase0; additive, the crawl is unchanged)
 
 - `package.json` as `@egidinas/jobcrawl` (private until the first release), `cli/jobcrawl.mjs` (`providers`, `detect`, `route`,
