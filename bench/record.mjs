@@ -2,14 +2,16 @@
 // Benchmark recording run (design §3.5 and §6, phase 0.4): reads every enabled board of a companies file ONCE through the normal source
 // code and the normal crawl policy, and stores what came back for offline replay:
 //   <out>/objects/ab/<sha256>.gz     each response body once, gzipped
-//   <out>/index/<day>.jsonl          one line per response: t, board, provider, url, method, status, ct, wire bytes (content-length),
-//                                    decoded bytes, content-encoding, etag, last-modified, cache-control, sha256, probe flag
+//   <out>/index/<day>.jsonl          one line per response, non-OK and network errors included: t, board, provider, url, method,
+//                                    status (0 + err class on a network error), ct, enc (Content-Encoding), wire (+ wire_src: header =
+//                                    Content-Length, est-gzip, body, 304), bytes (decoded), etag, lm, cc, vary, sha256, probe flag
 //   <out>/lists/<board key>.json.gz  the parsed list of each board (url, title, location, postedAt, description hash) + completeness
 //   <out>/boards.jsonl               one line per board: ok, class, jobs, requests, bytes, ms (also the resume record)
 //   <out>/summary.json               totals per provider, rewritten at every progress line and at the end
-// Conditional probe: for each board, the first GET answered 200 with an ETag or Last-Modified is asked again with If-None-Match /
-// If-Modified-Since right after the board is read. 304 = the server honours validators; 200 = it does not (then the body hash shows
-// whether the content jittered between the two reads). One probe per board; at least one per host for every host with validators.
+// Conditional probes: every GET of a board answered 200 with an ETag or Last-Modified (up to --probe-max per board, list pages first)
+// is asked once more with If-None-Match / If-Modified-Since right after the board is read. 304 = validators honoured; 200-same = ignored,
+// body unchanged; 200-diff = ignored and the body changed (jitter). Hosts the live crawl is fetching (tail of --live-index, the live
+// raw-capture index) are left alone until --live-gap-ms after the live crawl's last request there.
 //
 // It never touches a live crawl: its own out dir holds the policy state (robots cache, auth walls), the sitemap page cache (seeded from a
 // COPY of the live cache with --seed-cache, so per-posting sources read like a normal cycle instead of a first fill) and everything else.
@@ -18,10 +20,10 @@
 //
 //   node bench/record.mjs --profile <dir> --companies <file> --out <dir> [--log <file>] [--concurrency 8] [--host-concurrency 2]
 //        [--host-gap-ms 500] [--exclude eures,usajobs] [--stop-at ISO] [--hard-stop ISO] [--min-free-gb 45] [--seed-cache <dir>]
-//        [--limit N] [--dry-run]
+//        [--limit N] [--probe-max 5] [--live-index <dir>] [--live-gap-ms 60000] [--live-max-wait-ms 300000] [--dry-run]
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statfsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, statfsSync, writeFileSync } from 'node:fs';
 import { join, resolve as pathResolve } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
@@ -29,7 +31,7 @@ const args = process.argv.slice(2);
 const opt = (n, d) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d);
 const flag = (n) => args.includes(`--${n}`);
 const USAGE = 'usage: node bench/record.mjs --profile <dir> --companies <file> --out <dir> [--log <file>] [--concurrency 8] [--host-concurrency 2] '
-  + '[--host-gap-ms 500] [--exclude eures,usajobs] [--stop-at ISO] [--hard-stop ISO] [--min-free-gb 45] [--seed-cache <dir>] [--limit N] [--dry-run]';
+  + '[--host-gap-ms 500] [--exclude eures,usajobs] [--stop-at ISO] [--hard-stop ISO] [--min-free-gb 45] [--seed-cache <dir>] [--limit N] [--probe-max 5] [--live-index <dir>] [--live-gap-ms 60000] [--live-max-wait-ms 300000] [--dry-run]';
 if (flag('help') || flag('h') || !opt('profile') || !opt('companies') || !opt('out')) { console.log(USAGE); process.exit(flag('help') || flag('h') ? 0 : 2); }
 
 // Imports that touch the network layer only after the argument check (a --help never loads them).
@@ -97,17 +99,59 @@ configurePolicy({ ...policyFromProfile(profile, OUT) });
 installGuard();
 const als = new AsyncLocalStorage();
 const guarded = globalThis.fetch;
+const T = { req: 0, wire: 0, bytes: 0, objects: 0, capErr: 0, netErr: 0, probes: 0, p304: 0, p200same: 0, p200diff: 0, pOther: 0, liveWaits: 0, liveOverlap: 0, liveErr: 0 };
+
+// Hosts the live cycle is fetching right now: the live raw-capture index (--live-index <dir>, e.g. ~/atlas/raw/index) is tailed every
+// 5 s; a host the live crawl requested within --live-gap-ms waits until that gap has passed (at most --live-max-wait-ms, then it goes
+// ahead and is counted), so the recording does not run side by side with the live crawl on one host.
+const LIVE_DIR = opt('live-index') ? pathResolve(opt('live-index')) : null;
+const LIVE_GAP = Number(opt('live-gap-ms', 60000)), LIVE_MAX_WAIT = Number(opt('live-max-wait-ms', 300000));
+const liveHosts = new Map();
+let liveFile = null, liveOff = 0, liveBuf = '';
+function pollLive() {
+  if (!LIVE_DIR) return;
+  try {
+    const f = join(LIVE_DIR, `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    if (f !== liveFile) { liveFile = f; liveOff = existsSync(f) ? Math.max(0, statSync(f).size - (1 << 20)) : 0; liveBuf = ''; }
+    if (!existsSync(f)) return;
+    const size = statSync(f).size;
+    if (size < liveOff) liveOff = 0;
+    if (size === liveOff) return;
+    const fd = openSync(f, 'r');
+    const buf = Buffer.alloc(Math.min(size - liveOff, 8 << 20));
+    readSync(fd, buf, 0, buf.length, liveOff); closeSync(fd);
+    liveOff += buf.length;
+    const lines = (liveBuf + buf.toString('utf8')).split('\n');
+    liveBuf = lines.pop();
+    for (const l of lines) {
+      const m = /"t":"([^"]+)".*?"url":"(https?:\/\/[^/"?]+)/.exec(l);
+      if (!m) continue;
+      const at = Date.parse(m[1]);
+      try { const h = new URL(m[2]).host; if (!(liveHosts.get(h) > at)) liveHosts.set(h, Number.isFinite(at) ? at : Date.now()); } catch {}
+    }
+  } catch { T.liveErr++; }
+}
+const liveTimer = LIVE_DIR ? setInterval(pollLive, 5000) : null;
+pollLive();
+
 const hosts = new Map();   // host -> { active, last, queue: [] }
 async function hostSlot(host) {
   const h = hosts.get(host) ?? (hosts.set(host, { active: 0, last: 0, queue: [] }).get(host));
   while (h.active >= HOST_CONC) await new Promise((res) => h.queue.push(res));
   h.active++;
+  const waitStart = Date.now();
+  let waited = false;
+  while (liveHosts.has(host) && Date.now() - liveHosts.get(host) < LIVE_GAP) {
+    if (Date.now() - waitStart > LIVE_MAX_WAIT) { T.liveOverlap++; break; }
+    if (!waited) { waited = true; T.liveWaits++; }
+    await new Promise((res) => setTimeout(res, 5000));
+  }
   const wait = h.last + HOST_GAP - Date.now();
   h.last = Math.max(Date.now(), h.last + HOST_GAP);
   if (wait > 0) await new Promise((res) => setTimeout(res, wait));
   return () => { h.active--; h.queue.shift()?.(); };
 }
-const T = { req: 0, wire: 0, bytes: 0, objects: 0, capErr: 0, probes: 0, p304: 0, p200same: 0, p200diff: 0, pOther: 0 };
+const PROBE_MAX = Number(opt('probe-max', 5));
 const H = (res, n) => res.headers.get(n) ?? undefined;
 function storeBody(buf) {
   const sha = createHash('sha256').update(buf).digest('hex');
@@ -116,44 +160,70 @@ function storeBody(buf) {
   return sha;
 }
 function indexLine(o) { appendFileSync(join(OUT, 'index', `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify(o) + '\n'); }
+const headerOf = (h, n) => {
+  if (!h) return undefined;
+  if (typeof h.get === 'function') return h.get(n) ?? undefined;
+  for (const [k, v] of Object.entries(h)) if (k.toLowerCase() === n) return v;
+  return undefined;
+};
 
+// Wire size: Node's fetch decodes gzip/br/deflate, so a body's length is the DECODED size. The wire size is the Content-Length header
+// when the server sent one (with Content-Encoding, the compressed size; wire_src "header"); without it, for an encoded answer, the gzip
+// size of the body is an estimate (wire_src "est-gzip"); an unencoded answer without a length is its body length (wire_src "body").
+// Non-OK answers and network errors get index lines too (status 0 + err class for a network error).
 globalThis.fetch = async (input, init = {}) => {
   const url = typeof input === 'string' ? input : input?.url ?? String(input);
   let host = '';
   try { host = new URL(url).host; } catch {}
   const ctx = als.getStore();
+  const method = String(init?.method ?? input?.method ?? 'GET').toUpperCase();
   const release = await hostSlot(host);
   const t0 = Date.now();
   let res;
-  try { res = await guarded(input, init); } finally { release(); }
+  try { res = await guarded(input, init); }
+  catch (e) {
+    T.netErr++; T.req++; if (ctx) ctx.req++;
+    try { indexLine({ t: new Date().toISOString(), board: ctx?.board ?? null, provider: ctx?.provider ?? null, url, method, status: 0, err: classifyError(e).cls, detail: String(e?.message ?? e).slice(0, 200), ms: Date.now() - t0, probe: ctx?.probe ? true : undefined }); } catch {}
+    throw e;
+  } finally { release(); }
   try {
-    const method = String(init?.method ?? input?.method ?? 'GET').toUpperCase();
     const ct = H(res, 'content-type') ?? '';
-    const line = { t: new Date().toISOString(), board: ctx?.board ?? null, provider: ctx?.provider ?? null, url, method, status: res.status, ct,
-      enc: H(res, 'content-encoding'), wire: Number(H(res, 'content-length')) || null, etag: H(res, 'etag'), lm: H(res, 'last-modified'),
-      cc: H(res, 'cache-control'), ms: Date.now() - t0, probe: ctx?.probe ? true : undefined };
+    const enc = H(res, 'content-encoding');
+    const clenRaw = H(res, 'content-length');
+    const line = { t: new Date().toISOString(), board: ctx?.board ?? null, provider: ctx?.provider ?? null, url, method, status: res.status, ct, enc,
+      etag: H(res, 'etag'), lm: H(res, 'last-modified'), cc: H(res, 'cache-control'), vary: H(res, 'vary'), ms: Date.now() - t0,
+      probe: ctx?.probe ? true : undefined };
     T.req++; if (ctx) ctx.req++;
-    if (res.ok && (/json|html|xml|text|javascript/i.test(ct) || !ct)) {
-      const buf = Buffer.from(await res.clone().arrayBuffer());
-      line.bytes = buf.length; line.sha256 = storeBody(buf);
+    let buf = null;
+    if (res.status !== 304 && (/json|html|xml|text|javascript/i.test(ct) || !ct)) {
+      buf = Buffer.from(await res.clone().arrayBuffer());
+      line.bytes = buf.length;
+      line.sha256 = res.ok ? storeBody(buf) : createHash('sha256').update(buf).digest('hex');
       T.bytes += buf.length; if (ctx) ctx.bytes += buf.length;
     }
-    T.wire += line.wire ?? line.bytes ?? 0;
-    if (ctx && !ctx.probe && !ctx.first && method === 'GET' && res.status === 200 && (line.etag || line.lm)) ctx.first = { url, etag: line.etag, lm: line.lm, sha: line.sha256, accept: init?.headers?.accept ?? init?.headers?.Accept };
+    if (clenRaw != null && Number.isFinite(Number(clenRaw))) { line.wire = Number(clenRaw); line.wire_src = 'header'; }
+    else if (buf && enc && /gzip|br|deflate|zstd/i.test(enc)) { line.wire = gzipSync(buf).length; line.wire_src = 'est-gzip'; }
+    else if (buf) { line.wire = buf.length; line.wire_src = 'body'; }
+    else if (res.status === 304) { line.wire = 0; line.wire_src = '304'; }
+    T.wire += line.wire ?? 0; if (ctx) ctx.wire += line.wire ?? 0;
+    if (ctx && !ctx.probe && method === 'GET' && res.status === 200 && (line.etag || line.lm) && ctx.cand.length < PROBE_MAX && !ctx.cand.some((c) => c.url === url)) {
+      ctx.cand.push({ url, etag: line.etag, lm: line.lm, sha: line.sha256, accept: headerOf(init?.headers, 'accept') });
+    }
     indexLine(line);
   } catch { T.capErr++; }
   return res;
 };
 
-async function probe(ctx) {
-  const f = ctx.first;
+// Re-issues validator-carrying GETs of the board once each with If-None-Match / If-Modified-Since (up to --probe-max per board; list
+// pages come first, so they are probed first). 304 = validators honoured; 200-same = ignored, body unchanged; 200-diff = ignored and the
+// body changed between the two reads (token or timestamp jitter, or a real change within seconds).
+async function probeOne(ctx, f) {
   const headers = { 'user-agent': uaMod.UA };
   if (f.accept) headers.accept = f.accept;
   if (f.etag) headers['if-none-match'] = f.etag;
   if (f.lm) headers['if-modified-since'] = f.lm;
-  const pctx = { ...ctx, probe: true };
   try {
-    const res = await als.run(pctx, () => globalThis.fetch(f.url, { headers, signal: AbortSignal.timeout(20000) }));
+    const res = await als.run({ ...ctx, probe: true }, () => globalThis.fetch(f.url, { headers, signal: AbortSignal.timeout(20000) }));
     T.probes++;
     if (res.status === 304) { T.p304++; return '304'; }
     if (res.status === 200) {
@@ -164,6 +234,11 @@ async function probe(ctx) {
     T.pOther++; return String(res.status);
   } catch (e) { T.pOther++; return `error:${classifyError(e).cls}`; }
 }
+async function probe(ctx) {
+  const r = { n: 0, '304': 0, '200-same': 0, '200-diff': 0, other: 0 };
+  for (const f of ctx.cand) { const x = await probeOne(ctx, f); r.n++; if (x in r) r[x]++; else r.other++; }
+  return r;
+}
 
 // ---- boards ----
 const P = {};   // provider -> totals
@@ -172,12 +247,12 @@ const started = Date.now();
 let lastProgress = Date.now();
 function progress(cur) {
   const el = (Date.now() - started) / 60000;
-  log(`progress ${n}/${boards.length} ok=${ok} failed=${failed} req=${T.req} MB=${(T.bytes / 1e6).toFixed(0)} wireMB=${(T.wire / 1e6).toFixed(0)} probes=${T.probes} 304=${T.p304} min=${el.toFixed(1)} rate=${(n / Math.max(el, 0.01)).toFixed(1)}/min free_gb=${(freeBytes() / 1024 ** 3).toFixed(1)} current="${cur ?? ''}"`);
+  log(`progress ${n}/${boards.length} ok=${ok} failed=${failed} req=${T.req} MB=${(T.bytes / 1e6).toFixed(0)} wireMB=${(T.wire / 1e6).toFixed(0)} probes=${T.probes} 304=${T.p304} live_waits=${T.liveWaits} min=${el.toFixed(1)} rate=${(n / Math.max(el, 0.01)).toFixed(1)}/min free_gb=${(freeBytes() / 1024 ** 3).toFixed(1)} current="${cur ?? ''}"`);
   writeFileSync(join(OUT, 'summary.json'), JSON.stringify({ t: new Date().toISOString(), done: n, todo: boards.length, ok, failed, totals: T, providers: P, stop: stopReason }, null, 1));
 }
 
 async function recordBoard(b) {
-  const ctx = { board: b.name, provider: b.provider, req: 0, bytes: 0, first: null };
+  const ctx = { board: b.name, provider: b.provider, req: 0, bytes: 0, wire: 0, cand: [] };
   const t0 = Date.now();
   const ms = entryTimeoutMs(b);
   let timer, jobs = null, err = null;
@@ -185,23 +260,23 @@ async function recordBoard(b) {
     jobs = await als.run(ctx, () => Promise.race([providers[b.provider].fetch(b._slug, b),
       new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`Timed out after ${Math.round(ms / 1000)}s (${b.name})`)), ms); })]));
   } catch (e) { err = classifyError(e); } finally { clearTimeout(timer); }
-  const probeResult = ctx.first ? await probe(ctx) : null;
+  const probeResult = ctx.cand.length ? await probe(ctx) : null;
   const items = Array.isArray(jobs) ? jobs : [];
   const dh = (d) => (d ? createHash('sha256').update(String(d)).digest('hex').slice(0, 16) : null);
   const rec = { board: b.name, provider: b.provider, slug: b._slug, ok: !err, cls: err?.cls ?? null, detail: err ? String(err.detail ?? '').slice(0, 200) : undefined,
     jobs: items.length, incomplete: items.incomplete ? true : undefined, emptyOk: items.emptyOk === true || undefined,
-    req: ctx.req, bytes: ctx.bytes, ms: Date.now() - t0, validators: ctx.first ? { etag: Boolean(ctx.first.etag), lm: Boolean(ctx.first.lm) } : null, probe: probeResult };
+    req: ctx.req, bytes: ctx.bytes, wire: ctx.wire, ms: Date.now() - t0, validators: ctx.cand.length ? { etag: ctx.cand.some((c) => c.etag), lm: ctx.cand.some((c) => c.lm) } : null, probe: probeResult };
   if (!err) {
     const list = { board: b.name, provider: b.provider, slug: b._slug, t: new Date().toISOString(), complete: !items.incomplete, emptyOk: items.emptyOk === true,
       max_jobs: b.max_jobs ?? null, items: items.map((j) => ({ url: j.url, title: j.title, location: j.location, postedAt: j.postedAt, dh: dh(j.description) })) };
     writeFileSync(join(OUT, 'lists', `${boardKey(b.name)}.json.gz`), gzipSync(JSON.stringify(list)));
   }
   appendFileSync(join(OUT, 'boards.jsonl'), JSON.stringify(rec) + '\n');
-  const p = (P[b.provider] ??= { boards: 0, ok: 0, failed: 0, jobs: 0, req: 0, bytes: 0, ms: 0, validators: 0, p304: 0, p200same: 0, p200diff: 0 });
-  p.boards++; p.req += rec.req; p.bytes += rec.bytes; p.ms += rec.ms; p.jobs += rec.jobs;
+  const p = (P[b.provider] ??= { boards: 0, ok: 0, failed: 0, jobs: 0, req: 0, bytes: 0, wire: 0, ms: 0, validators: 0, probes: 0, p304: 0, p200same: 0, p200diff: 0 });
+  p.boards++; p.req += rec.req; p.bytes += rec.bytes; p.wire += rec.wire; p.ms += rec.ms; p.jobs += rec.jobs;
   if (err) p.failed++; else p.ok++;
   if (rec.validators) p.validators++;
-  if (probeResult === '304') p.p304++; else if (probeResult === '200-same') p.p200same++; else if (probeResult === '200-diff') p.p200diff++;
+  if (probeResult) { p.probes += probeResult.n; p.p304 += probeResult['304']; p.p200same += probeResult['200-same']; p.p200diff += probeResult['200-diff']; }
   if (err) failed++; else ok++;
 }
 
@@ -228,7 +303,8 @@ async function worker() {
 }
 await Promise.all(Array.from({ length: CONC }, worker));
 if (hardTimer) clearTimeout(hardTimer);
+if (liveTimer) clearInterval(liveTimer);
 progress('end');
 flushPolicy();
-log(`result ${stopReason ? `STOPPED (${stopReason})` : 'done'}: ${n}/${boards.length} boards, ok=${ok} failed=${failed}, requests=${T.req}, MB=${(T.bytes / 1e6).toFixed(0)}, wireMB=${(T.wire / 1e6).toFixed(0)}, objects=${T.objects}, probes=${T.probes} (304 ${T.p304}, 200-same ${T.p200same}, 200-diff ${T.p200diff}, other ${T.pOther}), capture errors=${T.capErr}, min=${((Date.now() - started) / 60000).toFixed(1)}`);
+log(`result ${stopReason ? `STOPPED (${stopReason})` : 'done'}: ${n}/${boards.length} boards, ok=${ok} failed=${failed}, requests=${T.req}, MB=${(T.bytes / 1e6).toFixed(0)}, wireMB=${(T.wire / 1e6).toFixed(0)}, objects=${T.objects}, probes=${T.probes} (304 ${T.p304}, 200-same ${T.p200same}, 200-diff ${T.p200diff}, other ${T.pOther}), capture errors=${T.capErr}, network errors=${T.netErr}, live-host waits=${T.liveWaits} (went ahead after max wait ${T.liveOverlap}), min=${((Date.now() - started) / 60000).toFixed(1)}`);
 process.exit(0);
