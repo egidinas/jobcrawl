@@ -79,6 +79,7 @@ setEuresRateFile(pathResolve(OUT_DIR, 'eures-rate.json'));
 if (PROFILE.euresLane) setEuresLane(pathResolve(OUT_DIR, 'eures-lane'));
 // every feed response byte for byte under JOBCRAWL_RAW_DIR (rawcapture.mjs), before the first request
 const RAW_ON = !flag('jd-cleanup-only') && installRawCapture();
+let SHADOW_INPUT = null;   // set by scan() only when JOBCRAWL_SHADOW is set (strangler-fig shadow, see the end of this file)
 if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`);
 // The crawl policy (policy.mjs) around every request: robots.txt advisory or strict (crawl.robots), Crawl-delay floor, 429/503
 // cooldowns, never a login page or an opted-out host. Installed after the raw capture, so a refused request is never captured.
@@ -86,10 +87,15 @@ configurePolicy(policyFromProfile(PROFILE, OUT_DIR));
 if (!flag('jd-cleanup-only')) { installGuard(); console.log(`crawl: policy robots=${PROFILE.robots}${Object.keys(PROFILE.robotsHosts).length ? ` (${Object.keys(PROFILE.robotsHosts).length} host overrides)` : ''}, ${PROFILE.optOutHosts.length} opted-out hosts`); }
 // Conditional-request cache (core/fetch/conditional.mjs): off unless the profile lists hosts in crawl.conditional_cache.hosts.
 const CONDITIONAL = PROFILE.raw?.crawl?.conditional_cache;
-if (!flag('jd-cleanup-only') && Array.isArray(CONDITIONAL?.hosts) && CONDITIONAL.hosts.length) {
-  const { installConditionalCache } = await import('../core/fetch/conditional.mjs');
-  installConditionalCache({ dir: pathResolve(OUT_DIR, 'http-cache'), hosts: CONDITIONAL.hosts, maxMb: Number(CONDITIONAL.max_mb) || 20 });
-  console.log(`crawl: conditional requests on for ${CONDITIONAL.hosts.length} host pattern(s)`);
+if (!flag('jd-cleanup-only') && !flag('dry-run') && Array.isArray(CONDITIONAL?.hosts) && CONDITIONAL.hosts.length) {
+  try {
+    const { installConditionalCache } = await import('../core/fetch/conditional.mjs');
+    const { checkPlacement, defaultDir } = await import('../core/paths.mjs');
+    // outside the data folder and outside any git work tree (a data folder is swept into commits on some hosts)
+    const dir = checkPlacement(CONDITIONAL.dir ? pathResolve(PROFILE.dir, CONDITIONAL.dir) : defaultDir('http-cache', OUT_DIR), OUT_DIR, 'HTTP cache');
+    installConditionalCache({ dir, hosts: CONDITIONAL.hosts, maxMb: Number(CONDITIONAL.max_mb) || 20, totalMb: Number(CONDITIONAL.total_mb) || 500 });
+    console.log(`crawl: conditional requests on for ${CONDITIONAL.hosts.length} host pattern(s), cache ${dir}`);
+  } catch (e) { console.error(`crawl: conditional requests OFF (${e.message})`); }
 }
 if (!flag('dry-run') && !flag('jd-cleanup-only')) {   // the cleanup frees space, so it runs even on a full disk
   const full = checkDisk(OUT_DIR, PROFILE.minFreeMb);
@@ -530,12 +536,9 @@ async function scan() {
   const results = await pool(companies, async (entry) => {
     try { return await crawlOne(entry); } finally { if (++boardsDone % 50 === 0 || boardsDone === companies.length) console.log(`[crawl] ${boardsDone}/${companies.length} boards done, ${((Date.now() - crawlStarted) / 60000).toFixed(1)} min`); }
   });
-  // Strangler fig (core/route/shadow-hook.mjs): off unless JOBCRAWL_SHADOW=1 and JOBCRAWL_ROUTING name a routing file. Then the answers of
-  // the boards routed shadow are teed into the new per-board path in its own folder (no extra request); the legacy crawl below is unchanged.
-  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) {
-    try { await (await import('../core/route/shadow-hook.mjs')).runShadow({ dataDir: OUT_DIR, companies, results }); }
-    catch (e) { console.error(`[shadow] skipped this cycle: ${e?.message ?? e}`); }
-  }
+  // Strangler fig (core/route/shadow-hook.mjs): only when JOBCRAWL_SHADOW is set, the cycle's answers are kept for the shadow hook, which
+  // runs after every legacy output of the cycle is written (below, after scan()).
+  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) SHADOW_INPUT = { companies, results };
   async function crawlOne(entry) {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');
@@ -1085,4 +1088,10 @@ if (flag('jd-cleanup-only')) {
 } else {
   await scan();
   if (RAW_ON) console.log(`crawl: ${rawCaptureSummary()}`);
+  // The legacy outputs are written; now (and only when armed) the answers of the boards routed shadow go to the new per-board path in its
+  // own folder (core/route/shadow-hook.mjs: off by default, budgets per board and per cycle, never throws).
+  if (SHADOW_INPUT) {
+    try { await (await import('../core/route/shadow-hook.mjs')).runShadow({ dataDir: OUT_DIR, ...SHADOW_INPUT }); }
+    catch (e) { console.error(`[shadow] skipped this cycle: ${e?.message ?? e}`); }
+  }
 }

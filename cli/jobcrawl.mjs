@@ -157,7 +157,8 @@ switch (cmd) {
     const t0 = Date.now();
     console.error(`[dual-run] start boards=${picked.length} replay=${rec} legacy=${legacy} data=${data}`);
     const outcomes = recordedOutcomes(pathResolve(rec));
-    const legacyRows = await legacyRowsByBoard(join(pathResolve(legacy), 'scan-history.tsv'), picked.map(({ e }) => e.name));
+    let legacyRows;
+    try { legacyRows = await legacyRowsByBoard(join(pathResolve(legacy), 'scan-history.tsv'), picked.map(({ e }) => e.name)); } catch (e) { fail(e.message); }
     const reports = [];
     let k = 0;
     for (const { e, provider } of picked) {
@@ -203,8 +204,11 @@ switch (cmd) {
       boards = companies.filter((e) => routeFor(routing, { board: e.name, provider: resolve(e)?.provider ?? null }).route !== 'legacy').map((e) => e.name);
     }
     const { importBaseline } = await import('../core/route/baseline.mjs');
-    const sum = await importBaseline({ historyFile: join(pathResolve(legacy), 'scan-history.tsv'), root: data, boards, replace: flag('replace'), log: (m) => console.error(m) });
-    out(sum, `imported ${sum.imported} boards (${sum.rows} rows), kept ${sum.kept}, without rows ${sum.empty}`);
+    let sum;
+    try { sum = await importBaseline({ historyFile: join(pathResolve(legacy), 'scan-history.tsv'), root: data, boards, replace: flag('replace'), log: (m) => console.error(m) }); }
+    catch (e) { fail(e.message); }
+    out(sum, `imported ${sum.imported} boards, replaced ${sum.replaced} (${sum.rows} rows), kept ${sum.kept}, lease busy ${sum.busy}, without rows ${sum.empty}`);
+    if (sum.busy) process.exit(3);
     break;
   }
   case 'snapshot': {

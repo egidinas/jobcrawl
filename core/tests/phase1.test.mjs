@@ -31,11 +31,11 @@ test('shadow hook: off unless armed; routed boards get state + deltas in their o
   assert.equal(s.armed, false);
   assert.equal(existsSync(join(data, 'jcx-shadow')), false, 'nothing written when not armed');
   const rf = routingFile(data, { providers: { greenhouse: 'shadow' } });
-  const env = { JOBCRAWL_SHADOW: '1', JOBCRAWL_ROUTING: rf };
+  const root = tmp('shadow-store');
+  const env = { JOBCRAWL_SHADOW: '1', JOBCRAWL_ROUTING: rf, JOBCRAWL_SHADOW_DATA: root };
   assert.equal(armed(env), true);
   s = await runShadow({ dataDir: data, companies, results, env, log: quiet });
   assert.equal(s.shadowed, 2); assert.equal(s.legacy, 1);
-  const root = join(data, 'jcx-shadow');
   assert.deepEqual([...readEvents(root)].filter((e) => e.board === 'A').map((e) => e.op), ['added', 'added', 'board-ok']);
   assert.deepEqual([...readEvents(root)].filter((e) => e.board === 'C').map((e) => e.op), ['board-failed']);
   assert.equal(existsSync(join(root, 'boards', boardKey('B'))), false, 'legacy-routed board untouched');
@@ -68,7 +68,19 @@ const crawl = (prof, data, env = {}) => new Promise((done) => {
   p.on('close', (status) => done({ status, out, err }));
 });
 
-test('crawl.mjs: with the shadow armed the legacy history is byte-identical, and the routed board gets its shadow state', async () => {
+// Every file of a data folder (recursive), path -> content, with the run-specific parts normalised: the folder's own path, timestamps,
+// epoch milliseconds and timing fields. The normaliser is checked first on two plain runs (it must make them equal).
+function folderDump(dir) {
+  const out = {};
+  const walk = (d) => { for (const f of readdirSync(d, { withFileTypes: true })) { const p = join(d, f.name); if (f.isDirectory()) walk(p); else out[p.slice(dir.length + 1).split('\\').join('/')] = readFileSync(p, 'utf8'); } };
+  walk(dir);
+  return out;
+}
+const norm = (text, dir) => text.split(dir).join('<DATA>').split(JSON.stringify(dir).slice(1, -1)).join('<DATA>').split(dir.split('\\').join('/')).join('<DATA>')
+  .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, '<T>').replace(/\b1\d{12}\b/g, '<EPOCH>')
+  .replace(/"(ms|budget_ms|fetch_ms|took_ms|elapsed_ms|duration_ms)":\s*\d+/g, '"$1":<MS>');
+
+test('crawl.mjs: with the shadow armed every legacy output file is identical, and the routed board gets its shadow state outside the data folder', async () => {
   const server = await serve();
   try {
     const base = `http://127.0.0.1:${server.address().port}`;
@@ -77,19 +89,21 @@ test('crawl.mjs: with the shadow armed the legacy history is byte-identical, and
     writeFileSync(join(prof, 'profile.json'), JSON.stringify({ name: 'fixture', crawl: { companies_file: 'companies.json' } }));
     writeFileSync(join(prof, 'companies.json'), JSON.stringify({ title_filter: { positive: ['Engineer'], negative: [] }, location_filter: { allow: ['Berlin'], block_hard: [], allow_unknown: true },
       tracked_companies: [{ name: 'Board B', provider: 'sitemap', slug: `${base}/b/sitemap.xml`, url_pattern: '/job/' }] }));
-    const d1 = join(dir, 'plain'), d2 = join(dir, 'shadowed');
-    mkdirSync(d1); mkdirSync(d2);
-    const r1 = await crawl(prof, d1);
-    assert.equal(r1.status, 0, r1.err);
-    const rf = routingFile(dir, { boards: { 'Board B': 'shadow' } });
-    const r2 = await crawl(prof, d2, { JOBCRAWL_SHADOW: '1', JOBCRAWL_ROUTING: rf });
-    assert.equal(r2.status, 0, r2.err);
-    assert.match(r2.out, /\[shadow\] boards shadowed 1/);
-    const strip = (t) => t.replace(/\t\d{4}-\d{2}-\d{2}\t\d{4}-\d{2}-\d{2}\t/g, '\tD\tD\t');
-    assert.equal(strip(readFileSync(join(d2, 'scan-history.tsv'), 'utf8')), strip(readFileSync(join(d1, 'scan-history.tsv'), 'utf8')), 'legacy output unchanged');
-    const st = openBoard(join(d2, 'jcx-shadow'), 'Board B');
+    const runs = {};
+    for (const name of ['plain1', 'plain2', 'shadowed']) {
+      const d = join(dir, name, 'data'); mkdirSync(d, { recursive: true });
+      const env = name === 'shadowed' ? { JOBCRAWL_SHADOW: '1', JOBCRAWL_ROUTING: routingFile(dir, { boards: { 'Board B': 'shadow' } }), JOBCRAWL_SHADOW_DATA: join(dir, 'shadow-store') } : {};
+      const r = await crawl(prof, d, env);
+      assert.equal(r.status, 0, r.err);
+      runs[name] = { dir: d, out: r.out, files: folderDump(d) };
+    }
+    assert.match(runs.shadowed.out, /\[shadow\] boards shadowed 1, .* in \d+ ms ->/);
+    const n = (run) => Object.fromEntries(Object.entries(run.files).map(([k, v]) => [k, norm(v, run.dir)]));
+    assert.deepEqual(n(runs.plain2), n(runs.plain1), 'the normaliser makes two plain runs equal');
+    assert.deepEqual(Object.keys(runs.shadowed.files).sort(), Object.keys(runs.plain1.files).sort(), 'same files: nothing added to the data folder');
+    assert.deepEqual(n(runs.shadowed), n(runs.plain1), 'every legacy output identical (history with dates, crawl-state, source-health, last-new, ...)');
+    const st = openBoard(join(dir, 'shadow-store'), 'Board B');
     assert.equal(Object.keys(st.postings).length, 2);
-    assert.equal(existsSync(join(d1, 'jcx-shadow')), false, 'not armed: no shadow folder');
   } finally { server.close(); }
 });
 
@@ -104,7 +118,7 @@ test('baseline import: legacy rows become an epoch without events; the next iden
     + `https://agg.example/x\tOther (via Acme)\tEngineer 3\tMunich\t2026-11-03\t2026-11-27\tdup\t\n`);
   const root = join(dir, 'store');
   const sum = await importBaseline({ historyFile: hist, root, boards: ['Acme', 'Nobody'] });
-  assert.deepEqual(sum, { imported: 2, kept: 0, empty: 1, rows: 3 });
+  assert.deepEqual(sum, { imported: 2, replaced: 0, kept: 0, busy: 0, empty: 1, rows: 3 });
   assert.equal([...readEvents(root)].length, 0, 'no events');
   const s = openBoard(root, 'Acme');
   assert.equal(s.seq, 0); assert.equal(Object.keys(s.postings).length, 3); assert.equal(s.baseline.rows, 3);

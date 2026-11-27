@@ -102,8 +102,8 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
     rec.url = f.url;
     rec.last_seen = t;
     rec.misses = 0;
-    if (rec.status === 'departed') {
-      rec.status = 'open'; delete rec.departed_at;
+    if (rec.status !== 'open') {                 // departed, or unknown (lifecycle): listed again under the same id
+      rec.status = 'open'; delete rec.departed_at; delete rec.unknown_since;
       emit('reappeared', { id, posting: toPosting(board, id, rec) });
     } else if (diffs.length) {
       emit('changed', { id, fields: diffs, posting: toPosting(board, id, rec) });

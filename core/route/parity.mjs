@@ -18,11 +18,15 @@ import { postingId } from '../id.mjs';
 
 export const PARITY_SCHEMA = 'parity/v1';
 
-/** Streams scan-history.tsv once and returns Map(board -> rows not gone) for the boards asked for. Read-only. */
-export async function legacyRowsByBoard(historyFile, boards) {
+/**
+ * Streams scan-history.tsv once and returns Map(board -> rows) for the boards asked for. Read-only. Rows 'gone' are never returned;
+ * rows 'unknown' (lifecycle: nothing listed them for the unknown window) only with includeUnknown (the baseline keeps them as unknown;
+ * parity leaves them out, since no board lists them). A missing history file throws unless allowMissing.
+ */
+export async function legacyRowsByBoard(historyFile, boards, { includeUnknown = false, allowMissing = false } = {}) {
   const want = new Set(boards);
   const out = new Map([...want].map((b) => [b, []]));
-  if (!existsSync(historyFile)) return out;
+  if (!existsSync(historyFile)) { if (allowMissing) return out; throw new Error(`legacy history not found: ${historyFile}`); }
   const rl = createInterface({ input: createReadStream(historyFile, { encoding: 'utf8' }), crlfDelay: Infinity });
   let head = null;
   for await (const line of rl) {
@@ -30,7 +34,7 @@ export async function legacyRowsByBoard(historyFile, boards) {
     const cols = line.split('\t');
     if (!head) { head = cols; continue; }
     const row = Object.fromEntries(head.map((h, i) => [h, cols[i] ?? '']));
-    if (row.status === 'gone') continue;
+    if (row.status === 'gone' || (row.status === 'unknown' && !includeUnknown)) continue;
     let board = row.company;
     const via = /\(via ([^)]+)\)\s*$/.exec(board);
     if (!want.has(board) && via && want.has(via[1])) board = via[1];

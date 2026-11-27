@@ -141,9 +141,10 @@ async function leaseDb(root) {
  * Takes the board's lease for ttlMs (atomic: BEGIN IMMEDIATE, read, write if free or expired, commit). Returns a release function, or
  * null while another live lease holds it. `db` may be passed (tests: two handles = two processes).
  */
-export async function lease(root, board, ttlMs = 15 * 60e3, now = Date.now, { db } = {}) {
+export async function lease(root, board, ttlMs = 15 * 60e3, now = Date.now, { db, busyMs = 5000 } = {}) {
   const d = db ?? (await leaseDb(root));
   const token = randomUUID();
+  d.exec(`PRAGMA busy_timeout=${Math.max(0, Math.floor(busyMs))}`);
   d.exec('BEGIN IMMEDIATE');
   try {
     const cur = d.prepare('SELECT token, expires FROM leases WHERE board = ?').get(board);
