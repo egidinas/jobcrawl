@@ -1825,7 +1825,10 @@ export const providers = {
       const out = [];
       const seen = new Set();
       for (let offset = 0; offset <= 400; offset += 200) {
-        const finder = `findReqs;siteNumber=${site},limit=200,offset=${offset}`;
+        // entry.oracle_keyword: the site's own keyword search (title, place), for one country or site of a large tenant whose full list
+        // runs past the 600 rows read here (Honeywell Aerospace: 854 rows, the Brno ones are a keyword away)
+        const kw = entry.oracle_keyword ? `,keyword=${encodeURIComponent(String(entry.oracle_keyword)).replace(/,/g, '%2C')}` : '';
+        const finder = `findReqs;siteNumber=${site},limit=200,offset=${offset}${kw}`;
         const url = `${origin.replace(/\/+$/, '')}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?finder=${finder}&expand=requisitionList`;
         let json;
         try {
