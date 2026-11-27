@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/delta-v1.schema.json",
+  "title": "jobcrawl delta event (delta/v1)",
+  "description": "One change of one board, numbered per board by seq (+1 per event). Replaying a log is idempotent for a consumer that keeps the last applied seq per board.",
+  "type": "object",
+  "required": ["schema", "board", "seq", "run", "t", "op"],
+  "properties": {
+    "schema": { "const": "delta/v1" },
+    "board": { "type": "string", "minLength": 1 },
+    "seq": { "type": "integer", "minimum": 1 },
+    "event_id": { "type": "string", "description": "optional global id (planned: store-wide order for consumer bookmarks)" },
+    "run": { "type": "string" },
+    "t": { "type": "string", "format": "date-time" },
+    "op": { "enum": ["added", "changed", "reappeared", "departed", "board-ok", "board-failed"] },
+    "id": { "type": "string", "pattern": "^jc1_[a-z2-7]{32}$" },
+    "fields": { "type": "array", "items": { "enum": ["title", "location", "posted", "dh"] } },
+    "posting": { "$ref": "posting-v1.schema.json" },
+    "first_seen": { "type": "string" },
+    "last_seen": { "type": "string" },
+    "misses": { "type": "integer", "minimum": 0 },
+    "n": { "type": "integer", "minimum": 0 },
+    "complete": { "type": "boolean" },
+    "held": { "type": "integer", "minimum": 0 },
+    "cls": { "type": "string" },
+    "detail": { "type": "string" }
+  }
+}

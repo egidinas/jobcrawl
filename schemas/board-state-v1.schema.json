@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/board-state-v1.schema.json",
+  "title": "jobcrawl per-board state (board-state/v1)",
+  "type": "object",
+  "required": ["schema", "board", "seq", "runs", "postings"],
+  "properties": {
+    "schema": { "const": "board-state/v1" },
+    "board": { "type": "string" },
+    "seq": { "type": "integer", "minimum": 0 },
+    "runs": { "type": "integer", "minimum": 0 },
+    "last_run": { "type": ["string", "null"] },
+    "last_ok": { "type": ["string", "null"] },
+    "last_complete": { "type": ["string", "null"] },
+    "guard_hold": { "type": "integer", "minimum": 0 },
+    "postings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["url", "first_seen", "last_seen", "misses", "status"],
+        "properties": {
+          "url": { "type": "string" }, "title": { "type": "string" }, "location": { "type": "string" }, "posted": { "type": "string" },
+          "dh": { "type": ["string", "null"] }, "first_seen": { "type": "string" }, "last_seen": { "type": "string" },
+          "misses": { "type": "integer", "minimum": 0 }, "status": { "enum": ["open", "departed"] }, "departed_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

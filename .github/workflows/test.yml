@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: '22'
       - name: Crawler tests (Node)
-        run: node --test 'crawler/tests/*.test.mjs'
+        run: node --test 'crawler/tests/*.test.mjs' 'core/tests/*.test.mjs'
 
   pipeline:
     runs-on: ubuntu-latest

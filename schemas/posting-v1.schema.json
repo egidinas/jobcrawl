@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/posting-v1.schema.json",
+  "title": "jobcrawl posting (posting/v1)",
+  "description": "A job posting, schema.org JobPosting compatible, with a jobcrawl block: stable id, board, lifecycle and provenance.",
+  "type": "object",
+  "required": ["@type", "title", "url", "jobcrawl"],
+  "properties": {
+    "@context": { "const": "https://schema.org" },
+    "@type": { "const": "JobPosting" },
+    "title": { "type": "string" },
+    "url": { "type": "string", "minLength": 1 },
+    "datePosted": { "type": "string" },
+    "description": { "type": "string" },
+    "employmentType": { "type": "string" },
+    "hiringOrganization": { "type": "object" },
+    "jobLocation": { "type": "array", "items": { "type": "object" } },
+    "jobcrawl": {
+      "type": "object",
+      "required": ["schema", "id", "board", "status", "first_seen", "last_seen"],
+      "properties": {
+        "schema": { "const": "posting/v1" },
+        "id": { "type": "string", "pattern": "^jc1_[a-z2-7]{32}$" },
+        "board": { "type": "string" },
+        "status": { "enum": ["open", "departed"] },
+        "first_seen": { "type": "string" },
+        "last_seen": { "type": "string" },
+        "content_hash": { "type": "string" },
+        "provenance": { "type": "object" },
+        "dedupe": { "type": "object" },
+        "meta": { "type": "object" }
+      }
+    }
+  }
+}

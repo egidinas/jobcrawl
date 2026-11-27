@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/parity-v1.schema.json",
+  "title": "jobcrawl parity report (parity/v1)",
+  "type": "object",
+  "required": ["schema", "t", "boards", "providers"],
+  "properties": {
+    "schema": { "const": "parity/v1" },
+    "t": { "type": "string" },
+    "source": { "type": "string" },
+    "boards": { "type": "array", "items": { "type": "object", "required": ["board"], "properties": {
+      "board": { "type": "string" }, "provider": { "type": ["string", "null"] },
+      "verdict": { "enum": ["pass", "near", "fail", "empty"] }, "error": { "type": "string" },
+      "legacy": { "type": "integer" }, "new": { "type": "integer" }, "both": { "type": "integer" },
+      "only_legacy": { "type": "integer" }, "only_new": { "type": "integer" },
+      "title_diff": { "type": "integer" }, "location_diff": { "type": "integer" }, "overlap": { "type": "number" } } } },
+    "providers": { "type": "object" }
+  }
+}

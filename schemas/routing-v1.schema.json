@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/routing-v1.schema.json",
+  "title": "jobcrawl strangler-fig routing (routing/v1)",
+  "description": "Which path each board runs on. Precedence: kill switch, board, provider, default. 'new' is honoured only with allow_new true (else it runs as shadow). Env JOBCRAWL_ROUTE_KILL=1 forces legacy for every board.",
+  "type": "object",
+  "required": ["schema"],
+  "properties": {
+    "schema": { "const": "routing/v1" },
+    "kill_switch": { "type": "boolean" },
+    "allow_new": { "type": "boolean" },
+    "default": { "enum": ["legacy", "shadow", "new"] },
+    "providers": { "type": "object", "additionalProperties": { "enum": ["legacy", "shadow", "new"] } },
+    "boards": { "type": "object", "additionalProperties": { "enum": ["legacy", "shadow", "new"] } }
+  },
+  "additionalProperties": false
+}

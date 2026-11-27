@@ -1,0 +1,31 @@
+{
+  "name": "@egidinas/jobcrawl",
+  "version": "0.0.0-phase0",
+  "private": true,
+  "description": "Crawl the public job boards of any field: per-board jobs, full snapshots or deltas, open and extensible (sources, backends, enrichment, outputs).",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/egidinas/jobcrawl.git" },
+  "bin": { "jobcrawl": "cli/jobcrawl.mjs" },
+  "exports": {
+    "./core/id": "./core/id.mjs",
+    "./core/delta": "./core/delta/board-delta.mjs",
+    "./core/store": "./core/state/board-store.mjs",
+    "./core/run-board": "./core/run-board.mjs",
+    "./core/router": "./core/route/router.mjs",
+    "./core/parity": "./core/route/parity.mjs",
+    "./core/ledger": "./core/route/ledger.mjs",
+    "./core/ssrf": "./core/fetch/ssrf.mjs",
+    "./core/schema": "./core/schema/validate.mjs",
+    "./schemas/*": "./schemas/*",
+    "./crawler/*": "./crawler/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["cli/", "core/", "crawler/", "schemas/", "bench/", "LICENSE", "NOTICE.md", "README.md", "CHANGELOG.md"],
+  "scripts": {
+    "test": "node --test crawler/tests/*.test.mjs core/tests/*.test.mjs",
+    "test:core": "node --test core/tests/*.test.mjs"
+  },
+  "dependencies": {}
+}

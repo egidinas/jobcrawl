@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/snapshot-v1.schema.json",
+  "title": "jobcrawl full snapshot header (snapshot/v1)",
+  "description": "First line of a full snapshot (NDJSON). The lines after it are posting/v1 objects. watermarks gives each board's last seq, so a consumer can start from the snapshot and follow the deltas after those seq numbers.",
+  "type": "object",
+  "required": ["schema", "t", "watermarks"],
+  "properties": {
+    "schema": { "const": "snapshot/v1" },
+    "t": { "type": "string" },
+    "watermarks": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } }
+  }
+}

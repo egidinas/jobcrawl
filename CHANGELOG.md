@@ -3,6 +3,18 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-27: multitool phase 0 (branch feat/jobcrawlx-phase0; additive, the crawl is unchanged)
+
+- `package.json` as `@egidinas/jobcrawl` (private until the first release), `cli/jobcrawl.mjs` (`providers`, `detect`, `route`,
+  `crawl`, `dual-run`, `snapshot`, `feed`, `doctor`; `--json`; help exits before any network use).
+- `core/`: stable posting ids (`id.mjs`), per-board state and deltas with the departure grace rule (`delta/board-delta.mjs`), a files
+  store with leases, crash repair and snapshots (`state/board-store.mjs`), the strangler-fig routing façade with a kill switch
+  (`route/router.mjs`), parity reports and the migration ledger (`route/parity.mjs`, `route/ledger.mjs`), an SSRF guard for
+  user-given URLs (`fetch/ssrf.mjs`).
+- `schemas/`: posting/v1, delta/v1, snapshot/v1, board-state/v1, routing/v1, parity/v1.
+- `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
+  replay); `core/tests/`.
+
 ## 2026-11-22: geography pills and pins
 
 - **`web/assets/atlas-geo-pills.js`** (loaded by `atlas.js` beside the place data): country pills zoomed out, city pills zoomed in (only roles with a real
