@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/worker-v1.schema.json",
+  "title": "jobcrawl worker declaration (worker/v1)",
+  "type": "object",
+  "required": ["id", "capabilities"],
+  "properties": {
+    "id": { "type": "string" },
+    "host": { "type": "string" },
+    "capabilities": { "type": "object", "properties": {
+      "net": { "type": "boolean" }, "browser": { "type": "boolean" }, "gpu": { "type": "boolean" },
+      "vram_gb": { "type": "number" }, "cpu_threads": { "type": "integer" }, "ram_gb": { "type": "number" },
+      "models": { "type": "array", "items": { "type": "string" } }, "packs": { "type": "array", "items": { "type": "string" } },
+      "topics": { "type": "array", "items": { "type": "string" } } } },
+    "budgets": { "type": "object", "description": "what the worker may book: measured use plus a margin" },
+    "policy": { "type": "object", "properties": { "smoke_measured": { "type": "object" } } }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/artifact-ref-v1.schema.json",
+  "title": "jobcrawl artifact reference (artifact-ref/v1)",
+  "description": "A content-addressed blob (raw capture, text, vectors) in an artifact store (local dir, R2/S3, fleet xfer).",
+  "type": "object",
+  "required": ["schema", "sha256", "bytes", "type"],
+  "properties": {
+    "schema": { "const": "artifact-ref/v1" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "bytes": { "type": "integer", "minimum": 0 },
+    "type": { "type": "string" },
+    "enc": { "type": ["string", "null"] },
+    "uri": { "type": "string" },
+    "meta": { "type": "object" }
+  }
+}

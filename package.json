@@ -18,6 +18,10 @@
     "./core/ledger": "./core/route/ledger.mjs",
     "./core/ssrf": "./core/fetch/ssrf.mjs",
     "./core/schema": "./core/schema/validate.mjs",
+    "./core/queue": "./core/dist/queue.mjs",
+    "./core/artifacts": "./core/dist/artifacts.mjs",
+    "./core/match": "./core/dist/match.mjs",
+    "./core/merge": "./core/dist/merge.mjs",
     "./schemas/*": "./schemas/*",
     "./crawler/*": "./crawler/*",
     "./package.json": "./package.json"

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/result-v1.schema.json",
+  "title": "jobcrawl worker result (result/v1)",
+  "description": "A stage result merged idempotently by (subject, stage, version) into the central store, with provenance.",
+  "type": "object",
+  "required": ["subject", "stage", "version", "provenance"],
+  "properties": {
+    "subject": { "type": "string" },
+    "stage": { "type": "string", "pattern": "^[a-z0-9_.-]+@[A-Za-z0-9_.+-]+$" },
+    "version": { "type": "integer", "minimum": 0 },
+    "value": {},
+    "artifact": { "$ref": "artifact-ref-v1.schema.json" },
+    "provenance": { "type": "object", "required": ["worker"], "properties": {
+      "worker": { "type": "string" }, "host": { "type": "string" }, "model": { "type": "string" }, "t": { "type": "string" } } }
+  }
+}

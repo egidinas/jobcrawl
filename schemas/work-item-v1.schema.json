@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/work-item-v1.schema.json",
+  "title": "jobcrawl work item (work-item/v1)",
+  "description": "One unit of distributed work (crawl a board, enrich or embed a posting, extract skills). Idempotent by key; a newer version supersedes a waiting one. Delivered at least once under a lease (visibility timeout, heartbeat, retry with backoff, dead letter).",
+  "type": "object",
+  "required": ["key", "topic"],
+  "properties": {
+    "key": { "type": "string", "minLength": 1, "description": "board id (crawl) or content hash / posting id + stage (enrichment)" },
+    "topic": { "type": "string", "description": "e.g. crawl.board, enrich.shape_text, embed.posting, extract.skills" },
+    "version": { "type": "integer", "minimum": 0 },
+    "payload": {},
+    "priority": { "type": "integer" },
+    "maxAttempts": { "type": "integer", "minimum": 1 },
+    "requires": { "$ref": "#/$defs/requires" }
+  },
+  "$defs": {
+    "requires": { "type": "object", "properties": {
+      "net": { "type": "boolean" }, "browser": { "type": "boolean" }, "gpu": { "type": "boolean" },
+      "vram_gb": { "type": "number" }, "cpu_threads": { "type": "integer" }, "ram_gb": { "type": "number" },
+      "models": { "type": "array", "items": { "type": "string" } }, "packs": { "type": "array", "items": { "type": "string" } },
+      "long": { "type": "boolean", "description": "expected > 15 min: only workers with a measured smoke for the topic" } } }
+  }
+}

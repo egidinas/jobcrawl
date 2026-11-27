@@ -17,9 +17,13 @@ const typeOf = (v) => (v === null ? 'null' : Array.isArray(v) ? 'array' : Number
 const isType = (v, t) => (t === 'number' ? typeof v === 'number' : t === 'integer' ? Number.isInteger(v) : typeOf(v) === t);
 
 /** Returns a list of error strings (empty when valid). */
-export function validate(value, schema, path = '$') {
+export function validate(value, schema, path = '$', root = null) {
   if (typeof schema === 'string') schema = loadSchema(schema);
-  if (schema.$ref) return validate(value, loadSchema(schema.$ref), path);
+  root ??= schema;
+  if (schema.$ref) {
+    if (schema.$ref.startsWith('#/')) return validate(value, schema.$ref.slice(2).split('/').reduce((o, k) => o?.[k], root), path, root);
+    return validate(value, loadSchema(schema.$ref), path);
+  }
   const errs = [];
   if (schema.type) {
     const types = [].concat(schema.type);
@@ -36,11 +40,11 @@ export function validate(value, schema, path = '$') {
     for (const k of schema.required ?? []) if (!(k in value)) errs.push(`${path}: missing ${k}`);
     for (const [k, v] of Object.entries(value)) {
       if (v === undefined) continue;
-      if (schema.properties?.[k]) errs.push(...validate(v, schema.properties[k], `${path}.${k}`));
+      if (schema.properties?.[k]) errs.push(...validate(v, schema.properties[k], `${path}.${k}`, root));
       else if (schema.additionalProperties === false) errs.push(`${path}: unexpected key ${k}`);
-      else if (typeof schema.additionalProperties === 'object') errs.push(...validate(v, schema.additionalProperties, `${path}.${k}`));
+      else if (typeof schema.additionalProperties === 'object') errs.push(...validate(v, schema.additionalProperties, `${path}.${k}`, root));
     }
   }
-  if (Array.isArray(value) && schema.items) value.forEach((v, i) => errs.push(...validate(v, schema.items, `${path}[${i}]`)));
+  if (Array.isArray(value) && schema.items) value.forEach((v, i) => errs.push(...validate(v, schema.items, `${path}[${i}]`, root)));
   return errs;
 }
