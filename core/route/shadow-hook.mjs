@@ -40,7 +40,7 @@ export function shadowRoot(dataDir, env = process.env) {
  * Applies the cycle's answers of the routed boards to the shadow store. companies[i] <-> results[i] (crawl.mjs pool order).
  * Returns a summary { armed, shadowed, legacy, skipped, slow, over_budget, failed, ops, ms } (never throws).
  */
-export async function runShadow({ dataDir, companies, results, env = process.env, now = () => new Date(), log = console.log, clock = Date.now }) {
+export async function runShadow({ dataDir, companies, results, history = null, env = process.env, now = () => new Date(), log = console.log, clock = Date.now }) {
   const t0 = clock();
   const sum = { armed: armed(env), shadowed: 0, legacy: 0, skipped: 0, slow: 0, over_budget: 0, failed: 0, ops: {}, ms: 0 };
   if (!sum.armed) return sum;
@@ -53,6 +53,9 @@ export async function runShadow({ dataDir, companies, results, env = process.env
   try { routing = loadRouting(env.JOBCRAWL_ROUTING); } catch (e) { log(`[shadow] routing unreadable, nothing shadowed: ${e.message}`); sum.failed++; return sum; }
   try { root = shadowRoot(dataDir, env); } catch (e) { log(`[shadow] ${e.message}; nothing shadowed`); sum.failed++; return sum; }
   const boardMs = Number(env.JOBCRAWL_SHADOW_BOARD_MS) || 2000, budgetMs = Number(env.JOBCRAWL_SHADOW_BUDGET_MS) || 60000;
+  // Departures follow the legacy crawl's own rule per row (its status after this cycle, read from the crawl's history): open rows close on
+  // the first complete miss, extra/dup rows in the 3-day sweep, filtered rows never by a miss. Without the history: first complete miss.
+  const rules = history && typeof history.get === 'function' ? { mode: 'legacy', statusOf: (url) => history.get(url)?.status, sweepDays: 3 } : LEGACY_RULES;
   for (let i = 0; i < companies.length; i++) {
     const entry = companies[i], res = results[i];
     try {
@@ -66,7 +69,7 @@ export async function runShadow({ dataDir, companies, results, env = process.env
       const release = await lease(root, entry.name, 5 * 60e3, Date.now, { busyMs: boardMs });
       if (!release) { sum.skipped++; continue; }
       try {
-        const { state, events } = applyRun(openBoard(root, entry.name, { log }), run, { board: entry.name, now: now(), rules: LEGACY_RULES, maxJobs: Number(entry.max_jobs) || null });
+        const { state, events } = applyRun(openBoard(root, entry.name, { log }), run, { board: entry.name, now: now(), rules, maxJobs: Number(entry.max_jobs) || null });
         commitRun(root, entry.name, state, events);
         for (const e of events) sum.ops[e.op] = (sum.ops[e.op] ?? 0) + 1;
         sum.shadowed++;

@@ -538,7 +538,7 @@ async function scan() {
   });
   // Strangler fig (core/route/shadow-hook.mjs): only when JOBCRAWL_SHADOW is set, the cycle's answers are kept for the shadow hook, which
   // runs after every legacy output of the cycle is written (below, after scan()).
-  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) SHADOW_INPUT = { companies, results };
+  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) SHADOW_INPUT = { companies, results, history };   // history: read-only, for the legacy departure rule
   async function crawlOne(entry) {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');

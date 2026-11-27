@@ -23,6 +23,7 @@
     "n": { "type": "integer", "minimum": 0 },
     "complete": { "type": "boolean" },
     "held": { "type": "integer", "minimum": 0 },
+    "refreshed": { "type": "integer", "minimum": 0, "description": "board-ok: baseline postings refreshed silently on their first live sighting" },
     "cls": { "type": "string" },
     "detail": { "type": "string" }
   }

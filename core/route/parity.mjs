@@ -46,7 +46,10 @@ export async function legacyRowsByBoard(historyFile, boards, { includeUnknown = 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 export function compareBoard(legacyRows, newOpen) {
-  const L = new Map(legacyRows.map((r) => [postingId(r.url), r]));
+  // what the board lists now, by the legacy history: rows seen on the board's last read day (older filtered/extra rows are kept by the
+  // legacy history after the board stopped listing them; the same rule as the baseline import)
+  const lastDay = legacyRows.reduce((m, r) => (String(r.last_seen ?? '') > m ? String(r.last_seen) : m), '');
+  const L = new Map(legacyRows.filter((r) => !r.last_seen || String(r.last_seen) === lastDay).map((r) => [postingId(r.url), r]));
   const N = new Map(newOpen.map((r) => [r.id ?? postingId(r.url), r]));
   let both = 0, title = 0, loc = 0;
   const samples = { only_legacy: [], only_new: [], field: [] };

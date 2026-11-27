@@ -50,13 +50,18 @@ export function isComplete(run, maxJobs = null) {
   return n > 0 || run.emptyOk === true;
 }
 
-const fieldsOf = (it) => ({
+/**
+ * The one normalised record of a posting, used by the live read AND by the baseline import (core/route/baseline.mjs), so both produce
+ * the same fields: trimmed title and location, the date part of the posting date, a short hash of the description (null when unknown).
+ */
+export const normaliseItem = (it) => ({
   url: String(it.url ?? ''),
   title: String(it.title ?? '').trim(),
   location: String(it.location ?? '').trim(),
-  posted: String(it.postedAt ?? it.posted ?? '').slice(0, 10),
+  posted: String(it.postedAt ?? it.posted ?? '').trim().slice(0, 10),
   dh: it.description ? sha256(String(it.description)).slice(0, 16) : (it.dh ?? null),
 });
+const fieldsOf = normaliseItem;
 const COMPARED = ['title', 'location', 'posted', 'dh'];
 
 /** The compact posting carried by added/changed/reappeared events (posting/v1 subset). */
@@ -85,6 +90,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
   }
   state.last_ok = t;
   const seen = new Set();
+  let refreshed = 0;
   for (const it of run.items ?? []) {
     if (!it?.url) continue;
     const id = postingId(it.url);
@@ -97,12 +103,20 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
       emit('added', { id, posting: toPosting(board, id, r) });
       continue;
     }
-    const diffs = COMPARED.filter((k) => (f[k] ?? null) !== (rec[k] ?? null) && !(k === 'dh' && f.dh == null));
+    // A field that was unknown before (a description hash a baseline never had) is filled in silently: that is not a change.
+    const diffs = COMPARED.filter((k) => (f[k] ?? null) !== (rec[k] ?? null) && !(k === 'dh' && (f.dh == null || rec.dh == null)));
+    if (f.dh != null && rec.dh == null) rec.dh = f.dh;
     for (const k of diffs) rec[k] = f[k];
     rec.url = f.url;
     rec.last_seen = t;
     rec.misses = 0;
-    if (rec.status !== 'open') {                 // departed, or unknown (lifecycle): listed again under the same id
+    if (rec.bl) {
+      // First sight of a posting that came from the baseline import: the legacy history keeps the fields of the FIRST sighting, so
+      // differences here are not changes of this read; the record is refreshed silently (counted on board-ok as `refreshed`).
+      delete rec.bl;
+      refreshed++;
+      if (rec.status !== 'open') { rec.status = 'open'; delete rec.departed_at; delete rec.unknown_since; emit('reappeared', { id, posting: toPosting(board, id, rec) }); }
+    } else if (rec.status !== 'open') {                 // departed, or unknown (lifecycle): listed again under the same id
       rec.status = 'open'; delete rec.departed_at; delete rec.unknown_since;
       emit('reappeared', { id, posting: toPosting(board, id, rec) });
     } else if (diffs.length) {
@@ -126,7 +140,15 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
       for (const [id, rec] of missing) {
         rec.misses++;
         const sinceSeen = now.getTime() - Date.parse(rec.last_seen);
-        const gone = rules.mode === 'age'
+        let gone;
+        if (rules.mode === 'legacy') {
+          // the legacy crawl's own rule, per the row's legacy status (crawl.mjs): an open row closes on the first complete miss; an
+          // extra or dup row only in the 3-day sweep; a filtered row is never closed by a miss; an already closed row follows at once
+          const ls = rules.statusOf?.(rec.url) ?? 'open';
+          gone = ls === 'open' ? rec.misses >= 1
+            : ls === 'extra' || ls === 'dup' ? sinceSeen >= (rules.sweepDays ?? 3) * 24 * HOUR
+            : ls === 'gone';
+        } else gone = rules.mode === 'age'
           ? sinceSeen >= rules.days * 24 * HOUR
           : rec.misses >= rules.k && sinceSeen >= rules.floorH * HOUR;
         if (gone) {
@@ -136,7 +158,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
       }
     }
   }
-  emit('board-ok', { n: seen.size, complete, ...(held ? { held } : {}) });
+  emit('board-ok', { n: seen.size, complete, ...(held ? { held } : {}), ...(refreshed ? { refreshed } : {}) });
   return { state, events };
 }
 
