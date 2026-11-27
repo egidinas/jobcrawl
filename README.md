@@ -321,6 +321,8 @@ reads them one board at a time at that gap, oldest answer first, and stores each
 newest answer and sends nothing to europa.eu. A board without an answer from the last 96 hours fails visibly; a partial answer marks
 nothing gone.
 
+**Conditional requests (off by default).** With `crawl.http_cache: { "enabled": true }` (optional `max_body_kb`, default 5120) every plain GET whose answer carried an `ETag` or `Last-Modified` and a text body is kept in `<data>/http-cache/`; the next GET of that URL sends `If-None-Match` / `If-Modified-Since`, and a `304 Not Modified` is handed to the provider as the stored body (`crawler/httpcache.mjs`, under the policy guard, so robots, cooldowns and Crawl-delay apply as before). Answers without a validator, POSTs and binary bodies are untouched. Unset, nothing changes.
+
 **Generous with pages, within the cycle.** Pagination is followed to the end: every paging loop stops at an empty page, a page without
 new postings or the stated total, with a safety stop at 500 pages (entry key `max_pages` caps it per board). A sitemap index is read
 in full (up to 500 child sitemaps; it was 10). The providers that read one page per posting have higher defaults (`sitemap` 10000,

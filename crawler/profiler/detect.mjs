@@ -2,6 +2,7 @@
 // paginated_list configuration that reads it, job-like JSON arrays (for sniffed XHR responses), job sitemaps and RSS feeds.
 // Every function takes a document and returns data, so the tests run them on captured pages (crawler/tests/fixtures/profiler-*).
 import { providers } from '../providers.mjs';
+import { isVendorHost } from './platforms.mjs';
 
 // Providers that are boards of many employers, search backends or config-driven: never the answer to "which ATS does this site use".
 export const NOT_AN_ATS = new Set(['spacecareers', 'spacecapital', 'spaceindividuals', 'jobsinphotonics', 'mycareersfuture', 'eures', 'usajobs',
@@ -72,7 +73,7 @@ export function atsFingerprints(html, pageUrl) {
       if (!slug || typeof slug !== 'string') continue;
       // A hosted ATS lives on its own host (boards.greenhouse.io, x.jobs.personio.de); a company-specific provider (bwi.de, tttech.com)
       // or an ATS on the company's domain counts only when the URL is on the page's own registrable domain, never on a link elsewhere.
-      if (!(ATS_HOST.test(h) || regDomain(h) === pageDom)) continue;
+      if (!(ATS_HOST.test(h) || isVendorHost(h) || regDomain(h) === pageDom)) continue;   // isVendorHost: fingerprints.json hosts (rexx, varbi, reachmee ...)
       if (/^(?:embed|js|job_board|jobs|careers|api|v\d+|www|app|static|assets|cdn|widget)$/i.test(slug)) continue;   // a path word or the vendor's own host (app.teamtailor.com), not a tenant
       note(name, slug, u); break;
     }

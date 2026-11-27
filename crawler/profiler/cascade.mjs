@@ -10,6 +10,7 @@
 import { providers, parseJobPage } from '../providers.mjs';
 import { jobsFromJsonLd } from '../providers-generic.mjs';
 import { getPage, BudgetError, RobotsError } from './net.mjs';
+import { identifyPlatforms, cnameOf } from './platforms.mjs';
 import {
   atsFingerprints, careerLinks, listLinks, feedLinks, linkGroups, htmlListConfig, pagination, jobArrays, pagingParam, sitemapLocs,
   robotsSitemaps, sitemapJobGroup, rssItems, RSS_LIST, inlineJsonJobs, titleScore, jobAnchors, commonJobDir, isJobLike, regDomain, hostOf, reEscape, JOB_URL_TOKENS, textOf,
@@ -140,8 +141,18 @@ export async function profileSite(site, env) {
       x.hits += f.hits; ats.set(k, x);
     }
     const atsList = [...ats.values()].sort((a, b) => b.hits - a.hits);
+    // Multi-signal identification (fingerprints.json): names the platform even when no link gives a slug, and makes the slug for boards
+    // served on the employer's own host (rexx, Phenom, Teamtailor, Avature, umantis, SuccessFactors CSB ...). Candidates not already
+    // found above are tried after them, through the same verification.
+    const cname = env.dns === false ? '' : await cnameOf(hostOf(main.url));
+    const plats = identifyPlatforms({ pages, cnames: cname ? { [hostOf(main.url)]: cname } : {} });
+    if (plats.length) rec.platforms = plats.slice(0, 3).map((x) => ({ id: x.id, provider: x.provider, confidence: x.confidence, slug: x.slug, signals: x.signals.map((g) => g.kind) }));
+    for (const x of plats) {
+      if (!x.provider || !x.slug || x.confidence < 0.5 || ats.has(`${x.provider}\t${x.slug}`)) continue;
+      atsList.push({ provider: x.provider, slug: x.slug, via: `platform ${x.id} (${x.confidence})`, hits: 0, page: main.url });
+    }
     if (atsList.length && want("ats")) {
-      for (const a of atsList.slice(0, 2)) {
+      for (const a of [...atsList.slice(0, 2), ...atsList.slice(2).filter((a) => a.via?.startsWith('platform ')).slice(0, 1)]) {
         const entry = { name: site.name, careers_url: a.page, provider: a.provider, slug: a.slug };
         ctx.budget += 6;   // an ATS API may need a few requests (pages, a token); they are the ATS's, not the employer's
         const before = ctx.trace.length;
@@ -224,7 +235,10 @@ export async function profileSite(site, env) {
       } else steps.sitemap = sm?.robots ? 'fail:robots' : 'fail:no_sitemap';
     } else steps.sitemap = 'skip:budget';
     for (const p of want("rss") ? pages : []) {
-      const feed = feedLinks(p.html, p.url).find((u) => /job|karriere|career|stellen|vacanc/i.test(u));
+      let feed = feedLinks(p.html, p.url).find((u) => /job|karriere|career|stellen|vacanc/i.test(u));
+      // WP Job Manager (WordPress plugin, named by fingerprints.json) serves every listing as RSS at ?feed=job_feed even when the page
+      // links no feed (approach from career-ops providers/wp-job-manager.mjs, MIT)
+      if (!feed && p === main && plats.some((x) => x.id === 'wp-job-manager')) feed = new URL('/?feed=job_feed&posts_per_page=100', p.url).href;
       if (!feed || ctx.requests >= ctx.budget - 1) continue;
       const f = await fetchPage(feed, 'rss');
       const items = f && !f.robots ? rssItems(f.html) : [];

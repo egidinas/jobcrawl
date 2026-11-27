@@ -74,6 +74,11 @@ job-board URL. The minimal profile polls three boards:
   baseline (`expected_min`/`expected_max`); the crawl flags `reprofile_due` in `source-health.json` when a board falls under it for 3
   cycles, and `reprofile-queue` turns the flags into profiler input. The crawl policy applies (README, Responsible crawling: robots.txt
   advisory or strict, Crawl-delay, no login pages, opt-outs flagged), plus one request per second per host and ~10 requests per site.
+  Board identification is multi-signal (`crawler/profiler/platforms.mjs` over the data file `crawler/profiler/fingerprints.json`: vendor
+  host of the page or a redirect, CNAME of the careers host, script/iframe/form sources, links, platform markup), with a confidence per
+  platform; it names unsupported platforms in the report (`platforms`) and makes the slug for boards on the employer's own host (rexx,
+  Phenom, Teamtailor, Avature, umantis, SuccessFactors). `node crawler/profiler/eval-detect.mjs` scores it against the companies file
+  (precision/recall per provider, 20 % hold-out).
 * `timeout_ms` is the fetch budget of one entry (default 35000, at most 600000): raise it for a huge board that pages slowly, e.g. a
   Workday tenant with thousands of rows (`"timeout_ms": 180000`).
 * `enabled: false` skips an employer without removing it.
