@@ -6,6 +6,8 @@
 // Fleet node rules become policies here: an item marked `long` (expected > 15 min) goes only to a worker with a measured smoke for its
 // topic, and bookings come from the measured numbers, never from a guess (AGENTS.md "Node tasks").
 
+import { canHandle } from '../compat/handshake.mjs';
+
 export function meets(worker, requires, topic = null) {
   if (!requires) return { ok: true };
   const c = worker?.capabilities ?? {};
@@ -14,5 +16,7 @@ export function meets(worker, requires, topic = null) {
   for (const k of ['vram_gb', 'cpu_threads', 'ram_gb']) if (requires[k] != null && !((c[k] ?? 0) >= requires[k])) miss.push(`${k}>=${requires[k]}`);
   for (const k of ['models', 'packs']) for (const m of requires[k] ?? []) if (!(c[k] ?? []).includes(m)) miss.push(`${k}:${m}`);
   if (requires.long && topic && !worker?.policy?.smoke_measured?.[topic]) miss.push(`measured smoke for ${topic}`);
+  // capability handshake: schema majors and features the item needs must be in the worker's advertisement (compat/handshake.mjs)
+  if (requires.schemas || requires.features) { const h = canHandle(worker?.advertisement ?? {}, requires); if (!h.ok) miss.push(...h.missing); }
   return miss.length ? { ok: false, missing: miss } : { ok: true };
 }

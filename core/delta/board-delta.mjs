@@ -26,6 +26,7 @@
 // Mass-departure guard: when a complete read would drop more than (1 - keepRatio) of a board's open postings (with at least minOpen
 // open), the misses are held until `confirm` consecutive reads say the same (the crawl's livenessGuard, resilience.mjs GUARD).
 import { postingId, sha256 } from '../id.mjs';
+import { PRODUCER } from '../compat/envelope.mjs';
 
 export const STATE_SCHEMA = 'board-state/v1';
 export const DELTA_SCHEMA = 'delta/v1';
@@ -76,7 +77,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
   state.runs++;
   state.last_run = t;
   const events = [];
-  const emit = (op, extra) => events.push({ schema: DELTA_SCHEMA, board, seq: ++state.seq, run: runId, t, op, ...extra });
+  const emit = (op, extra) => events.push({ schema: DELTA_SCHEMA, producer: PRODUCER, board, seq: ++state.seq, run: runId, t, op, ...extra });
 
   if (!run || run.ok === false) {
     emit('board-failed', { cls: run?.error?.cls ?? 'OTHER', detail: String(run?.error?.detail ?? run?.error?.message ?? '').slice(0, 300) });

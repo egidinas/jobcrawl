@@ -10,6 +10,8 @@
     "stage": { "type": "string", "pattern": "^[a-z0-9_.-]+@[A-Za-z0-9_.+-]+$" },
     "version": { "type": "integer", "minimum": 0 },
     "value": {},
+    "status": { "enum": ["ok", "skipped", "unsupported", "failed"], "description": "missing = ok (older producers)" },
+    "reason": { "type": "string" },
     "artifact": { "$ref": "artifact-ref-v1.schema.json" },
     "provenance": { "type": "object", "required": ["worker"], "properties": {
       "worker": { "type": "string" }, "host": { "type": "string" }, "model": { "type": "string" }, "t": { "type": "string" } } }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/envelope-v1.schema.json",
+  "title": "jobcrawl message envelope (CloudEvents 1.0 profile)",
+  "description": "Every message between machines is a CloudEvents 1.0 JSON event. jcschema names the payload schema and major; jcproducer the package@semver that wrote it. Readers are tolerant: unknown attributes are ignored; unknown or newer schemas are stored and passed through, not rejected.",
+  "type": "object",
+  "required": ["specversion", "id", "source", "type", "jcschema", "jcproducer", "data"],
+  "properties": {
+    "specversion": { "const": "1.0" },
+    "id": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "pattern": "^io[.]jobcrawl[.]" },
+    "time": { "type": "string" },
+    "subject": { "type": "string" },
+    "datacontenttype": { "const": "application/json" },
+    "dataschema": { "type": "string" },
+    "jcschema": { "type": "string", "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$" },
+    "jcproducer": { "type": "string" },
+    "data": {}
+  }
+}

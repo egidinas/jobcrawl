@@ -12,6 +12,8 @@
     "payload": {},
     "priority": { "type": "integer" },
     "maxAttempts": { "type": "integer", "minimum": 1 },
+    "schema": { "const": "work-item/v1" },
+    "producer": { "type": "string" },
     "requires": { "$ref": "#/$defs/requires" }
   },
   "$defs": {
@@ -19,6 +21,8 @@
       "net": { "type": "boolean" }, "browser": { "type": "boolean" }, "gpu": { "type": "boolean" },
       "vram_gb": { "type": "number" }, "cpu_threads": { "type": "integer" }, "ram_gb": { "type": "number" },
       "models": { "type": "array", "items": { "type": "string" } }, "packs": { "type": "array", "items": { "type": "string" } },
-      "long": { "type": "boolean", "description": "expected > 15 min: only workers with a measured smoke for the topic" } } }
+      "long": { "type": "boolean", "description": "expected > 15 min: only workers with a measured smoke for the topic" },
+      "schemas": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "schema name -> major the worker must understand" },
+      "features": { "type": "array", "items": { "type": "string" } } } }
   }
 }

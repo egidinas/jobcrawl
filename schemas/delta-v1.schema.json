@@ -7,6 +7,7 @@
   "required": ["schema", "board", "seq", "run", "t", "op"],
   "properties": {
     "schema": { "const": "delta/v1" },
+    "producer": { "type": "string", "description": "package@semver that wrote the event" },
     "board": { "type": "string", "minLength": 1 },
     "seq": { "type": "integer", "minimum": 1 },
     "event_id": { "type": "string", "description": "optional global id (planned: store-wide order for consumer bookmarks)" },

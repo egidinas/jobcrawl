@@ -12,6 +12,7 @@
       "vram_gb": { "type": "number" }, "cpu_threads": { "type": "integer" }, "ram_gb": { "type": "number" },
       "models": { "type": "array", "items": { "type": "string" } }, "packs": { "type": "array", "items": { "type": "string" } },
       "topics": { "type": "array", "items": { "type": "string" } } } },
+    "advertisement": { "type": "object", "description": "capability handshake: { producer, schemas: { name: [majors] }, features: [..], engine? }" },
     "budgets": { "type": "object", "description": "what the worker may book: measured use plus a margin" },
     "policy": { "type": "object", "properties": { "smoke_measured": { "type": "object" } } }
   }

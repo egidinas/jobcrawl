@@ -22,6 +22,9 @@
     "./core/artifacts": "./core/dist/artifacts.mjs",
     "./core/match": "./core/dist/match.mjs",
     "./core/merge": "./core/dist/merge.mjs",
+    "./core/envelope": "./core/compat/envelope.mjs",
+    "./core/handshake": "./core/compat/handshake.mjs",
+    "./core/graceful": "./core/compat/graceful.mjs",
     "./schemas/*": "./schemas/*",
     "./crawler/*": "./crawler/*",
     "./package.json": "./package.json"
