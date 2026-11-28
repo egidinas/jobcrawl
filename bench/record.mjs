@@ -20,7 +20,7 @@
 //
 //   node bench/record.mjs --profile <dir> --companies <file> --out <dir> [--log <file>] [--concurrency 8] [--host-concurrency 2]
 //        [--host-gap-ms 500] [--exclude eures,usajobs] [--stop-at ISO] [--hard-stop ISO] [--min-free-gb 45] [--seed-cache <dir>]
-//        [--limit N] [--probe-max 5] [--live-index <dir>] [--live-gap-ms 60000] [--live-max-wait-ms 300000] [--dry-run]
+//        [--global-gap-ms 250] [--connect-retries 2] [--degraded-pause-s 60] [--limit N] [--probe-max 5] [--live-index <dir>] [--live-gap-ms 60000] [--live-max-wait-ms 300000] [--dry-run]
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, statfsSync, writeFileSync } from 'node:fs';
@@ -31,7 +31,7 @@ const args = process.argv.slice(2);
 const opt = (n, d) => (args.includes(`--${n}`) ? args[args.indexOf(`--${n}`) + 1] : d);
 const flag = (n) => args.includes(`--${n}`);
 const USAGE = 'usage: node bench/record.mjs --profile <dir> --companies <file> --out <dir> [--log <file>] [--concurrency 8] [--host-concurrency 2] '
-  + '[--host-gap-ms 500] [--exclude eures,usajobs] [--stop-at ISO] [--hard-stop ISO] [--min-free-gb 45] [--seed-cache <dir>] [--limit N] [--probe-max 5] [--live-index <dir>] [--live-gap-ms 60000] [--live-max-wait-ms 300000] [--dry-run]';
+  + '[--host-gap-ms 500] [--exclude eures,usajobs] [--stop-at ISO] [--hard-stop ISO] [--min-free-gb 45] [--seed-cache <dir>] [--global-gap-ms 250] [--connect-retries 2] [--degraded-pause-s 60] [--limit N] [--probe-max 5] [--live-index <dir>] [--live-gap-ms 60000] [--live-max-wait-ms 300000] [--dry-run]';
 if (flag('help') || flag('h') || !opt('profile') || !opt('companies') || !opt('out')) { console.log(USAGE); process.exit(flag('help') || flag('h') ? 0 : 2); }
 
 // Imports that touch the network layer only after the argument check (a --help never loads them).
@@ -42,6 +42,7 @@ const { setUserAgent } = uaMod;
 const { configurePolicy, policyFromProfile, installGuard, flushPolicy, interleaveByProvider } = await import('../crawler/policy.mjs');
 const { classifyError } = await import('../crawler/resilience.mjs');
 const { boardKey } = await import('../core/state/board-store.mjs');
+const { makePacedFetch, errorCode } = await import('../core/fetch/pace.mjs');
 
 const OUT = pathResolve(opt('out'));
 const LOG = opt('log') ? pathResolve(opt('log')) : join(OUT, 'record.log');
@@ -98,8 +99,19 @@ setCacheDir(CACHE);
 configurePolicy({ ...policyFromProfile(profile, OUT) });
 installGuard();
 const als = new AsyncLocalStorage();
-const guarded = globalThis.fetch;
-const T = { req: 0, wire: 0, bytes: 0, objects: 0, capErr: 0, netErr: 0, probes: 0, p304: 0, p200same: 0, p200diff: 0, pOther: 0, liveWaits: 0, liveOverlap: 0, liveErr: 0 };
+const guarded0 = globalThis.fetch;
+const guarded = makePacedFetch(guarded0, { gapMs: GLOBAL_GAP, retries: CONNECT_RETRIES, backoffMs: [3000, 10000],
+  onError: (url, code, attempt) => { T.causes[code] = (T.causes[code] ?? 0) + 1; noteAttempt(true); if (attempt > 0) T.retries++; } });
+const T = { req: 0, wire: 0, bytes: 0, objects: 0, capErr: 0, netErr: 0, probes: 0, p304: 0, p200same: 0, p200diff: 0, pOther: 0, liveWaits: 0, liveOverlap: 0, liveErr: 0, retries: 0, degradedPauses: 0 };
+// Global pacing and connect retries (core/fetch/pace.mjs): at most one request START per --global-gap-ms across all boards (bursts of
+// simultaneous new connections are dropped on the NUC uplink), connect-level failures retried --connect-retries times (3 s, 10 s).
+// Every failed attempt is counted by its real cause code (T.causes) and a sliding window of the last 40 attempts drives the
+// "network degraded" pause: when half of them are connect failures, no new board starts for --degraded-pause-s seconds.
+const GLOBAL_GAP = Number(opt('global-gap-ms', 250)), CONNECT_RETRIES = Number(opt('connect-retries', 2)), PAUSE_S = Number(opt('degraded-pause-s', 60));
+T.causes = {};
+const recent = [];
+const noteAttempt = (bad) => { recent.push(bad ? 1 : 0); if (recent.length > 40) recent.shift(); };
+const degraded = () => recent.length >= 20 && recent.reduce((a, b) => a + b, 0) >= recent.length / 2;
 
 // Hosts the live cycle is fetching right now: the live raw-capture index (--live-index <dir>, e.g. ~/atlas/raw/index) is tailed every
 // 5 s; a host the live crawl requested within --live-gap-ms waits until that gap has passed (at most --live-max-wait-ms, then it goes
@@ -180,10 +192,10 @@ globalThis.fetch = async (input, init = {}) => {
   const release = await hostSlot(host);
   const t0 = Date.now();
   let res;
-  try { res = await guarded(input, init); }
+  try { res = await guarded(input, init); noteAttempt(false); }
   catch (e) {
     T.netErr++; T.req++; if (ctx) ctx.req++;
-    try { indexLine({ t: new Date().toISOString(), board: ctx?.board ?? null, provider: ctx?.provider ?? null, url, method, status: 0, err: classifyError(e).cls, detail: String(e?.message ?? e).slice(0, 200), ms: Date.now() - t0, probe: ctx?.probe ? true : undefined }); } catch {}
+    try { indexLine({ t: new Date().toISOString(), board: ctx?.board ?? null, provider: ctx?.provider ?? null, url, method, status: 0, err: classifyError(e).cls, code: errorCode(e), detail: String(e?.cause?.message ?? e?.message ?? e).slice(0, 200), ms: Date.now() - t0, probe: ctx?.probe ? true : undefined }); } catch {}
     throw e;
   } finally { release(); }
   try {
@@ -247,7 +259,7 @@ const started = Date.now();
 let lastProgress = Date.now();
 function progress(cur) {
   const el = (Date.now() - started) / 60000;
-  log(`progress ${n}/${boards.length} ok=${ok} failed=${failed} req=${T.req} MB=${(T.bytes / 1e6).toFixed(0)} wireMB=${(T.wire / 1e6).toFixed(0)} probes=${T.probes} 304=${T.p304} live_waits=${T.liveWaits} min=${el.toFixed(1)} rate=${(n / Math.max(el, 0.01)).toFixed(1)}/min free_gb=${(freeBytes() / 1024 ** 3).toFixed(1)} current="${cur ?? ''}"`);
+  log(`progress ${n}/${boards.length} ok=${ok} failed=${failed} req=${T.req} MB=${(T.bytes / 1e6).toFixed(0)} wireMB=${(T.wire / 1e6).toFixed(0)} probes=${T.probes} 304=${T.p304} live_waits=${T.liveWaits} retries=${T.retries} causes=${JSON.stringify(T.causes)} pauses=${T.degradedPauses} min=${el.toFixed(1)} rate=${(n / Math.max(el, 0.01)).toFixed(1)}/min free_gb=${(freeBytes() / 1024 ** 3).toFixed(1)} current="${cur ?? ''}"`);
   writeFileSync(join(OUT, 'summary.json'), JSON.stringify({ t: new Date().toISOString(), done: n, todo: boards.length, ok, failed, totals: T, providers: P, stop: stopReason }, null, 1));
 }
 
@@ -259,11 +271,11 @@ async function recordBoard(b) {
   try {
     jobs = await als.run(ctx, () => Promise.race([providers[b.provider].fetch(b._slug, b),
       new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`Timed out after ${Math.round(ms / 1000)}s (${b.name})`)), ms); })]));
-  } catch (e) { err = classifyError(e); } finally { clearTimeout(timer); }
+  } catch (e) { err = { ...classifyError(e), code: errorCode(e) }; } finally { clearTimeout(timer); }
   const probeResult = ctx.cand.length ? await probe(ctx) : null;
   const items = Array.isArray(jobs) ? jobs : [];
   const dh = (d) => (d ? createHash('sha256').update(String(d)).digest('hex').slice(0, 16) : null);
-  const rec = { board: b.name, provider: b.provider, slug: b._slug, ok: !err, cls: err?.cls ?? null, detail: err ? String(err.detail ?? '').slice(0, 200) : undefined,
+  const rec = { board: b.name, provider: b.provider, slug: b._slug, ok: !err, cls: err?.cls ?? null, code: err?.code, detail: err ? String(err.detail ?? '').slice(0, 200) : undefined,
     jobs: items.length, incomplete: items.incomplete ? true : undefined, emptyOk: items.emptyOk === true || undefined,
     req: ctx.req, bytes: ctx.bytes, wire: ctx.wire, ms: Date.now() - t0, validators: ctx.cand.length ? { etag: ctx.cand.some((c) => c.etag), lm: ctx.cand.some((c) => c.lm) } : null, probe: probeResult };
   if (!err) {
@@ -295,6 +307,13 @@ async function worker() {
     if (stopReason) return;
     if (Date.now() >= STOP_AT) { stopReason ??= 'stop-at reached'; return; }
     if (freeBytes() < MIN_FREE) { stopReason ??= `free disk below ${MIN_FREE / 1024 ** 3} GB`; return; }
+    if (degraded()) {
+      T.degradedPauses++;
+      log(`network degraded: ${recent.reduce((a, b) => a + b, 0)}/${recent.length} recent request attempts failed to connect (causes ${JSON.stringify(T.causes)}); no new board for ${PAUSE_S} s`);
+      recent.length = 0;
+      await new Promise((r) => setTimeout(r, PAUSE_S * 1000));
+      continue;
+    }
     const b = boards[i++];
     try { await recordBoard(b); } catch (e) { failed++; log(`board-error ${b.name}: ${e?.message ?? e}`); }
     n++;
@@ -306,5 +325,5 @@ if (hardTimer) clearTimeout(hardTimer);
 if (liveTimer) clearInterval(liveTimer);
 progress('end');
 flushPolicy();
-log(`result ${stopReason ? `STOPPED (${stopReason})` : 'done'}: ${n}/${boards.length} boards, ok=${ok} failed=${failed}, requests=${T.req}, MB=${(T.bytes / 1e6).toFixed(0)}, wireMB=${(T.wire / 1e6).toFixed(0)}, objects=${T.objects}, probes=${T.probes} (304 ${T.p304}, 200-same ${T.p200same}, 200-diff ${T.p200diff}, other ${T.pOther}), capture errors=${T.capErr}, network errors=${T.netErr}, live-host waits=${T.liveWaits} (went ahead after max wait ${T.liveOverlap}), min=${((Date.now() - started) / 60000).toFixed(1)}`);
+log(`result ${stopReason ? `STOPPED (${stopReason})` : 'done'}: ${n}/${boards.length} boards, ok=${ok} failed=${failed}, requests=${T.req}, MB=${(T.bytes / 1e6).toFixed(0)}, wireMB=${(T.wire / 1e6).toFixed(0)}, objects=${T.objects}, probes=${T.probes} (304 ${T.p304}, 200-same ${T.p200same}, 200-diff ${T.p200diff}, other ${T.pOther}), capture errors=${T.capErr}, network errors=${T.netErr}, live-host waits=${T.liveWaits} (went ahead after max wait ${T.liveOverlap}), connect retries=${T.retries}, failure causes ${JSON.stringify(T.causes)}, degraded pauses=${T.degradedPauses}, min=${((Date.now() - started) / 60000).toFixed(1)}`);
 process.exit(0);
