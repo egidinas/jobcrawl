@@ -45,7 +45,7 @@ const fail = (msg, code = 2) => { if (JSON_OUT) process.stdout.write(JSON.string
 if (cmd === 'help' || flag('help') || rest.includes('-h')) { console.log(USAGE); process.exit(0); }
 
 const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
-const { join, resolve: pathResolve } = await import('node:path');
+const { join, dirname, resolve: pathResolve } = await import('node:path');
 const { gunzipSync } = await import('node:zlib');
 
 function guardDataDir(dir) {
@@ -143,7 +143,7 @@ switch (cmd) {
     PROFILE_MOD = await import('../crawler/profile.mjs');
     const { companies } = companiesOf(opt('profile'));
     const { loadRouting, routeFor } = await import('../core/route/router.mjs');
-    const { legacyRowsByBoard, compareBoard, byProvider, PARITY_SCHEMA, legacyFetchesFromLifecycle, historyRowsForUrls } = await import('../core/route/parity.mjs');
+    const { legacyRowsByBoard, compareBoard, byProvider, PARITY_SCHEMA, lifecycleIndex, lifecycleFirstSeen, historyRowsForUrls } = await import('../core/route/parity.mjs');
     const { loadLedger, saveLedger, recordParity, ledgerSummary } = await import('../core/route/ledger.mjs');
     const { boardKey } = await import('../core/state/board-store.mjs');
     const { runBoard } = await import('../core/run-board.mjs');
@@ -163,10 +163,13 @@ switch (cmd) {
     const lcFile = opt('lifecycle') ? pathResolve(opt('lifecycle')) : join(pathResolve(legacy), 'lifecycle', 'state.json');
     const useLc = !flag('no-lifecycle') && existsSync(lcFile);
     const skewMin = Number(opt('skew-min', 60));
-    let legacyRows, fetches = null;
+    let legacyRows, fetches = null, urlBoard = null, firstSeen = null;
     try {
       if (useLc) {
-        fetches = legacyFetchesFromLifecycle(lcFile, picked.map(({ e }) => e.name));
+        const idx = lifecycleIndex(lcFile);
+        urlBoard = idx.urlBoard;
+        fetches = new Map(picked.map(({ e }) => [e.name, idx.fetches.get(e.name)]).filter(([, f]) => f));
+        firstSeen = lifecycleFirstSeen(join(dirname(lcFile), 'events'), [...fetches.values()].flatMap((f) => f.urls));
         const rowsByUrl = await historyRowsForUrls(join(pathResolve(legacy), 'scan-history.tsv'), [...fetches.values()].flatMap((f) => f.urls));
         legacyRows = new Map([...fetches].map(([b, f]) => [b, f.urls.map((u) => rowsByUrl.get(u) ?? { url: u, title: '', location: '' })]));
       } else legacyRows = await legacyRowsByBoard(join(pathResolve(legacy), 'scan-history.tsv'), picked.map(({ e }) => e.name));
@@ -183,10 +186,11 @@ switch (cmd) {
         const r = await runBoard(data, e, { read, rules: LEGACY_RULES });
         if (r.skipped) reports.push({ board: e.name, provider, error: r.skipped });
         else {
-          const c = compareBoard(legacyRows.get(e.name) ?? [], openPostings(r.state), { sameFetch: useLc });
           const f = fetches?.get(e.name);
+          const c = compareBoard(legacyRows.get(e.name) ?? [], openPostings(r.state), { sameFetch: useLc, ownBoard: e.name, urlBoard, complete: read.complete !== false, newAt: read.recorded_at ? Date.parse(read.recorded_at) : null, firstSeen });
+          if (useLc && !f && c.verdict !== 'empty') c.verdict = 'no-legacy';   // the legacy crawl has no answer of this board (probation-disabled, not due, ...)
           const gap = f && read.recorded_at ? Math.round(Math.abs(Date.parse(read.recorded_at) - f.at) / 60000) : null;
-          if (useLc && c.verdict !== 'pass' && c.verdict !== 'empty' && gap != null && gap > skewMin) c.verdict = 'skew';
+          if (useLc && (c.verdict === 'fail' || c.verdict === 'near') && gap != null && gap > skewMin) c.verdict = 'skew';
           reports.push({ board: e.name, provider, ...c, ...(useLc ? { gap_min: gap, legacy_fetch: f ? new Date(f.at).toISOString() : null } : {}) });
         }
       }
@@ -201,7 +205,7 @@ switch (cmd) {
       saveLedger(lf, ledger);
       summary = ledgerSummary(ledger);
     }
-    const v = { pass: 0, near: 0, fail: 0, skew: 0, empty: 0, error: 0 };
+    const v = { pass: 0, near: 0, fail: 0, skew: 0, incomplete: 0, 'no-legacy': 0, empty: 0, error: 0 };
     for (const r of reports) v[r.error ? 'error' : r.verdict]++;
     console.error(`[dual-run] result boards=${reports.length} ${JSON.stringify(v)} in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
     out({ verdicts: v, ledger: summary, report: opt('report') ?? null }, `verdicts ${JSON.stringify(v)}${summary ? `; ledger ${JSON.stringify(summary)}` : ''}`);

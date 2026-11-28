@@ -7,6 +7,10 @@ import { postingKey } from '../crawler/postingkey.mjs';
 
 export const ID_VERSION = 'jc1';
 const TRACKING = /^(utm_[a-z]+|gh_src|gclid|fbclid|mc_[a-z]+|_hs[a-z]+|ref|refid|src|source|trk|lever-source(\[\])?|lever-origin)$/i;
+// Session ids in the query (?sid=<32 hex>, jsessionid, phpsessid) change on every visit and say nothing about the posting (parity
+// 2026-11-28: adesso and noris job portals); dropped only when the value looks like a session token, so a numeric job id named sid stays.
+const SESSION = /^(sid|sessionid|session_id|jsessionid|phpsessid|cfid|cftoken)$/i;
+const SESSION_VALUE = /^[0-9a-f]{24,}$/i;
 const B32 = 'abcdefghijklmnopqrstuvwxyz234567';
 
 export function base32(buf) {
@@ -25,7 +29,7 @@ export function normaliseUrl(url) {
   try { u = new URL(String(url ?? '').trim()); } catch { return ''; }
   u.hash = '';
   u.hostname = u.hostname.toLowerCase().replace(/^www\./, '');
-  const keep = [...u.searchParams.entries()].filter(([k]) => !TRACKING.test(k)).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const keep = [...u.searchParams.entries()].filter(([k, v]) => !TRACKING.test(k) && !(SESSION.test(k) && SESSION_VALUE.test(v))).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   u.search = keep.length ? '?' + new URLSearchParams(keep).toString() : '';
   let path = u.pathname.replace(/\/+$/, '') || '/';
   return `${u.hostname}${u.port ? ':' + u.port : ''}${path}${u.search}`;

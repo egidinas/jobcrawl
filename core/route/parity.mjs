@@ -12,7 +12,8 @@
 //            fail  (anything else)
 //            empty (neither side lists anything)
 // A board's parity passes the cut-over gate after `PASSES_NEEDED` consecutive passing reports (ledger.mjs).
-import { createReadStream, existsSync, readFileSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { postingId } from '../id.mjs';
 
@@ -45,7 +46,12 @@ export async function legacyRowsByBoard(historyFile, boards, { includeUnknown = 
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 
-export function compareBoard(legacyRows, newOpen, { sameFetch = false } = {}) {
+export function compareBoard(legacyRows, newOpen, { sameFetch = false, ownBoard = null, urlBoard = null, complete = true, newAt = null, firstSeen = null } = {}) {
+  // Fair-comparison exclusions (parity analysis of the 19 failures, 2026-11-28), counted separately and never a failure:
+  //   shared        a posting only the new side lists that the legacy crawl attributes to ANOTHER board (the same tenant tracked under
+  //                 two names, or an aggregator's copy of an employer's posting: the lifecycle state keeps one board per url)
+  //   added_since   a posting only the legacy side lists that the legacy crawl first saw AFTER the new answer was taken
+  //   incomplete    postings only the legacy side lists when the new answer was incomplete (a page budget ran out)
   // what the board lists now, by the legacy history: rows seen on the board's last read day (older filtered/extra rows are kept by the
   // legacy history after the board stopped listing them; the same rule as the baseline import). Rows that come from ONE legacy fetch
   // (legacyFetchesFromLifecycle) are taken as they are (sameFetch).
@@ -63,24 +69,37 @@ export function compareBoard(legacyRows, newOpen, { sameFetch = false } = {}) {
     if (ld) loc++;
     if ((td || ld) && samples.field.length < 5) samples.field.push({ url: l.url, legacy: { title: l.title, location: l.location }, new: { title: n.title, location: n.location } });
   }
-  for (const [id, n] of N) if (!L.has(id) && samples.only_new.length < 5) samples.only_new.push(n.url);
-  const onlyL = L.size - both, onlyN = N.size - both;
+  let shared = 0, addedSince = 0, incompleteMissing = 0, onlyN = 0, onlyL = 0;
+  for (const [id, n] of N) {
+    if (L.has(id)) continue;
+    const owner = urlBoard?.get(n.url);
+    if (owner && ownBoard && owner !== ownBoard) { shared++; continue; }
+    onlyN++;
+    if (samples.only_new.length < 5) samples.only_new.push(n.url);
+  }
+  for (const [id, l] of L) {
+    if (N.has(id)) continue;
+    const fs = firstSeen?.get(l.url);
+    if (fs && newAt && fs > newAt) { addedSince++; continue; }
+    if (!complete) { incompleteMissing++; continue; }
+    onlyL++;
+  }
   const union = L.size + N.size - both;
   const overlap = union ? both / union : 1;
   const fieldRate = both ? (title + loc) / both : 0;
   // With one legacy fetch (sameFetch) the verdict is about the SET of postings: the legacy history keeps the title and location of a
   // posting's FIRST sighting and never updates them, so field differences there are not disagreement; they are still counted.
   const verdict = !union ? 'empty'
-    : sameFetch ? (onlyL === 0 && onlyN === 0 ? 'pass' : overlap >= 0.99 ? 'near' : 'fail')
+    : sameFetch ? (onlyL === 0 && onlyN === 0 ? (addedSince ? 'skew' : incompleteMissing ? 'incomplete' : 'pass') : overlap >= 0.99 ? 'near' : 'fail')
     : (onlyL === 0 && onlyN === 0 && title === 0 && loc === 0) ? 'pass' : (overlap >= 0.99 && fieldRate <= 0.01) ? 'near' : 'fail';
-  return { legacy: L.size, new: N.size, both, only_legacy: onlyL, only_new: onlyN, title_diff: title, location_diff: loc, overlap: +overlap.toFixed(4), verdict, samples };
+  return { legacy: L.size, new: N.size, both, only_legacy: onlyL, shared, added_since: addedSince, incomplete_missing: incompleteMissing, only_new: onlyN, title_diff: title, location_diff: loc, overlap: +overlap.toFixed(4), verdict, samples };
 }
 
 /** Per-provider aggregate of board reports: { provider: { boards, pass, near, fail, empty, legacy, new, both } }. */
 export function byProvider(reports) {
   const agg = {};
   for (const r of reports) {
-    const a = (agg[r.provider ?? '?'] ??= { boards: 0, pass: 0, near: 0, fail: 0, skew: 0, empty: 0, error: 0, legacy: 0, new: 0, both: 0 });
+    const a = (agg[r.provider ?? '?'] ??= { boards: 0, pass: 0, near: 0, fail: 0, skew: 0, incomplete: 0, 'no-legacy': 0, empty: 0, error: 0, legacy: 0, new: 0, both: 0 });
     a.boards++;
     if (r.error) { a.error++; continue; }
     a[r.verdict]++;
@@ -138,6 +157,38 @@ export async function historyRowsForUrls(historyFile, urls) {
     if (!want.has(line.slice(0, tab))) continue;
     const cols = line.split('\t');
     out.set(cols[0], Object.fromEntries(head.map((h, i) => [h, cols[i] ?? ''])));
+  }
+  return out;
+}
+
+/** url -> board and board -> latest fetch, from one read of the lifecycle state. */
+export function lifecycleIndex(stateFile) {
+  const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+  const urlBoard = new Map(), byBoard = new Map();
+  for (const [url, v] of Object.entries(st.urls ?? {})) {
+    const board = v?.[0], ms = Number(v?.[3]) || 0;
+    urlBoard.set(url, board);
+    const b = byBoard.get(board) ?? byBoard.set(board, { at: 0, all: [] }).get(board);
+    b.all.push([url, ms]);
+    if (ms > b.at) b.at = ms;
+  }
+  const fetches = new Map([...byBoard].map(([board, b]) => [board, { at: b.at, urls: b.all.filter(([, ms]) => ms === b.at).map(([u]) => u) }]));
+  return { urlBoard, fetches };
+}
+
+/** url -> time (ms) the legacy crawl FIRST saw it (lifecycle events `seen` with first: true), for the urls asked for. Read-only. */
+export function lifecycleFirstSeen(eventsDir, urls, { days = 4 } = {}) {
+  const want = new Set(urls), out = new Map();
+  if (!want.size || !existsSync(eventsDir)) return out;
+  const dayDirs = readdirSync(eventsDir).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort().slice(-days);
+  for (const d of dayDirs) {
+    for (const f of readdirSync(join(eventsDir, d)).filter((x) => x.endsWith('.jsonl'))) {
+      for (const line of readFileSync(join(eventsDir, d, f), 'utf8').split('\n')) {
+        if (!line.includes('"first":true')) continue;
+        let e; try { e = JSON.parse(line); } catch { continue; }
+        if (e.kind === 'seen' && e.first && want.has(e.url) && !out.has(e.url)) out.set(e.url, Date.parse(e.ts));
+      }
+    }
   }
   return out;
 }
