@@ -36,4 +36,4 @@ if (globalThis.gc) globalThis.gc();
 const heapAfter = process.memoryUsage().heapUsed;
 const h = createHash('sha256');
 for (const [k, row] of map) h.update(JSON.stringify([k, Object.entries(row)]) + '\n');
-console.log(JSON.stringify({ mode, rows: map.size, map_sha256: h.digest('hex'), heap_after_load_mb: Math.round(heapAfter / MB), ms }));
+console.log(JSON.stringify({ mode, rows: map.size, map_sha256: h.digest('hex'), heap_after_load_mb: Math.round(heapAfter / MB), max_rss_mb: Math.round(process.resourceUsage().maxRSS / 1024), ms }));
