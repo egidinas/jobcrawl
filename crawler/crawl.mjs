@@ -18,6 +18,7 @@ import { junkVerdict } from './junkgate.mjs';
 import { reprofileCycle } from './profiler/health.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
+import { writeHistoryFile } from './history-write.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { classifyError, makeBreaker, hostOf, breakerHostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
@@ -264,14 +265,11 @@ function loadHistory() {
   }
   return map;
 }
+// The history is written in chunks and compared with the old file while it is written (crawler/history-write.mjs): the same bytes as
+// before, an unchanged history keeps its mtime (downstream steps skip), and the ~170 MB text is never built as one string.
 function saveHistory(map) {
   mkdirSync(OUT_DIR, { recursive: true });
-  const lines = [HEADER.join('\t'), ...[...map.values()].map((r) => HEADER.map((h) => String(r[h] ?? '').replace(/[\t\n]/g, ' ')).join('\t'))];
-  const next = lines.join('\n') + '\n';
-  if (existsSync(HISTORY) && readFileSync(HISTORY, 'utf8') === next) return;   // unchanged: keep the mtime so downstream steps can skip
-  const tmp = `${HISTORY}.tmp`;
-  writeFileSync(tmp, next);
-  renameSync(tmp, HISTORY);
+  writeHistoryFile(HISTORY, HEADER, map.values());
 }
 
 // Rows that left the working history, appended to <data>/scan-history-archive.tsv (same columns; the header is written once)
