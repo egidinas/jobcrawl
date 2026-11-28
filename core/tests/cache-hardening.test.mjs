@@ -101,8 +101,8 @@ function sitemapServer() {
   });
   return new Promise((r) => s.listen(0, '127.0.0.1', () => r(s)));
 }
-const crawl = (prof, data) => new Promise((done) => {
-  const p = spawn(process.execPath, [resolve(ROOT, 'crawler/crawl.mjs'), '--profile', prof, '--data', data], { cwd: ROOT, env: { ...process.env, JOBCRAWL_PROFILE: '', JOBCRAWL_RAW_DIR: '', JOBCRAWL_SHADOW: '' } });
+const crawl = (prof, data, env = {}) => new Promise((done) => {
+  const p = spawn(process.execPath, [resolve(ROOT, 'crawler/crawl.mjs'), '--profile', prof, '--data', data], { cwd: ROOT, env: { ...process.env, JOBCRAWL_PROFILE: '', JOBCRAWL_RAW_DIR: '', JOBCRAWL_SHADOW: '', JOBCRAWL_CONDITIONAL_CACHE: '', ...env } });
   let out = '', err = '';
   p.stdout.on('data', (c) => (out += c)); p.stderr.on('data', (c) => (err += c));
   p.on('close', (status) => done({ status, out, err }));
@@ -136,5 +136,9 @@ test('crawl.mjs: a malformed key warns loudly; a dir whose parent does not exist
     assert.equal(r.status, 0, r.err);
     assert.match(r.out, /crawl: conditional requests on for 1 host pattern\(s\)/);
     assert.match(r.out, /crawl: conditional cache: \d+ served from cache/);
+    r = await crawl(x.prof, x.data, { JOBCRAWL_CONDITIONAL_CACHE: '0' });
+    assert.equal(r.status, 0, r.err);
+    assert.match(r.out, /conditional requests OFF \(JOBCRAWL_CONDITIONAL_CACHE=0/);
+    assert.doesNotMatch(r.out, /crawl: conditional cache: /);
   } finally { s.close(); }
 });
