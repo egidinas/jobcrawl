@@ -87,12 +87,15 @@ if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`
 configurePolicy(policyFromProfile(PROFILE, OUT_DIR));
 if (!flag('jd-cleanup-only')) { installGuard(); console.log(`crawl: policy robots=${PROFILE.robots}${Object.keys(PROFILE.robotsHosts).length ? ` (${Object.keys(PROFILE.robotsHosts).length} host overrides)` : ''}, ${PROFILE.optOutHosts.length} opted-out hosts`); }
 // Conditional-request cache (core/fetch/conditional.mjs): off unless the profile lists hosts in crawl.conditional_cache.hosts.
+// Switch: JOBCRAWL_CONDITIONAL_CACHE=0 (or false/no/off) turns it off on this host without a profile change (e.g. a systemd drop-in).
 // The profile is shared between hosts: `dir` must be an absolute path whose parent folder exists on THIS host, else the cache stays off
 // with a log line (so a NUC path in a profile the PC also reads switches the cache off on the PC instead of creating folders there).
 const CONDITIONAL = PROFILE.raw?.crawl?.conditional_cache;
 let conditionalSummaryFn = null;
 if (CONDITIONAL !== undefined && !(CONDITIONAL && typeof CONDITIONAL === 'object' && Array.isArray(CONDITIONAL.hosts) && CONDITIONAL.hosts.every((h) => typeof h === 'string'))) {
   console.error(`crawl: WARNING crawl.conditional_cache must be { "hosts": ["host", "*.domain", ...], "dir": "/absolute/path", ... }; got ${JSON.stringify(CONDITIONAL).slice(0, 200)}: conditional requests OFF`);
+} else if (CONDITIONAL?.hosts?.length && /^(0|false|no|off)$/i.test(String(process.env.JOBCRAWL_CONDITIONAL_CACHE ?? '').trim())) {
+  console.log(`crawl: conditional requests OFF (JOBCRAWL_CONDITIONAL_CACHE=${process.env.JOBCRAWL_CONDITIONAL_CACHE}: switched off for this host without a profile change)`);
 } else if (!flag('jd-cleanup-only') && !flag('dry-run') && CONDITIONAL?.hosts?.length) {
   try {
     const { installConditionalCache, conditionalSummary } = await import('../core/fetch/conditional.mjs');
