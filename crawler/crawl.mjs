@@ -19,6 +19,7 @@ import { reprofileCycle } from './profiler/health.mjs';
 import { checkDisk } from './diskguard.mjs';
 import { cleanJd, jdFileName } from './jdclean.mjs';
 import { writeHistoryFile } from './history-write.mjs';
+import { readHistoryFile } from './history-read.mjs';
 import { installRawCapture, rawCaptureSummary } from './rawcapture.mjs';
 import { setEuresRateFile, setEuresLane } from './providers-eures.mjs';
 import { classifyError, makeBreaker, hostOf, breakerHostOf, livenessGuard, isCappedAnswer } from './resilience.mjs';
@@ -255,15 +256,9 @@ const postedDate = (raw) => {
   const d = String(raw ?? '').slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= today() ? d : '';
 };
+// Read in 1 MB blocks (crawler/history-read.mjs): the same Map as the old whole-file read, without the ~170 MB string and its line array.
 function loadHistory() {
-  const map = new Map();
-  if (!existsSync(HISTORY)) return map;
-  for (const line of readFileSync(HISTORY, 'utf8').split(/\r?\n/).slice(1)) {
-    if (!line.trim()) continue;
-    const row = Object.fromEntries(line.split('\t').map((v, i) => [HEADER[i], v]));
-    map.set(row.url, row);
-  }
-  return map;
+  return readHistoryFile(HISTORY, HEADER);
 }
 // The history is written in chunks and compared with the old file while it is written (crawler/history-write.mjs): the same bytes as
 // before, an unchanged history keeps its mtime (downstream steps skip), and the ~170 MB text is never built as one string.
