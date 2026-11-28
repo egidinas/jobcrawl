@@ -222,8 +222,8 @@ test('cli: run from a recording writes JSON-lines logs, honours JOBCRAWL_* env, 
 });
 
 /** Spawns the CLI with stderr captured; waitFor(regex, ms) fails with the captured stderr on a deadline; stop() signals and waits (hard deadline). */
-function spawnCli(args) {
-  const child = spawn(process.execPath, [...nodeArgs, ...args], { stdio: ['ignore', 'ignore', 'pipe'], env: ENV });
+function spawnCli(args, { net = false } = {}) {
+  const child = spawn(process.execPath, net ? ['--no-warnings', CLI, ...args] : [...nodeArgs, ...args], { stdio: ['ignore', 'ignore', 'pipe'], env: ENV });
   let err = '', code = null;
   child.stderr.on('data', (d) => { err += d; });
   const exited = new Promise((ok) => child.on('exit', (c) => { code = c; ok(c); }));
@@ -248,7 +248,7 @@ function spawnCli(args) {
 
 test('cli: --metrics binds loopback and serves while the run is open (daemon, stopped by a signal)', { skip: process.platform === 'win32' && 'POSIX signals' }, async () => {
   const f = fixture(1);
-  const p = spawnCli(['run', '--profile', f.prof, '--data', f.data, '--routing', f.routing, '--replay', f.rec, '--daemon', '--interval-min', '60', '--metrics', '127.0.0.1:0', '--log-format', 'json']);
+  const p = spawnCli(['run', '--profile', f.prof, '--data', f.data, '--routing', f.routing, '--replay', f.rec, '--daemon', '--interval-min', '60', '--metrics', '127.0.0.1:0', '--log-format', 'json'], { net: true });   // the loopback listener needs the real dns.lookup the no-network preload stubs
   try {
     const port = Number((await p.waitFor(/"metrics-listening".*?"port":(\d+)/))[1]);
     await p.waitFor(/"daemon-cycle"/);
