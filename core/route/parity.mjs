@@ -12,7 +12,7 @@
 //            fail  (anything else)
 //            empty (neither side lists anything)
 // A board's parity passes the cut-over gate after `PASSES_NEEDED` consecutive passing reports (ledger.mjs).
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { postingId } from '../id.mjs';
 
@@ -45,11 +45,12 @@ export async function legacyRowsByBoard(historyFile, boards, { includeUnknown = 
 
 const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 
-export function compareBoard(legacyRows, newOpen) {
+export function compareBoard(legacyRows, newOpen, { sameFetch = false } = {}) {
   // what the board lists now, by the legacy history: rows seen on the board's last read day (older filtered/extra rows are kept by the
-  // legacy history after the board stopped listing them; the same rule as the baseline import)
+  // legacy history after the board stopped listing them; the same rule as the baseline import). Rows that come from ONE legacy fetch
+  // (legacyFetchesFromLifecycle) are taken as they are (sameFetch).
   const lastDay = legacyRows.reduce((m, r) => (String(r.last_seen ?? '') > m ? String(r.last_seen) : m), '');
-  const L = new Map(legacyRows.filter((r) => !r.last_seen || String(r.last_seen) === lastDay).map((r) => [postingId(r.url), r]));
+  const L = new Map(legacyRows.filter((r) => sameFetch || !r.last_seen || String(r.last_seen) === lastDay).map((r) => [postingId(r.url), r]));
   const N = new Map(newOpen.map((r) => [r.id ?? postingId(r.url), r]));
   let both = 0, title = 0, loc = 0;
   const samples = { only_legacy: [], only_new: [], field: [] };
@@ -75,7 +76,7 @@ export function compareBoard(legacyRows, newOpen) {
 export function byProvider(reports) {
   const agg = {};
   for (const r of reports) {
-    const a = (agg[r.provider ?? '?'] ??= { boards: 0, pass: 0, near: 0, fail: 0, empty: 0, error: 0, legacy: 0, new: 0, both: 0 });
+    const a = (agg[r.provider ?? '?'] ??= { boards: 0, pass: 0, near: 0, fail: 0, skew: 0, empty: 0, error: 0, legacy: 0, new: 0, both: 0 });
     a.boards++;
     if (r.error) { a.error++; continue; }
     a[r.verdict]++;
@@ -96,4 +97,43 @@ export function deltaMatchesDiff(readA, readB, events) {
   const depGot = events.filter((e) => e.op === 'departed').map((e) => e.id).sort();
   const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
   return { ok: same(addedExp, addedGot) && same(depExp, depGot), added_expected: addedExp.length, added_got: addedGot.length, departed_expected: depExp.length, departed_got: depGot.length };
+}
+
+/**
+ * The legacy crawl's LATEST answer per board, from its lifecycle state (<data>/lifecycle/state.json: url -> [board that last listed it,
+ * day, misses, time of that fetch in ms]). The first parity method attributed history rows to boards by the history's company column,
+ * which for many sources (teamtailor, workday, ...) is the provider's company name, not the board name, and it had only day-level dates,
+ * so time skew looked like disagreement. Returns Map(board -> { at: ms of the fetch, urls: [url] }) for the boards asked for.
+ */
+export function legacyFetchesFromLifecycle(stateFile, boards) {
+  const want = new Set(boards);
+  const st = JSON.parse(readFileSync(stateFile, 'utf8'));
+  const by = new Map();
+  for (const [url, v] of Object.entries(st.urls ?? {})) {
+    const board = v?.[0], ms = Number(v?.[3]) || 0;
+    if (!want.has(board)) continue;
+    const b = by.get(board) ?? by.set(board, { at: 0, all: [] }).get(board);
+    b.all.push([url, ms]);
+    if (ms > b.at) b.at = ms;
+  }
+  const out = new Map();
+  for (const [board, b] of by) out.set(board, { at: b.at, urls: b.all.filter(([, ms]) => ms === b.at).map(([u]) => u) });
+  return out;
+}
+
+/** Map(url -> history row) for the given urls (title/location for the field comparison). Streams the history once; read-only. */
+export async function historyRowsForUrls(historyFile, urls) {
+  const want = new Set(urls), out = new Map();
+  if (!want.size || !existsSync(historyFile)) return out;
+  const rl = createInterface({ input: createReadStream(historyFile, { encoding: 'utf8' }), crlfDelay: Infinity });
+  let head = null;
+  for await (const line of rl) {
+    if (!line) continue;
+    const tab = line.indexOf('\t');
+    if (!head) { head = line.split('\t'); continue; }
+    if (!want.has(line.slice(0, tab))) continue;
+    const cols = line.split('\t');
+    out.set(cols[0], Object.fromEntries(head.map((h, i) => [h, cols[i] ?? ''])));
+  }
+  return out;
 }

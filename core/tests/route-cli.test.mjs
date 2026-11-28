@@ -105,7 +105,7 @@ test('cli: crawl and dual-run from a recording, with a ledger, without network',
   writeFileSync(routing, JSON.stringify({ schema: 'routing/v1', providers: { greenhouse: 'shadow' } }));
   let r = cli(['dual-run', '--profile', prof, '--data', data, '--legacy-data', legacy, '--replay', rec, '--routing', routing, '--ledger', join(base, 'ledger.json'), '--report', join(base, 'parity.json'), '--json']);
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.stdout).verdicts, { pass: 1, near: 0, fail: 0, empty: 0, error: 0 });
+  assert.deepEqual(JSON.parse(r.stdout).verdicts, { pass: 1, near: 0, fail: 0, skew: 0, empty: 0, error: 0 });
   const rep = JSON.parse((await import('node:fs')).readFileSync(join(base, 'parity.json'), 'utf8'));
   assert.deepEqual(validate(rep, 'parity-v1'), []);
   r = cli(['crawl', '--board', 'Stripe', '--profile', prof, '--data', join(base, 'data2'), '--replay', rec, '--json']);

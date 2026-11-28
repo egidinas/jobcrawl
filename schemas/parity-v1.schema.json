@@ -10,7 +10,7 @@
     "source": { "type": "string" },
     "boards": { "type": "array", "items": { "type": "object", "required": ["board"], "properties": {
       "board": { "type": "string" }, "provider": { "type": ["string", "null"] },
-      "verdict": { "enum": ["pass", "near", "fail", "empty"] }, "error": { "type": "string" },
+      "verdict": { "enum": ["pass", "near", "fail", "skew", "empty"] }, "error": { "type": "string" }, "gap_min": { "type": ["integer", "null"] }, "legacy_fetch": { "type": ["string", "null"] },
       "legacy": { "type": "integer" }, "new": { "type": "integer" }, "both": { "type": "integer" },
       "only_legacy": { "type": "integer" }, "only_new": { "type": "integer" },
       "title_diff": { "type": "integer" }, "location_diff": { "type": "integer" }, "overlap": { "type": "number" } } } },
