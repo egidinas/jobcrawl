@@ -5,4 +5,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const als = new AsyncLocalStorage();
 export const runWithSignal = (signal, fn) => als.run({ signal }, fn);
+/** Runs fn (and its async continuations) outside any board context: for process-wide memoized work such as robots.txt. */
+export const runOutsideSignal = (fn) => als.exit(fn);
 export const currentSignal = () => als.getStore()?.signal ?? null;

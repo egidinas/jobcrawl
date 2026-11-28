@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { UA } from './useragent.mjs';
 import { makeConditionalFetch } from './httpcache.mjs';
 import { makeGuardedFetch } from '../core/fetch/guard.mjs';
+import { runOutsideSignal } from '../core/fetch/context.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -252,7 +253,8 @@ function robotsDisk() {
 /** Parsed robots.txt of an origin ({ rules, delay, status }), read once per origin and process (and cached for 24 h on disk). */
 export function robotsFor(origin, fetchImpl = st.base ?? globalThis.fetch) {
   if (!st.robots.has(origin)) {
-    st.robots.set(origin, (async () => {
+    // memoized for the whole process: it must not inherit the abort signal of the board that happened to ask first
+    st.robots.set(origin, runOutsideSignal(async () => {
       const disk = robotsDisk()[origin];
       if (disk && Date.now() - disk.t < ROBOTS_TTL_MS) return disk;
       let r;
@@ -265,7 +267,7 @@ export function robotsFor(origin, fetchImpl = st.base ?? globalThis.fetch) {
       r.t = Date.now();
       if (r.status) { robotsDisk()[origin] = r; st.robotsDirty = true; }
       return r;
-    })());
+    }));
   }
   return st.robots.get(origin);
 }
@@ -347,7 +349,7 @@ export function checkResponse(url, res) {
 // ---------- the guard ----------
 
 /** A fetch that applies every rule above around `base`. */
-export function makeGuard(base) {
+export function makeGuard(base, { stripCrossOrigin = false } = {}) {
   st.base = base;
   return async function guardedFetch(input, init = {}) {
     const isReq = typeof input !== 'string' && !(input instanceof URL);
@@ -377,22 +379,26 @@ export function makeGuard(base) {
       }
       if (++hops > 10) throw new Error(`too many redirects from ${url}`);
       try { await res.body?.cancel(); } catch { /* nothing to drop */ }
-      cur = new URL(loc, cur);
+      const next = new URL(loc, cur);
+      if (stripCrossOrigin && next.origin !== cur.origin && init.headers) {   // credentials never follow a redirect to another origin
+        const h = new Headers(init.headers); h.delete('authorization'); h.delete('cookie'); init = { ...init, headers: h };
+      }
+      cur = next;
     }
   };
 }
 
 let installed = null;
 /** Wraps globalThis.fetch with the guard (once). Returns a function that removes it. */
-export function installGuard() {
+export function installGuard({ egress: force = false, lookupImpl } = {}) {
   if (installed) return installed;
   // Egress guard (private/loopback/link-local targets refused on every redirect hop, board signal merged): OFF by default on the live
   // path, so serving behaviour is unchanged; switch: profile crawl.egress_guard or JOBCRAWL_EGRESS_GUARD=1 (JOBCRAWL_EGRESS_GUARD=0 forces off).
   const env = process.env.JOBCRAWL_EGRESS_GUARD;
-  const egress = env === '0' ? false : env === '1' || /^(true|yes)$/i.test(env ?? '') ? true : st.egressGuard === true;
-  const base = egress ? makeGuardedFetch(globalThis.fetch, { allowPrivate: /^(1|true|yes)$/i.test(process.env.JOBCRAWL_ALLOW_PRIVATE_TARGETS ?? '') }) : globalThis.fetch;
+  const egress = force === true || (env === '0' ? false : env === '1' || /^(true|yes)$/i.test(env ?? '') ? true : st.egressGuard === true);
+  const base = egress ? makeGuardedFetch(globalThis.fetch, { ...(lookupImpl ? { lookupImpl } : {}), allowPrivate: /^(1|true|yes)$/i.test(process.env.JOBCRAWL_ALLOW_PRIVATE_TARGETS ?? '') }) : globalThis.fetch;
   const orig = globalThis.fetch;
-  globalThis.fetch = makeGuard(st.httpCache ? makeConditionalFetch(base, st.httpCache) : base);
+  globalThis.fetch = makeGuard(st.httpCache ? makeConditionalFetch(base, st.httpCache) : base, { stripCrossOrigin: egress });
   installed = () => { globalThis.fetch = orig; installed = null; };
   return installed;
 }

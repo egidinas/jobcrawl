@@ -125,7 +125,7 @@ switch (cmd) {
       (await import('../crawler/useragent.mjs')).setUserAgent(profile.userAgent);
       const pol = await import('../crawler/policy.mjs');
       pol.configurePolicy({ ...pol.policyFromProfile(profile, data) });
-      pol.installGuard();
+      pol.installGuard({ egress: true });   // new path: the egress guard sits inside the policy guard, so robots.txt and policy redirects pass it (JOBCRAWL_ALLOW_PRIVATE_TARGETS=1 opts out)
       (await import('../crawler/providers.mjs')).setCacheDir(join(data, 'cache'));
     }
     const { runBoard } = await import('../core/run-board.mjs');

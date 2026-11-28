@@ -5,19 +5,17 @@ import { providers as defaultProviders, resolve as defaultResolve } from '../cra
 import { entryTimeoutMs } from '../crawler/profile.mjs';
 import { classifyError } from '../crawler/resilience.mjs';
 import { runWithSignal } from './fetch/context.mjs';
-import { installEngineFetch } from './fetch/guard.mjs';
 import { applyRun, DEFAULT_RULES } from './delta/board-delta.mjs';
 import { commitRun, lease, openBoard } from './state/board-store.mjs';
 
 /** Reads one board. Returns a run: { ok, items, complete, emptyOk, incomplete, error, ms, provider, slug }. Never throws. */
-export async function readBoard(entry, { providers = defaultProviders, resolve = defaultResolve, timeoutMs, noEngineFetch = false } = {}) {
+export async function readBoard(entry, { providers = defaultProviders, resolve = defaultResolve, timeoutMs } = {}) {
   const t0 = Date.now();
   const r = resolve(entry);
   if (!r || !providers[r.provider]) return { ok: false, items: [], error: { cls: 'CONFIG', detail: 'no supported source for this entry' }, ms: 0 };
   const ms = timeoutMs ?? entryTimeoutMs(entry);
-  // New path: the engine fetch (egress guard + ambient board signal) is on by default; JOBCRAWL_ALLOW_PRIVATE_TARGETS=1 opts out of the
-  // address check for an operator crawling an intranet. The board's time budget aborts the requests in flight (ctx.signal).
-  if (!noEngineFetch) installEngineFetch();
+  // readBoard never swaps the process-wide fetch: the entry point (CLI, MCP) installs the engine fetch (core/fetch/guard.mjs). The board's
+  // time budget aborts the requests in flight through the ambient signal and ctx.signal.
   const ac = new AbortController();
   let timer;
   try {

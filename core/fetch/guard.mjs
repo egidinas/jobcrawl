@@ -42,7 +42,12 @@ export function makeGuardedFetch(base = globalThis.fetch, { allowPrivate = false
     const signal = sigs.length > 1 ? AbortSignal.any(sigs) : sigs[0];
     const mode = init.redirect ?? (isReq ? input.redirect : 'follow') ?? 'follow';
     let method = String(init.method ?? (isReq ? input.method : 'GET')).toUpperCase();
-    let o = { ...(isReq ? { method: input.method, headers: input.headers } : {}), ...init, ...(signal ? { signal } : {}) };
+    let reqInit = {};
+    if (isReq) {   // keep method, headers and body (a stream body is read once, so redirects can replay it)
+      reqInit = { method: input.method, headers: input.headers };
+      if (input.body && !['GET', 'HEAD'].includes(input.method)) reqInit.body = await input.clone().arrayBuffer();
+    }
+    let o = { ...reqInit, ...init, ...(signal ? { signal } : {}) };
     if (!check) { signal?.throwIfAborted(); return base(isReq ? input.url : input, o); }
     for (let hop = 0; ; hop++) {
       signal?.throwIfAborted();
@@ -58,7 +63,13 @@ export function makeGuardedFetch(base = globalThis.fetch, { allowPrivate = false
       if (mode === 'error') throw new TypeError(`redirect to ${loc} refused (redirect: error)`);
       if (hop >= maxHops) throw new SsrfError(`more than ${maxHops} redirects`);
       const next = new URL(loc, cur);
-      if (res.status === 303 || ((res.status === 301 || res.status === 302) && method === 'POST')) { method = 'GET'; const { body, ...rest } = o; o = { ...rest, method }; }
+      if ((res.status === 303 && method !== 'HEAD') || ((res.status === 301 || res.status === 302) && method === 'POST')) {
+        method = 'GET';
+        const { body, headers, ...rest } = o;
+        const h = new Headers(headers ?? {});
+        for (const k of ['content-type', 'content-length', 'content-encoding', 'content-language', 'content-location']) h.delete(k);
+        o = { ...rest, headers: h, method };
+      } else if (res.status === 303) { const { body, ...rest } = o; o = { ...rest, method }; }
       if (next.origin !== cur.origin) {   // never carry credentials to another origin
         const h = new Headers(o.headers ?? {}); h.delete('authorization'); h.delete('cookie'); o = { ...o, headers: h };
       }

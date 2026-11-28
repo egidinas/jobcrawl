@@ -100,7 +100,7 @@ test('abort: a board time budget aborts the in-flight requests of a source that 
     const providers = { slow: { async fetch() { try { const r = await fetch(`http://127.0.0.1:${port}/`); return JSON.parse(await r.text()); } catch (e) { sourceErr = e; throw e; } } } };
     const resolve = () => ({ provider: 'slow', slug: 'x' });
     const t0 = Date.now();
-    const run = await readBoard({ name: 'slowboard' }, { providers, resolve, timeoutMs: 200, noEngineFetch: true });
+    const run = await readBoard({ name: 'slowboard' }, { providers, resolve, timeoutMs: 200 });
     assert.equal(run.ok, false);
     assert.match(run.error.detail, /Timed out/);
     assert.ok(Date.now() - t0 < 3000, 'returned at the budget');
@@ -113,7 +113,7 @@ test('abort: a board time budget aborts the in-flight requests of a source that 
 test('abort: a source receives ctx.signal, and runWithSignal feeds the same signal to nested fetches', async () => {
   let got = null;
   const providers = { p: { async fetch(slug, entry, ctx) { got = ctx?.signal; return []; } } };
-  const run = await readBoard({ name: 'b' }, { providers, resolve: () => ({ provider: 'p', slug: 's' }), noEngineFetch: true });
+  const run = await readBoard({ name: 'b' }, { providers, resolve: () => ({ provider: 'p', slug: 's' }) });
   assert.equal(run.ok, true);
   assert.ok(got instanceof AbortSignal);
   const ac = new AbortController(); ac.abort(new Error('budget'));
