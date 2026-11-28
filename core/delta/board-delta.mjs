@@ -4,7 +4,8 @@
 //   prev   the board's state (board-state/v1) or null for a first read
 //   run    one read of the board: { ok, items, complete?, emptyOk?, incomplete?, error? }
 //          items: [{ url, title, location?, postedAt?, description? }] as a source returns them
-//   opts   { board, now: Date, rules, guard }
+//   opts   { board, now: Date, rules, guard, idOf? }   idOf(url): the posting id (default postingId; the SQLite store passes its
+//          stored-id resolver, so an id assigned once survives a change of the key rule)
 //
 // Events (delta/v1), numbered per board by `seq` (+1 per event), so a consumer that remembers the last applied seq of a board can replay
 // any log idempotently:
@@ -73,7 +74,7 @@ export function toPosting(board, id, rec) {
   };
 }
 
-export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_RULES, guard = DEFAULT_GUARD, maxJobs = null } = {}) {
+export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_RULES, guard = DEFAULT_GUARD, maxJobs = null, idOf = postingId } = {}) {
   if (!board) throw new Error('applyRun: opts.board is required');
   const state = prev ? structuredClone(prev) : emptyState(board);
   if (state.board !== board) throw new Error(`applyRun: state is for board "${state.board}", not "${board}"`);
@@ -93,7 +94,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
   let refreshed = 0;
   for (const it of run.items ?? []) {
     if (!it?.url) continue;
-    const id = postingId(it.url);
+    const id = idOf(it.url);
     if (seen.has(id)) continue;       // the same posting twice in one answer: the first wins
     seen.add(id);
     const f = fieldsOf(it);

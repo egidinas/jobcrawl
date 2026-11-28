@@ -12,6 +12,8 @@
     "./core/id": "./core/id.mjs",
     "./core/delta": "./core/delta/board-delta.mjs",
     "./core/store": "./core/state/board-store.mjs",
+    "./core/stores": "./core/state/store.mjs",
+    "./core/store-sqlite": "./core/state/sqlite-store.mjs",
     "./core/run-board": "./core/run-board.mjs",
     "./core/router": "./core/route/router.mjs",
     "./core/parity": "./core/route/parity.mjs",

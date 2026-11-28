@@ -30,10 +30,19 @@ commands (phase 0):
   ledger-shadow --shadow <store> --lifecycle <state.json> --ledger <file> [--routing <file>] [--companies <file>] [--max-gap-min 90] [--json]
                                              per-cycle same-fetch parity of the shadow store into the migration ledger
                                              baseline epoch from the legacy history, without events (read-only on the legacy side)
-  snapshot --data <dir> [--status open|departed|all]   full read as NDJSON (header with per-board watermarks, then postings)
-  feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}']   committed delta events as NDJSON
+  snapshot --data <dir> [--status open|departed|all] [--store json|sqlite]
+                                             full read as NDJSON (header with per-board watermarks, then postings; sqlite adds the
+                                             global event_id watermark)
+  feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}'] [--store json|sqlite]   committed delta events as NDJSON
+  feed --data <dir> --store sqlite [--after <event_id> | --consumer <name> [--commit]] [--limit <n>]
+                                             records after a global event_id (or a consumer's bookmark; --commit moves the bookmark
+                                             to the last record written)
+  bookmark get|set|list --data <dir> [--consumer <name>] [--event-id <n>] [--json]   named consumer bookmarks (sqlite store)
+  store-import --data <dir> [--from <json data dir>] [--replace] [--json]
+                                             JSON board states -> <data>/store.sqlite, without events (read-only on the JSON side)
   run [--profile <dir>] [--data <dir>] [--routing <file>] [--board <name>] [--replay <recording>] [--max-minutes <n>] [--every-min <n>]
-      [--daemon [--interval-min <n>]] [--metrics [host]:port] [--log-format json|text] [--log-file <file>] [--strict] [--stale-hours <n>] [--json]
+      [--daemon [--interval-min <n>]] [--metrics [host]:port] [--log-format json|text] [--log-file <file>] [--strict] [--stale-hours <n>]
+      [--store json|sqlite] [--json]
                                              headless run of every routed board on the new path; resumable, SIGTERM-safe, never prompts
                                              (profile and data may come from JOBCRAWL_PROFILE and JOBCRAWL_DATA); see docs/HEADLESS.md
   doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json] [--strict]
@@ -82,6 +91,11 @@ function recordedOutcomes(recDir) {
   return m;
 }
 let PROFILE_MOD;
+const storeKind = () => { const k = opt('store', process.env.JOBCRAWL_STORE || 'json'); if (k !== 'json' && k !== 'sqlite') fail(`--store expects json or sqlite (got "${k}")`); return k; };
+async function openStoreOr(data, kind, code = 4) {
+  const { openStore } = await import('../core/state/store.mjs');
+  try { return await openStore(data, { kind }); } catch (e) { fail(e.message, code); }
+}
 
 switch (cmd) {
   case 'providers': {
@@ -293,9 +307,10 @@ switch (cmd) {
   }
   case 'snapshot': {
     const data = pathResolve(opt('data') ?? fail('--data <dir> is required'));
-    const { snapshot } = await import('../core/state/board-store.mjs');
     const st = opt('status', 'open');
-    for (const line of snapshot(data, { status: st === 'all' ? null : st })) process.stdout.write(JSON.stringify(line) + '\n');
+    const store = await openStoreOr(data, storeKind());
+    for (const line of store.snapshot({ status: st === 'all' ? null : st })) process.stdout.write(JSON.stringify(line) + '\n');
+    store.close();
     break;
   }
   case 'feed': {
@@ -303,8 +318,45 @@ switch (cmd) {
     let since;
     if (opt('since-json')) { try { since = JSON.parse(opt('since-json')); } catch (e) { fail(`--since-json: ${e.message}`); } }
     else since = Object.fromEntries(String(opt('since', '')).split(',').filter(Boolean).map((p) => { const i = p.lastIndexOf('='); return [p.slice(0, i), Number(p.slice(i + 1))]; }));
-    const { readEvents } = await import('../core/state/board-store.mjs');
-    for (const e of readEvents(data, since)) process.stdout.write(JSON.stringify(e) + '\n');
+    const store = await openStoreOr(data, storeKind());
+    if (opt('after') != null || opt('consumer')) {
+      if (store.kind !== 'sqlite') fail('--after and --consumer need --store sqlite (a global event_id)');
+      const consumer = opt('consumer');
+      const after = consumer ? store.bookmarkGet(consumer) : Number(opt('after'));
+      if (!(after >= 0)) fail(`--after expects an event_id >= 0 (got "${opt('after')}")`);
+      const recs = store.events({ after, limit: Number(opt('limit', 1000)) });
+      for (const e of recs) process.stdout.write(JSON.stringify(e) + '\n');
+      if (consumer && flag('commit') && recs.length) store.bookmarkSet(consumer, recs.at(-1).event_id);
+    } else for (const e of store.readEvents(since)) process.stdout.write(JSON.stringify(e) + '\n');
+    store.close();
+    break;
+  }
+  case 'bookmark': {
+    const data = pathResolve(opt('data') ?? fail('--data <dir> is required'));
+    const sub = rest[0] && !rest[0].startsWith('-') ? rest[0] : 'list';
+    const store = await openStoreOr(data, 'sqlite');
+    if (sub === 'list') { const b = store.bookmarks(); out(b, b.map((x) => `${x.consumer}\t${x.event_id}\t${x.updated_at}`).join('\n')); }
+    else {
+      const consumer = opt('consumer') ?? fail('--consumer <name> is required');
+      if (sub === 'get') { const v = store.bookmarkGet(consumer); out({ consumer, event_id: v }, String(v)); }
+      else if (sub === 'set') {
+        const raw = opt('event-id') ?? fail('--event-id <n> is required');
+        let v; try { v = store.bookmarkSet(consumer, Number(raw)); } catch (e) { fail(e.message); }
+        out({ consumer, event_id: v }, String(v));
+      } else fail(`unknown bookmark command "${sub}" (get, set or list)`);
+    }
+    store.close();
+    break;
+  }
+  case 'store-import': {
+    const data = guardDataDir(opt('data'));
+    const from = pathResolve(opt('from') ?? data);
+    const { openSqliteStore } = await import('../core/state/sqlite-store.mjs');
+    let store, sum;
+    try { store = await openSqliteStore(data); sum = store.importJson(from, { replace: flag('replace'), log: (m) => console.error(m) }); }
+    catch (e) { store?.close(); fail(e.message, 4); }
+    store.close();
+    out(sum, `imported ${sum.imported} boards, replaced ${sum.replaced}, kept ${sum.kept}, skipped ${sum.skipped.length}; ${sum.postings} postings, ${sum.ids} ids, ${sum.aliases} aliases, ${sum.events} events`);
     break;
   }
   case 'run': {
@@ -349,6 +401,7 @@ switch (cmd) {
       pol.installGuard({ egress: true });
       (await import('../crawler/providers.mjs')).setCacheDir(join(data, 'cache'));
     }
+    const store = await openStoreOr(data, storeKind());
     const metrics = createMetrics();
     const ac = new AbortController();
     let signalled = 0;
@@ -364,12 +417,12 @@ switch (cmd) {
       log.info('metrics-listening', { host: server.host, port: server.port });
     }
     const sleepAbortable = (ms) => new Promise((ok) => { if (ac.signal.aborted) return ok(); const t = setTimeout(ok, ms); ac.signal.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); });
-    const common = { readFor, signal: ac.signal, maxMs: maxMin ? maxMin * 60e3 : null, strict: flag('strict'), staleMs: staleH * 3600e3, providerOf, log, metrics };
+    const common = { readFor, signal: ac.signal, maxMs: maxMin ? maxMin * 60e3 : null, strict: flag('strict'), staleMs: staleH * 3600e3, providerOf, log, metrics, store };
     if (delayMs) {   // test seam (with --replay): a slow board, so a signal can arrive mid-run
       const { runBoard } = await import('../core/run-board.mjs');
       common.runBoardImpl = async (d, e, o) => { await sleepAbortable(delayMs); return o.signal?.aborted ? { board: e.name, aborted: true } : runBoard(d, e, o); };
     }
-    log.info('start', { pid: process.pid, node: process.versions.node, boards: boards.length, data, daemon: flag('daemon'), mode: opt('replay') ? 'replay' : 'live' });
+    log.info('start', { pid: process.pid, node: process.versions.node, boards: boards.length, data, store: store.kind, daemon: flag('daemon'), mode: opt('replay') ? 'replay' : 'live' });
     let code = EXIT.OK, summary = null;
     try {
       if (flag('daemon')) {
@@ -394,6 +447,7 @@ switch (cmd) {
       }
     } catch (e) { log.error('fatal', { error: String(e?.stack ?? e) }); code = EXIT.STATE; }
     await server?.close();
+    store.close();
     log.info('exit', { code });
     if (JSON_OUT) process.stdout.write(JSON.stringify({ code, ...(summary ?? {}) }) + '\n');
     process.exit(code);

@@ -44,10 +44,11 @@ export function acquireLock(data, { now = Date.now, ttlMs = LOCK_TTL_MS } = {}) 
  *   maxMs: wall-clock budget; no new board starts after it (the cycle stays open and the next run continues)
  *   everyMs: skip while the last COMPLETE cycle ended less than this ago   strict/staleMs: health alerts -> exit 5
  *   providerOf(entry) for the metrics label   log, metrics, now, runBoardImpl: plumbing and test seams
+ *   store: a store object (core/state/store.mjs); omitted = the JSON files store at `data` (today's behaviour)
  * Returns { code, summary }. Store errors map to exit 4; any other board error is that board's failure.
  */
 export async function runCycle(data, boards, { readFor = () => undefined, signal, maxMs = null, everyMs = 0, strict = false, staleMs = 48 * 3600e3,
-  providerOf = () => null, log, metrics, now = Date.now, runBoardImpl = defaultRunBoard, leaseMs, lock = true } = {}) {
+  providerOf = () => null, log, metrics, now = Date.now, runBoardImpl = defaultRunBoard, leaseMs, lock = true, store } = {}) {
   const t0 = now();
   const L = log ?? { info() {}, warn() {}, error() {} };
   const lk = lock ? acquireLock(data, { now }) : { renew() {}, release() {} };
@@ -78,7 +79,7 @@ export async function runCycle(data, boards, { readFor = () => undefined, signal
       if (maxMs && now() - t0 >= maxMs) { budget = true; L.warn('budget-hit', { max_minutes: maxMs / 60e3, left: todo.length - k }); break; }
       const b0 = now();
       let r;
-      try { r = await runBoardImpl(data, entry, { read: readFor(entry), signal, ...(leaseMs ? { leaseMs } : {}) }); }
+      try { r = await runBoardImpl(data, entry, { read: readFor(entry), signal, ...(leaseMs ? { leaseMs } : {}), ...(store ? { store } : {}) }); }
       catch (e) {
         if (e instanceof StateError || /sqlite|EACCES|ENOSPC|EIO|state\.json|events\.ndjson/i.test(String(e?.message ?? e))) { storeError = e; L.error('store-error', { board: entry.name, error: String(e.message ?? e) }); break; }
         r = { board: entry.name, run: { ok: false, error: { cls: 'OTHER', detail: String(e?.message ?? e) } }, events: [] };

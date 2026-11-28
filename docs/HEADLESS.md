@@ -26,7 +26,7 @@ arguments print the usage and exit 0 before any network or file work.
 | 1 | some boards failed (per board in the log and in `run-state.json`) |
 | 2 | usage or config error |
 | 3 | lock held by another run (`run.lock`, or a board lease for `crawl`/`import`) |
-| 4 | state store error (unreadable store, disk full, SQLite lease database) |
+| 4 | state store error (unreadable store, disk full, SQLite lease database or `store.sqlite` busy/locked, wrong `--store` for the folder) |
 | 5 | `--strict` health alert (`zero-jobs`, `board-stale`, no boards routed) |
 | 130 | interrupted by SIGINT, state consistent |
 | 143 | terminated by SIGTERM, state consistent |

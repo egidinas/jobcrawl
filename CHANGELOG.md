@@ -3,6 +3,21 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-28: SQLite state store (row 1.1, branch feat/store-sqlite-1-1; JSON stays the default)
+
+- **SQLite backend** (`core/state/sqlite-store.mjs`, one `<data>/store.sqlite`): WAL, `busy_timeout` set first, `synchronous=FULL`, every
+  write one `BEGIN IMMEDIATE` transaction. A run (state, postings, events, new ids) commits atomically; a writer whose base seq moved gets
+  a StateError and writes nothing. Backend errors surface as StateError (exit 4), never as a board failure.
+- **Global `event_id`** over all boards (commit order) beside the per-board `seq`; `events({ after, limit })`, named consumer bookmarks
+  (`bookmarkGet/Set`, `jobcrawl bookmark`), `feed --store sqlite --after <id> | --consumer <name> [--commit]`. Snapshot changes that have no
+  delta event (URL variant, description hash filled in, baseline row refreshed) are logged as `refreshed` records (event_id, seq null), so a
+  snapshot plus the records after its `event_id` equals the later snapshot (last_seen excluded).
+- **Ids as stored facts** (`ids` + `id_alias`): assigned at first sight, kept across a change of the key rule.
+- **Shared host slots, cooldowns and a time-window breaker** in the store (API only; the live crawl's policy is not wired to them).
+- **One interface, two backends** (`core/state/store.mjs`); `jobcrawl run|snapshot|feed --store json|sqlite` (default json; `JOBCRAWL_STORE`).
+  A folder holds one backend; `jobcrawl store-import` moves the JSON states into SQLite with 0 events. node:sqlite's ExperimentalWarning is
+  filtered (that warning only).
+
 ## 2026-11-28: multitool phase 1 (branch feat/jobcrawlx-phase1; everything off by default)
 
 - **Shadow hook in the crawl** (`core/route/shadow-hook.mjs`, 6 lines in `crawler/crawl.mjs`): with `JOBCRAWL_SHADOW=1` and a routing file

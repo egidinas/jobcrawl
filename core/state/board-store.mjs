@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { sha256 } from '../id.mjs';
 import { emptyState } from '../delta/board-delta.mjs';
+import { loadSqlite } from './sqlite-load.mjs';
 
 export const boardKey = (board) => `${String(board).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'board'}-${sha256(board).slice(0, 8)}`;
 const dirOf = (root, board) => join(root, 'boards', boardKey(board));
@@ -128,10 +129,10 @@ export function commitRun(root, board, state, events) {
 const leaseDbs = new Map();
 async function leaseDb(root) {
   if (!leaseDbs.has(root)) {
-    const { DatabaseSync } = await import('node:sqlite');
+    const { DatabaseSync } = await loadSqlite();
     mkdirSync(root, { recursive: true });
     const db = new DatabaseSync(join(root, 'leases.sqlite'));
-    db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS leases (board TEXT PRIMARY KEY, token TEXT NOT NULL, owner TEXT, expires INTEGER NOT NULL);');
+    db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS leases (board TEXT PRIMARY KEY, token TEXT NOT NULL, owner TEXT, expires INTEGER NOT NULL);');
     leaseDbs.set(root, db);
   }
   return leaseDbs.get(root);
@@ -154,6 +155,16 @@ export async function lease(root, board, ttlMs = 15 * 60e3, now = Date.now, { db
     d.exec('COMMIT');
   } catch (e) { d.exec('ROLLBACK'); throw e; }
   return () => { try { d.prepare('DELETE FROM leases WHERE board = ? AND token = ?').run(board, token); } catch {} };
+}
+
+/**
+ * Read-only view of a board's committed state for importers (never writes: no board.txt, no log cut, no rebuild, unlike openBoard).
+ * Returns { ok, value } | { missing } | { corrupt }.
+ */
+export function readBoardState(root, board) {
+  const st = readState(join(dirOf(root, board), 'state.json'));
+  if (st.ok && st.value.board !== board) return { corrupt: true, reason: `state belongs to board "${st.value.board}"` };
+  return st;
 }
 
 /** Board names in a store. */

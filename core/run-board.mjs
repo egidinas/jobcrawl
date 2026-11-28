@@ -38,7 +38,8 @@ export async function readBoard(entry, { providers = defaultProviders, resolve =
  * Runs one board on the new path into the store at root. `read` may be supplied (replay, tests); otherwise the board is fetched.
  * Returns { board, skipped?, run, events, seqFrom, seqTo, state }.
  */
-export async function runBoard(root, entry, { read, rules = DEFAULT_RULES, now = () => new Date(), leaseMs = 15 * 60e3, signal, ...readOpts } = {}) {
+export async function runBoard(root, entry, { read, rules = DEFAULT_RULES, now = () => new Date(), leaseMs = 15 * 60e3, signal, store, ...readOpts } = {}) {
+  if (store) return runBoardOn(store, entry, { read, rules, now, leaseMs, signal, ...readOpts });
   const board = entry.name;
   const release = await lease(root, board, leaseMs);
   if (!release) return { board, skipped: 'lease held by another run' };
@@ -49,5 +50,26 @@ export async function runBoard(root, entry, { read, rules = DEFAULT_RULES, now =
     const { state, events } = applyRun(prev, run, { board, now: now(), rules, maxJobs: Number(entry.max_jobs) || null });
     const { seqFrom, seqTo } = commitRun(root, board, state, events);
     return { board, run, events, seqFrom, seqTo, state };
+  } finally { release(); }
+}
+
+/**
+ * The same job on a store object (core/state/store.mjs: json or sqlite backend). With a store that keeps ids as stored facts
+ * (idResolver), the run's ids come from the store and its new ids are committed in the same transaction as the run.
+ */
+export async function runBoardOn(store, entry, { read, rules = DEFAULT_RULES, now = () => new Date(), leaseMs = 15 * 60e3, signal, ...readOpts } = {}) {
+  const board = entry.name;
+  const release = await store.lease(board, leaseMs);
+  if (!release) return { board, skipped: 'lease held by another run' };
+  try {
+    const run = read ?? (await readBoard(entry, { ...readOpts, signal }));
+    if (signal?.aborted) return { board, aborted: true };
+    const prev = store.openBoard(board);
+    const t = now();
+    const ids = store.idResolver?.({ board, now: () => t });
+    ids?.prime(run.items);
+    const { state, events } = applyRun(prev, run, { board, now: t, rules, maxJobs: Number(entry.max_jobs) || null, ...(ids ? { idOf: ids.idOf } : {}) });
+    const c = store.commitRun(board, state, events, ids ? ids.pending() : undefined);
+    return { board, run, events, seqFrom: c.seqFrom, seqTo: c.seqTo, eventFrom: c.eventFrom ?? null, eventTo: c.eventTo ?? null, state };
   } finally { release(); }
 }

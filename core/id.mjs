@@ -43,9 +43,12 @@ export function canonicalKey(url) {
   return `url:${normaliseUrl(url)}`;
 }
 
+/** The id derived from a canonical key (a new id at first sight; the SQLite store keeps it as a stored fact afterwards). */
+export const idForKey = (key) => `${ID_VERSION}_${base32(createHash('sha256').update(String(key)).digest()).slice(0, 32)}`;
+
 /** The stable id of a posting URL. */
 export function postingId(url) {
-  return `${ID_VERSION}_${base32(createHash('sha256').update(canonicalKey(url)).digest()).slice(0, 32)}`;
+  return idForKey(canonicalKey(url));
 }
 
 /** sha256 hex of a string (content hashes in state and events). */
