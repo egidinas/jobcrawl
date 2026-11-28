@@ -42,10 +42,11 @@ if (opt('history')) {
     const row = {}; head.forEach((h, i) => { row[h] = c[i] ?? ''; });
     history.set(row.url, row);
   }
-  const byBoard = new Map();
+  let byBoard = new Map();   // the probe's own index; dropped below so it does not count as "pinned"
   for (const r of history.values()) if (r.status !== 'gone') (byBoard.get(r.company) ?? byBoard.set(r.company, []).get(r.company)).push(r);
   let k = 0;
   results = companies.map((e) => ({ r: { provider: e.provider }, jobs: (byBoard.get(e.name) ?? []).map((r) => ({ url: r.url, title: r.title, location: r.location, postedAt: r.posted, description: desc(k++) })) }));
+  byBoard = null;
   say(`real history: ${history.size} rows, ${companies.length} boards, ${k} answer rows built in ${Date.now() - t0} ms`);
 } else {
   const rows = Number(opt('synthetic', 500000)), nb = Number(opt('boards', 5000)), routed = Number(opt('routed', 40));
@@ -57,9 +58,10 @@ if (opt('history')) {
     const b = i % nb, url = `https://jobs.example-${b}.com/postings/${i}?ref=board-${b}`;
     history.set(url, { url, company: companies[b].name, title: `Senior Systems Engineer (m/w/d) – Test ${i}`, location: 'München, Bayern, Deutschland', first_seen: '2026-10-01', last_seen: '2026-11-27', status: i % 7 === 0 ? 'gone' : i % 5 === 0 ? 'extra' : 'open', posted: '2026-09-30' });
   }
-  const jobsPer = new Map();
+  let jobsPer = new Map();
   for (const r of history.values()) if (r.status !== 'gone') { const b = Number(/board-(\d+)/.exec(r.url)[1]); if ((jobsPer.get(b)?.length ?? 0) < 12) (jobsPer.get(b) ?? jobsPer.set(b, []).get(b)).push(r); }
   results = companies.map((e, b) => ({ r: { provider: e.provider }, jobs: (jobsPer.get(b) ?? []).map((r, j) => ({ url: r.url, title: r.title, location: r.location, postedAt: r.posted, description: desc(b * 100 + j) })) }));
+  jobsPer = null;
   say(`synthetic history: ${history.size} rows, ${companies.length} boards (${routed} routed), answers built in ${Date.now() - t0} ms`);
 }
 const env = { JOBCRAWL_SHADOW: '1', JOBCRAWL_ROUTING: routingFile, JOBCRAWL_SHADOW_DATA: store, JOBCRAWL_SHADOW_BUDGET_MS: '600000', JOBCRAWL_SHADOW_BOARD_MS: '60000' };
