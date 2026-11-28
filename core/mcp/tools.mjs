@@ -64,7 +64,17 @@ async function detectOffline({ url, html, page_url }) {
   return hits.slice(0, 20);
 }
 
-function detectBoardTool() {
+// detector v2 (core/detect, JOBCRAWLX row 2A.5) in the same hit shape: { provider, slug, evidence[], confidence, kind, platform?, config? }
+async function detectOfflineV2({ url, html, page_url }) {
+  const { detectOffline } = await import('../detect/index.mjs');
+  const base = page_url ?? url ?? 'https://page.invalid/';
+  const { candidates } = detectOffline({ url: url ?? base, finalUrl: base, html: html ?? '' });
+  return candidates.slice(0, 20).map(v2Hit);
+}
+const v2Hit = (c) => ({ provider: c.provider, slug: c.slug, confidence: c.confidence, kind: c.kind, ...(c.platform ? { platform: c.platform } : {}),
+  evidence: c.evidence.map((e) => ({ type: 'v2', kind: e.kind, value: e.value })), ...(c.config ? { config: c.config } : {}) });
+
+function detectBoardTool(detector = 'v1') {
   return {
     name: 'detect_board', title: 'Detect the job board of a URL or page',
     description: 'Which job-board source (ATS provider and slug) reads this careers URL, or this HTML you pass in. Offline: nothing is fetched and no name is resolved; pass the page HTML yourself if the URL alone is not enough.' + UNTRUSTED_NOTE,
@@ -75,8 +85,8 @@ function detectBoardTool() {
     async handler({ url, html, page_url }) {
       if (!url && !html) return fail('give url, html, or both');
       for (const u of [url, page_url]) if (u) { try { const p = new URL(u); if (!/^https?:$/.test(p.protocol)) return fail('only http(s) URLs are accepted'); } catch { return fail(`not a URL: ${cleanString(u, 100)}`); } }
-      const hits = await detectOffline({ url, html, page_url });
-      return { data: markUntrusted({ url: url ?? null, fetched: false, hits }) };
+      const hits = detector === 'v2' ? await detectOfflineV2({ url, html, page_url }) : await detectOffline({ url, html, page_url });
+      return { data: markUntrusted({ url: url ?? null, fetched: false, hits, ...(detector === 'v2' ? { detector } : {}) }) };
     },
   };
 }
@@ -278,7 +288,7 @@ async function vet(url, lookupImpl) {
     await assertPublicUrl(url, lookupImpl ? { lookupImpl } : {}); return null;
   } catch (e) { return e instanceof SsrfError ? `refused: ${e.message}` : `refused: ${String(e?.message ?? e)}`; }
 }
-function crawlTools({ fetchImpl, lookupImpl }) {
+function crawlTools({ fetchImpl, lookupImpl, detector = 'v1' }) {
   const stub = (name, title, description, properties) => ({
     name, title, description: `${description} (network; stub, answers unsupported in this release)`,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -300,6 +310,15 @@ function crawlTools({ fetchImpl, lookupImpl }) {
         if (!/^https?:$/.test(u.protocol)) return fail('only http(s) URLs are accepted');
         const why = await vet(url, lookupImpl);
         if (why) return fail(why, { status: 'refused' });
+        if (detector === 'v2') {
+          // one page plus at most one follow (vendor iframe or careers link), every request and redirect hop through the egress guard
+          const { detect } = await import('../detect/index.mjs');
+          const { makeGuardedFetch } = await import('../fetch/guard.mjs');
+          const guarded = makeGuardedFetch(fetchImpl, lookupImpl ? { lookupImpl } : {});
+          const res = await detect({ url, fetch: guarded, follow: 1 });
+          const refused = res.error && /Ssrf|refused|not public|private/i.test(res.error) ? { status: 'refused' } : {};
+          return { data: markUntrusted({ url, detector, fetched: !res.error, hits: res.candidates.slice(0, 20).map(v2Hit), pages: res.fetched, ...(res.error ? { error: cleanString(res.error, 300) } : {}), ...refused }), isError: !!res.error };
+        }
         const { detectPage } = await import('../../crawler/profiler/detect-page.mjs');
         const res = await detectPage(url, { page: true, fetchImpl, ...(lookupImpl ? { lookupImpl } : {}), cnameImpl: async () => '' });
         const refused = res.page?.error && /Ssrf/.test(res.page.kind ?? '') ? { status: 'refused' } : {};
@@ -312,11 +331,11 @@ function crawlTools({ fetchImpl, lookupImpl }) {
   ];
 }
 
-/** The tool list for a server. ctx: { store, allowCrawl, fetchImpl, lookupImpl, indexOptions }. */
-export async function buildTools({ store, allowCrawl = false, fetchImpl = globalThis.fetch, lookupImpl, indexOptions = {} }) {
+/** The tool list for a server. ctx: { store, allowCrawl, fetchImpl, lookupImpl, indexOptions, detector ('v1' default | 'v2') }. */
+export async function buildTools({ store, allowCrawl = false, fetchImpl = globalThis.fetch, lookupImpl, indexOptions = {}, detector = 'v1' }) {
   const index = new PostingIndex(store, indexOptions);
-  const tools = [detectBoardTool(), getDeltaTool(store), searchPostingsTool(store, index), explainHealthTool(store)];
-  if (allowCrawl) tools.push(...crawlTools({ fetchImpl, lookupImpl }));
+  const tools = [detectBoardTool(detector), getDeltaTool(store), searchPostingsTool(store, index), explainHealthTool(store)];
+  if (allowCrawl) tools.push(...crawlTools({ fetchImpl, lookupImpl, detector }));
   return tools;
 }
 

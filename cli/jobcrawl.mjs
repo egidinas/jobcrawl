@@ -18,6 +18,9 @@ commands (phase 0):
   providers [--json]                         list the sources (ATS adapters and readers)
   detect <url> [--page] [--json]             which source reads this URL; --page also fetches the page (public addresses only) and
                                              scores platform signals (fingerprints.json: hosts, CNAME, embeds, markup)
+         [--detector v2] [--html <file>]     detector v2 (core/detect, docs/DETECT.md): ranked candidates with confidence and evidence,
+                                             custom-board proposals (jsonld_direct, sitemap, paginated_list); --html reads a saved page
+                                             (offline); --page fetches the page plus at most one follow, through the egress guard
   route [--routing <file>] [--board <name>] [--provider <id>] [--json]
                                              the strangler-fig route of a board (legacy | shadow | new)
   crawl --board <name> --profile <dir> --data <dir> [--replay <recording>] [--routing <file>] [--json]
@@ -62,7 +65,7 @@ commands (phase 0):
                                              one checkpoint per batch, writes the resolved/v1 stream (sqlite store only)
   resolved --data <dir> [--after <seq>] [--limit <n>] | [--groups [--status open|dup|hidden|departed|unknown]] | [--derived]
                                              the resolved/v1 stream as NDJSON, the resolver's groups, or its derived protected set
-  mcp --data <dir> [--store json|sqlite] [--allow-crawl]
+  mcp --data <dir> [--store json|sqlite] [--allow-crawl] [--detector v2]
                                              MCP server over stdio (JSON-RPC, newline-delimited), read-only: detect_board, get_delta,
                                              search_postings, explain_board_health; --allow-crawl adds the network tools behind the egress
                                              guard (detect_page; discover, crawl_board, propose_config answer unsupported); docs/MCP.md
@@ -189,6 +192,18 @@ switch (cmd) {
   case 'detect': {
     const url = rest.find((a) => !a.startsWith('--'));
     if (!url) fail('detect <url>');
+    const detector = opt('detector') ?? 'v1';
+    if (!['v1', 'v2'].includes(detector)) fail(`--detector expects v1 or v2 (got "${detector}")`);
+    if (detector === 'v2') {
+      const { detect } = await import('../core/detect/index.mjs');
+      let html;
+      if (opt('html')) { try { html = readFileSync(opt('html'), 'utf8'); } catch (e) { fail(`--html: ${e.message}`); } }
+      const res = await detect({ url, html, allowFetch: flag('page') && !html, follow: 1 });
+      const shown = res.candidates.slice(0, 10);
+      out({ url, detector, candidates: res.candidates.slice(0, 20), fetched: res.fetched, ...(res.error ? { error: res.error } : {}) },
+        shown.length ? shown.map((c) => `${c.provider ?? `(${c.platform})`}:${c.slug ?? '-'}  ${c.confidence}  [${c.evidence.map((e) => e.kind).join(',')}]${c.config ? '  proposed config' : ''}`).join('\n') : (res.error ? `no source recognised (${res.error})` : 'no source recognised'));
+      break;
+    }
     // crawler/profiler/detect-page.mjs: URL match, and with --page the page through the SSRF guard, link fingerprints and detector v2
     const { detectPage } = await import('../crawler/profiler/detect-page.mjs');
     const res = await detectPage(url, { page: flag('page') });
@@ -199,7 +214,8 @@ switch (cmd) {
     if (!opt('data')) fail('--data <dir> is required');
     if (opt('store') && !['json', 'sqlite'].includes(opt('store'))) fail(`--store expects json or sqlite (got "${opt('store')}")`);
     const { runMcp } = await import('../core/mcp/serve.mjs');
-    try { await runMcp({ data: pathResolve(opt('data')), store: opt('store'), allowCrawl: flag('allow-crawl') }); } catch (e) { fail(e.message, 4); }
+    if (opt('detector') && !['v1', 'v2'].includes(opt('detector'))) fail(`--detector expects v1 or v2 (got "${opt('detector')}")`);
+    try { await runMcp({ data: pathResolve(opt('data')), store: opt('store'), allowCrawl: flag('allow-crawl'), detector: opt('detector') ?? 'v1' }); } catch (e) { fail(e.message, 4); }
     break;
   }
   case 'route': {

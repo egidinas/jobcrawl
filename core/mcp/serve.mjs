@@ -11,8 +11,8 @@ const INSTRUCTIONS = 'jobcrawl: read-only access to a job-posting store. Tools: 
 const versionOf = () => { try { return createRequire(import.meta.url)('../../package.json').version ?? '0.0.0'; } catch { return '0.0.0'; } }
 
 /** Builds the server for an open store (also used by the tests). */
-export async function makeMcpServer({ store, allowCrawl = false, fetchImpl, lookupImpl, indexOptions, log }) {
-  const tools = await buildTools({ store, allowCrawl, fetchImpl, lookupImpl, indexOptions });
+export async function makeMcpServer({ store, allowCrawl = false, fetchImpl, lookupImpl, indexOptions, log, detector = 'v1' }) {
+  const tools = await buildTools({ store, allowCrawl, fetchImpl, lookupImpl, indexOptions, detector });
   return createServer({ name: 'jobcrawl', version: versionOf(), instructions: INSTRUCTIONS, tools, log });
 }
 
@@ -21,13 +21,13 @@ export async function makeMcpServer({ store, allowCrawl = false, fetchImpl, look
  * With allowCrawl the engine egress guard is installed on globalThis.fetch first (private targets stay refused: the
  * JOBCRAWL_ALLOW_PRIVATE_TARGETS opt-out is deliberately NOT honoured for URLs an agent supplies).
  */
-export async function runMcp({ data, store: kind, allowCrawl = false, input = process.stdin, write } = {}) {
+export async function runMcp({ data, store: kind, allowCrawl = false, input = process.stdin, write, detector = 'v1' } = {}) {
   const out = write ?? process.stdout.write.bind(process.stdout);
   const log = (m) => process.stderr.write(`[jobcrawl mcp] ${m}\n`);
   for (const k of ['log', 'info', 'debug', 'warn']) console[k] = (...a) => process.stderr.write(a.map(String).join(' ') + '\n');
   const store = await openReadOnlyStore(data, { kind });
   if (allowCrawl) { const { installEngineFetch } = await import('../fetch/guard.mjs'); installEngineFetch({ allowPrivate: false }); }
-  const server = await makeMcpServer({ store, allowCrawl, fetchImpl: globalThis.fetch, log });
+  const server = await makeMcpServer({ store, allowCrawl, fetchImpl: globalThis.fetch, log, detector });
   log(`serving ${data} (${store.kind} store, read-only${allowCrawl ? ', crawl tools registered behind the egress guard' : ''}); ${server.tools.length} tools`);
   await serveStdio(server, { input, write: out, log });
   store.close?.();
