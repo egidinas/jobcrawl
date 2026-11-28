@@ -1,6 +1,6 @@
 {
   "name": "@egidinas/jobcrawl",
-  "version": "0.0.0-phase0",
+  "version": "0.1.0",
   "private": true,
   "description": "Crawl the public job boards of any field: per-board jobs, full snapshots or deltas, open and extensible (sources, backends, enrichment, outputs).",
   "license": "MIT",

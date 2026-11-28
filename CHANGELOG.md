@@ -1,7 +1,22 @@
 # Changelog
 
-jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
-The commit log has the details of each change.
+Numbered releases start with 0.1.0 (git tag + GitHub release; not on npm before 1.0). Between releases `main` is the running version.
+This file groups the history by period, newest first. The commit log has the details of each change.
+
+## 0.1.0 (2026-11-28): first release of the multitool core
+
+Install: `npm install github:egidinas/jobcrawl#v0.1.0` (Node 22). The legacy crawl (`crawler/`) runs as before; everything new is
+opt-in and off by default on the legacy path.
+
+- **Engine**: per-board state + delta (posting/v1, delta/v1), strangler-fig façade with kill switch, SQLite store (global `event_id`,
+  consumer bookmarks, stored ids + aliases, posting text/excerpts), resolver (resolved/v1), `run --due` per-board cadence with shared
+  host slots, cooldowns and breaker.
+- **Headless**: `jobcrawl run` with documented exit codes, JSON-lines logs, `/health` + metrics, systemd examples (docs/HEADLESS.md).
+- **Outputs**: snapshot NDJSON, JSON Feed 1.1, RSS 2.0 with a field allowlist (private fields refused) (docs/OUTPUTS.md).
+- **AI**: read-only MCP server (docs/MCP.md); egress guard against private targets on every new path.
+- **Detection**: detector v2 as data (`core/detect/fingerprints.json`, 125+ providers), opt-in `--detector v2` (docs/DETECT.md).
+- **Providers**: 124 sources incl. hrlab (rewritten), ApplicantPro, WeRecruit, CandidatePortal.
+- **Not yet**: enrichment/embedding hooks (0.2), npm publication (after 1.0), detector v2 as default (needs a fresh hold-out win).
 
 ## 2026-11-28: MCP server (row 2A.4, branch feat/mcp-2a4)
 
