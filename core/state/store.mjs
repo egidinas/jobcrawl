@@ -21,9 +21,9 @@ export function detectStore(root) {
   return { json: json.listBoards(root).length > 0, sqlite: existsSync(join(root, SQLITE_FILE)) };
 }
 
-export function jsonStore(root) {
+export function jsonStore(root, { keepDescription = false } = {}) {
   return {
-    kind: 'json', root,
+    kind: 'json', root, keepDescription,
     supports: (name) => ['openBoard', 'commitRun', 'lease', 'listBoards', 'readEvents', 'snapshot'].includes(name),
     openBoard: (board, opts) => json.openBoard(root, board, opts),
     commitRun: (board, state, events) => json.commitRun(root, board, state, events),
@@ -41,7 +41,7 @@ export async function openStore(root, { kind = 'json', ...opts } = {}) {
   const has = detectStore(root);
   if (kind === 'sqlite' && has.json && !has.sqlite) throw new StateError(`${root} holds JSON board states and no ${SQLITE_FILE}: import them first (jobcrawl store-import --data <dir>), or run with --store json`);
   if (kind === 'json' && has.sqlite) throw new StateError(`${root} holds a ${SQLITE_FILE} store: run with --store sqlite`);
-  if (kind === 'json') return jsonStore(root);
+  if (kind === 'json') return jsonStore(root, opts);
   const s = await openSqliteStore(root, opts);
   s.supports = (name) => typeof s[name] === 'function';
   return s;

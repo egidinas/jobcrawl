@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+<title>Test board</title>
+<link>https://example.test/</link>
+<description>Job postings</description>
+<lastBuildDate>Wed, 04 Nov 2026 00:00:00 GMT</lastBuildDate>
+<generator>jobcrawl</generator>
+<item>
+<title>Quality Lead</title>
+<link>https://boards.greenhouse.io/acme/jobs/403</link>
+<guid isPermaLink="false">jc1_vxo5gunohxjbp2ntkpse5msw6jwuap2u</guid>
+<pubDate>Wed, 04 Nov 2026 00:00:00 GMT</pubDate>
+<dc:creator>Acme</dc:creator>
+<category>Munich, Germany</category>
+</item>
+<item>
+<title>AIT Manager</title>
+<link>https://boards.greenhouse.io/acme/jobs/402</link>
+<guid isPermaLink="false">jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l</guid>
+<pubDate>Tue, 03 Nov 2026 00:00:00 GMT</pubDate>
+<dc:creator>Acme</dc:creator>
+<category>Munich, Germany</category>
+<description>Lead the assembly, integration and test of our flight hardware in Munich. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head of production. You coordinate suppliers, write procedures, run vibration and thermal tests and report to the head…</description>
+</item>
+<item>
+<title>Senior Thermal Engineer (m/w/d)</title>
+<link>https://boards.greenhouse.io/acme/jobs/401</link>
+<guid isPermaLink="false">jc1_afaefqnto57f2l44s75mvxhe26hgkv7d</guid>
+<pubDate>Mon, 02 Nov 2026 00:00:00 GMT</pubDate>
+<dc:creator>Acme</dc:creator>
+<category>Oberpfaffenhofen, Germany</category>
+<description>Senior Thermal Engineer (m/w/d) At Acme Space we build satellites that link the world. You will design, analyse and test the thermal control system of our spacecraft, own thermal models in ESATAN and run thermal vacuum campaigns together with our test team. Degree in mechanical or aerospace engineering Five years of spacecraft thermal design Fluent German and English We offer a team of 40 engineers in Oberpfaffenhofen, flexible hours, 30 days of leave &amp; a relocation package.</description>
+</item>
+</channel>
+</rss>

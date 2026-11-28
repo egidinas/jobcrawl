@@ -20,6 +20,7 @@
     "title": { "type": "string" },
     "company": { "type": "string" },
     "location": { "type": "string" },
+    "excerpt": { "type": "string", "description": "optional: the first ~1,200 characters of the representative posting description, as the store keeps it" },
     "first_seen": { "type": "string" },
     "reason": { "type": "string" },
     "fields": { "type": "array", "items": { "type": "string" } },

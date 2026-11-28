@@ -25,6 +25,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { canonicalKey, idForKey, normaliseUrl } from '../id.mjs';
+import { splitText } from '../text.mjs';
 import { emptyState, toPosting, DELTA_SCHEMA } from '../delta/board-delta.mjs';
 import { PRODUCER } from '../compat/envelope.mjs';
 import { StateError, listBoards as listJsonBoards, readBoardState } from './board-store.mjs';
@@ -50,6 +51,7 @@ CREATE TABLE IF NOT EXISTS cooldowns (host TEXT PRIMARY KEY, until INTEGER NOT N
 CREATE TABLE IF NOT EXISTS breakers (key TEXT PRIMARY KEY, open_until INTEGER NOT NULL, opened_at INTEGER NOT NULL, failures INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS breaker_events (key TEXT NOT NULL, t INTEGER NOT NULL, ok INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS breaker_events_key ON breaker_events (key, t);
+CREATE TABLE IF NOT EXISTS posting_text (id TEXT NOT NULL, content_hash TEXT NOT NULL, excerpt TEXT NOT NULL, description TEXT, PRIMARY KEY (id, content_hash)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS imports (board TEXT PRIMARY KEY, source TEXT, seq INTEGER NOT NULL, event_id INTEGER NOT NULL, postings INTEGER NOT NULL, at TEXT NOT NULL);
 `;
 
@@ -71,7 +73,9 @@ const PROJ_FIELDS = (a, b) => {
 const EVENT_OPS = new Set(['added', 'changed', 'reappeared', 'departed']);
 
 export class SqliteStore {
-  constructor(DatabaseSync, root, { file = join(root, SQLITE_FILE), busyMs = 5000, clock = Date.now, keysOf = defaultKeysOf } = {}) {
+  constructor(DatabaseSync, root, { file = join(root, SQLITE_FILE), busyMs = 5000, clock = Date.now, keysOf = defaultKeysOf, keepDescription = false } = {}) {
+    this.keepDescription = keepDescription;
+    this.textWrites = 0;
     this.kind = 'sqlite';
     this.root = root; this.file = file; this.clock = clock; this.keysOf = keysOf;
     if (file !== ':memory:') mkdirSync(root, { recursive: true });
@@ -158,14 +162,18 @@ export class SqliteStore {
       const touched = new Set(events.filter((e) => EVENT_OPS.has(e.op)).map((e) => e.id));
       const up = this.db.prepare('INSERT INTO postings (board, id, status, rec) VALUES (?, ?, ?, ?) ON CONFLICT (board, id) DO UPDATE SET status = excluded.status, rec = excluded.rec');
       const refreshed = [];
+      // text lives in posting_text (id + content_hash), not in the posting record: an unchanged posting writes nothing
+      const texts = new Map(this.db.prepare('SELECT t.id AS id, t.content_hash AS h, t.excerpt AS excerpt, t.description AS description FROM posting_text t JOIN postings p ON p.id = t.id WHERE p.board = ?').all(board).map((r) => [r.id, r]));
       for (const [id, rec] of Object.entries(state.postings ?? {})) {
-        const js = JSON.stringify(rec);
+        const { slim, text } = splitText(rec);
+        if (text) this._putText(id, rec.dh ?? '', text, texts.get(id));
+        const js = JSON.stringify(slim);
         const prevJs = old.get(id);
         old.delete(id);
         if (prevJs === js) continue;
         up.run(board, id, String(rec.status ?? 'open'), js);
         if (prevJs !== undefined && !touched.has(id)) {
-          const a = projection(board, id, JSON.parse(prevJs)), b = projection(board, id, rec);
+          const a = projection(board, id, JSON.parse(prevJs)), b = projection(board, id, slim);
           const fields = PROJ_FIELDS(a, b);
           if (fields.length) refreshed.push({ id, fields, posting: toPosting(board, id, rec) });
         } else if (prevJs === undefined && !touched.has(id)) {
@@ -173,7 +181,8 @@ export class SqliteStore {
         }
       }
       const del = this.db.prepare('DELETE FROM postings WHERE board = ? AND id = ?');
-      for (const id of old.keys()) del.run(board, id);
+      const delText = this.db.prepare('DELETE FROM posting_text WHERE id = ?');
+      for (const id of old.keys()) { del.run(board, id); delText.run(id); }
       // events, in order; then the store records
       const ins = this.db.prepare('INSERT INTO events (board, seq, op, id, t, body) VALUES (?, ?, ?, ?, ?, ?)');
       let first = null, last = null;
@@ -193,6 +202,16 @@ export class SqliteStore {
       beforeCommit?.();
       return { seqFrom: events[0]?.seq ?? null, seqTo: events.at(-1)?.seq ?? null, eventFrom: first, eventTo: last, refreshed: refreshed.length };
     });
+  }
+
+  /** Writes one posting's text when it differs from what is stored; older content hashes of the id are dropped. */
+  _putText(id, hash, text, cur) {
+    const desc = text.description ?? null;
+    if (cur && cur.h === hash && cur.excerpt === text.excerpt && (desc === null || cur.description === desc)) return;
+    this.textWrites = (this.textWrites ?? 0) + 1;
+    this.db.prepare('INSERT INTO posting_text (id, content_hash, excerpt, description) VALUES (?, ?, ?, ?) ON CONFLICT (id, content_hash) DO UPDATE SET excerpt = excluded.excerpt, description = COALESCE(excluded.description, description)')
+      .run(id, hash, text.excerpt, desc);
+    this.db.prepare('DELETE FROM posting_text WHERE id = ? AND content_hash <> ?').run(id, hash);
   }
 
   // ---- ids as stored facts ----
@@ -286,7 +305,12 @@ export class SqliteStore {
       const rows = status
         ? this.db.prepare('SELECT board, id, rec FROM postings WHERE status = ? ORDER BY board, id').all(status)
         : this.db.prepare('SELECT board, id, rec FROM postings ORDER BY board, id').all();
-      return [head, ...rows.map((r) => toPosting(r.board, r.id, JSON.parse(r.rec)))];
+      const text = new Map(this.db.prepare('SELECT id, content_hash AS h, excerpt, description FROM posting_text').all().map((t) => [t.id, t]));
+      return [head, ...rows.map((r) => {
+        const rec = JSON.parse(r.rec), t = text.get(r.id);
+        if (t && t.h === (rec.dh ?? '')) { rec.excerpt = t.excerpt; if (t.description) rec.description = t.description; }
+        return toPosting(r.board, r.id, rec);
+      })];
     });
   }
 
@@ -399,7 +423,9 @@ export class SqliteStore {
         const insAlias = this.db.prepare('INSERT OR IGNORE INTO id_alias (key, id, reason, at) VALUES (?, ?, ?, ?)');
         const at = new Date(this.clock()).toISOString();
         for (const [id, rec] of Object.entries(s.postings ?? {})) {
-          up.run(board, id, String(rec.status ?? 'open'), JSON.stringify(rec));
+          const { slim, text } = splitText(rec);
+          up.run(board, id, String(rec.status ?? 'open'), JSON.stringify(slim));
+          if (text) this._putText(id, rec.dh ?? '', text, null);
           sum.postings++;
           if (!rec.url) continue;
           const keys = this.keysOf(rec.url);

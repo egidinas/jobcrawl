@@ -103,7 +103,7 @@ export function createResolver(state = null, config = {}) {
     out.push({ schema: RESOLVED_SCHEMA, seq: ++st.seq, t: new Date(ms(t)).toISOString(), op, id: g.id, status: g.status,
       boards: listing(g), admitting: Object.keys(g.adm).sort(),
       ...(g.dup_of ? { dup_of: g.dup_of } : {}),
-      ...(m ? { url: m.url, title: m.title, company: m.company, location: m.location || undefined, first_seen: g.first_open ?? m.first_seen } : {}),
+      ...(m ? { url: m.url, title: m.title, company: m.company, location: m.location || undefined, first_seen: g.first_open ?? m.first_seen, ...(m.ex ? { excerpt: m.ex } : {}) } : {}),
       ...extra });
   }
 
@@ -254,12 +254,14 @@ export function createResolver(state = null, config = {}) {
       status, misses: 0,
       company: f.company ?? prev?.company ?? rec.board,
       fp: f.fp ?? prev?.fp ?? '',
+      ex: p.jobcrawl?.excerpt ?? prev?.ex,
       ak: f.applyText != null ? applyUrls(f.applyText) : (prev?.ak ?? []),
       kept: f.kept !== false,
       hide: f.kept === false ? (f.hide ?? 'filtered') : undefined,
       vt: rec.t,
     };
     if (!m.ak.length) delete m.ak;
+    if (!m.ex) delete m.ex;
     if (m.hide === undefined) delete m.hide;
     dirtyM.add(key);
     const g = group(id);

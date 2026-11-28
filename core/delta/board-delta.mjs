@@ -26,6 +26,7 @@
 // With MADE_LIFECYCLE=on the live rule becomes k=3 + 24 h (DEFAULT_RULES) and unseen rows become 'unknown' instead of closed.
 // Mass-departure guard: when a complete read would drop more than (1 - keepRatio) of a board's open postings (with at least minOpen
 // open), the misses are held until `confirm` consecutive reads say the same (the crawl's livenessGuard, resilience.mjs GUARD).
+import { textOf } from '../text.mjs';
 import { postingId, sha256 } from '../id.mjs';
 import { PRODUCER } from '../compat/envelope.mjs';
 
@@ -67,14 +68,16 @@ const COMPARED = ['title', 'location', 'posted', 'dh'];
 
 /** The compact posting carried by added/changed/reappeared events (posting/v1 subset). */
 export function toPosting(board, id, rec) {
-  return {
+  const p = {
     '@type': 'JobPosting', title: rec.title, url: rec.url, datePosted: rec.posted || undefined,
     jobLocation: rec.location ? [{ '@type': 'Place', address: { name: rec.location } }] : undefined,
-    jobcrawl: { schema: 'posting/v1', id, board, status: rec.status, first_seen: rec.first_seen, last_seen: rec.last_seen, content_hash: rec.dh ?? undefined },
+    jobcrawl: { schema: 'posting/v1', id, board, status: rec.status, first_seen: rec.first_seen, last_seen: rec.last_seen, content_hash: rec.dh ?? undefined, ...(rec.excerpt ? { excerpt: rec.excerpt } : {}) },
   };
+  if (rec.description) p.description = rec.description;
+  return p;
 }
 
-export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_RULES, guard = DEFAULT_GUARD, maxJobs = null, idOf = postingId } = {}) {
+export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_RULES, guard = DEFAULT_GUARD, maxJobs = null, idOf = postingId, keepDescription = false } = {}) {
   if (!board) throw new Error('applyRun: opts.board is required');
   const state = prev ? structuredClone(prev) : emptyState(board);
   if (state.board !== board) throw new Error(`applyRun: state is for board "${state.board}", not "${board}"`);
@@ -100,7 +103,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
     const f = fieldsOf(it);
     const rec = state.postings[id];
     if (!rec) {
-      const r = (state.postings[id] = { ...f, first_seen: t, last_seen: t, misses: 0, status: 'open' });
+      const r = (state.postings[id] = { ...f, ...textOf(it, { keepDescription }), first_seen: t, last_seen: t, misses: 0, status: 'open' });
       emit('added', { id, posting: toPosting(board, id, r) });
       continue;
     }
@@ -109,6 +112,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
     if (f.dh != null && rec.dh == null) rec.dh = f.dh;
     for (const k of diffs) rec[k] = f[k];
     rec.url = f.url;
+    Object.assign(rec, textOf(it, { keepDescription }));
     rec.last_seen = t;
     rec.misses = 0;
     if (rec.bl) {

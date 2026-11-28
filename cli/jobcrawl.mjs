@@ -63,6 +63,9 @@ commands (phase 0):
                                              read-only checks: Node, node:sqlite, profile, user agent, data folder, routing;
                                              --strict exits 5 when a check warns
 
+  --keep-description                         (crawl, run, import and the store commands) also keep the full description beside the stored excerpt;
+                                             same as JOBCRAWL_KEEP_DESCRIPTION=1 or "store": { "keep_description": true } in profile.json; default off
+
   --help, -h, help                           this text (no network, no writes)
 exit codes: 0 ok, 1 some boards failed, 2 usage or config error (or a live read the routing does not allow), 3 lease or run lock held,
             4 state store error, 5 --strict found a warning (doctor, run), 130/143 interrupted by SIGINT/SIGTERM with the state consistent
@@ -77,6 +80,11 @@ if (cmd === 'help' || flag('help') || rest.includes('-h')) { console.log(USAGE);
 
 const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
 const { join, dirname, resolve: pathResolve } = await import('node:path');
+// store.keep_description: the flag, the environment or the profile; the stores and runBoard read the environment variable
+if (flag('keep-description')) process.env.JOBCRAWL_KEEP_DESCRIPTION = '1';
+else if (opt('profile') && !process.env.JOBCRAWL_KEEP_DESCRIPTION) {
+  try { if (JSON.parse(readFileSync(join(pathResolve(opt('profile')), 'profile.json'), 'utf8')).store?.keep_description === true) process.env.JOBCRAWL_KEEP_DESCRIPTION = '1'; } catch {}
+}
 const { gunzipSync } = await import('node:zlib');
 
 function guardDataDir(dir) {
@@ -110,7 +118,7 @@ let PROFILE_MOD;
 const storeKind = () => { const k = opt('store', process.env.JOBCRAWL_STORE || 'json'); if (k !== 'json' && k !== 'sqlite') fail(`--store expects json or sqlite (got "${k}")`); return k; };
 async function openStoreOr(data, kind, code = 4) {
   const { openStore } = await import('../core/state/store.mjs');
-  try { return await openStore(data, { kind }); } catch (e) { fail(e.message, code); }
+  try { return await openStore(data, { kind, keepDescription: /^(1|true|yes|on)$/i.test(process.env.JOBCRAWL_KEEP_DESCRIPTION ?? '') }); } catch (e) { fail(e.message, code); }
 }
 
 /** Resolver config: the registry entries (aggregator boards, providers, probation) and the catalogue names, from --profile or --companies. */

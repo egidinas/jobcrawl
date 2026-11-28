@@ -198,7 +198,8 @@ export function* snapshot(root, { status = 'open' } = {}) {
     for (const [id, r] of Object.entries(s.postings)) {
       if (status && r.status !== status) continue;
       yield { '@type': 'JobPosting', title: r.title, url: r.url, datePosted: r.posted || undefined,
-        jobcrawl: { schema: 'posting/v1', id, board: b, status: r.status, first_seen: r.first_seen, last_seen: r.last_seen, content_hash: r.dh ?? undefined } };
+        jobcrawl: { schema: 'posting/v1', id, board: b, status: r.status, first_seen: r.first_seen, last_seen: r.last_seen, content_hash: r.dh ?? undefined, ...(r.excerpt ? { excerpt: r.excerpt } : {}) },
+        ...(r.description ? { description: r.description } : {}) };
     }
   }
 }
