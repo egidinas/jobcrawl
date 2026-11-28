@@ -2,7 +2,7 @@
 // Detector benchmark (JOBCRAWLX row 2A.5): detector v1 (what ships) vs detector v2 (core/detect) on the frozen split.
 //
 //   node scripts/eval-detect.mjs --split holdout|dev|all [--cache <evalcache dir>] [--tier page|url|both] [--out report.json]
-//        [--split-file bench/detect/split-v1.jsonl] [--min-conf 0.4] [--boot 2000] [--log <file>] [--misses] [--json-only]
+//        [--split-file bench/detect/split-v1.jsonl] [--pages-file bench/detect/split-v2.pages.jsonl] [--min-conf 0.4] [--boot 2000] [--log <file>] [--misses] [--json-only]
 //
 // Never touches the network: pages come from --cache only (the eval-detect page cache, <id>.json = { url, final, status, html, cname });
 // a row whose cached HTML no longer has the sha1 the split recorded is skipped and counted.
@@ -30,7 +30,7 @@ const t0 = Date.now();
 const say = (m) => { const l = `${new Date().toISOString()} [${((Date.now() - t0) / 1000).toFixed(1)}s] ${m}`; if (LOG) appendFileSync(LOG, l + '\n'); console.error(l); };
 if (!['holdout', 'dev', 'all'].includes(SPLIT)) { console.error('--split holdout|dev|all'); process.exit(2); }
 
-const { detectOffline, FINGERPRINTS, best } = await import('../core/detect/index.mjs');
+const { detect, detectOffline, FINGERPRINTS, best } = await import('../core/detect/index.mjs');
 const { detectV1 } = await import('../core/detect/v1.mjs');
 const { resolve: resolveEntry } = await import('../crawler/providers.mjs');
 
@@ -105,25 +105,58 @@ if (TIER === 'page' || TIER === 'both') {
   if (!CACHE) say('page tier skipped: no --cache (URL-only results below)');
   else {
     const list = [], skipped = { no_page: 0, missing_file: 0, sha_mismatch: 0 };
+    // --pages-file (split v2): the page manifest frozen after the fetch, { id, usable, html_sha1, follow_url, follow_sha1 } per row
+    const pinned = new Map();
+    if (opt('pages-file')) for (const l of readFileSync(opt('pages-file'), 'utf8').split('\n')) if (l.trim()) { const x = JSON.parse(l); pinned.set(x.id, x); }
+    const publicDns = async () => [{ address: '93.184.216.34' }];   // cached pages only: the guard's DNS hook never resolves anything
     let i = 0;
     for (const r of rows) {
+      if (pinned.size) r.page = pinned.get(r.id) ?? null;
       if (!r.page?.usable) { skipped.no_page++; continue; }
       const f = join(CACHE, r.id + '.json');
       if (!existsSync(f)) { skipped.missing_file++; continue; }
       const p = JSON.parse(readFileSync(f, 'utf8'));
-      if (sha1(p.html) !== r.page.html_sha1) { skipped.sha_mismatch++; continue; }
+      if (sha1(p.html) !== r.page.html_sha1 || (r.page.follow_sha1 && sha1(p.follow?.html ?? '') !== r.page.follow_sha1)) { skipped.sha_mismatch++; continue; }
       const input = { url: r.url, finalUrl: p.final || r.url, html: p.html, cname: p.cname || '' };
       const h1 = v1Top(detectV1(input));
       const res = detectOffline(input);
       const t2 = v2Top(res.candidates);
       const urlOnly = !!resolveEntry({ careers_url: r.url });
-      list.push({ id: r.id, name: r.name, url: r.url, label: r.label, provider: r.provider, slug: r.slug, urlOnly,
+      // two-page tier (split v2 caches the first follow): v1 reads the follow page when page 1 gave no provider; v2 runs detect() over
+      // the same cached pages through a cache-only fetch (its own follow rule decides; a page not in the cache is a failed request)
+      let two = null;
+      if ('follow' in p) {
+        const f = p.follow && p.follow.html && p.follow.status < 400 ? p.follow : null;
+        const h1b = h1 ?? (f ? v1Top(detectV1({ url: f.url, finalUrl: f.final || f.url, html: f.html })) : null);
+        const nrm = (u) => { try { return new URL(String(u)).href; } catch { return String(u); } };
+        const served = new Map([[nrm(r.url), { final: p.final || r.url, html: p.html, status: p.status }], ...(f ? [[nrm(f.url), { final: f.final || f.url, html: f.html, status: f.status }]] : [])]);
+        const cacheFetch = async (u) => {
+          const x = served.get(nrm(u));
+          if (!x) throw new Error(`not in cache: ${u}`);
+          return { status: x.status, url: x.final, headers: new Headers({ 'content-type': 'text/html' }), text: async () => x.html };
+        };
+        const r2 = await detect({ url: r.url, cname: p.cname || '', fetch: cacheFetch, lookupImpl: publicDns, follow: 1 });
+        const t2b = v2Top(r2.candidates);
+        two = { v1: cls(h1b?.provider), v2: cls(t2b?.provider), v2slugOk: !!t2b && (!r.slug || normSlug(t2b.slug) === normSlug(r.slug)), v2generic: t2b && GENERIC.has(t2b.provider) ? t2b.provider : null, followed: r2.fetched.length > 1, top3: r2.candidates.slice(0, 3).map((c) => `${c.provider}:${c.confidence}`) };
+      }
+      list.push({ two, stand_in: r.stand_in ?? null, id: r.id, name: r.name, url: r.url, label: r.label, provider: r.provider, slug: r.slug, urlOnly,
         v1: cls(h1?.provider), v1slug: h1?.slug ?? null, v2: cls(t2?.provider), v2slug: t2?.slug ?? null,
         v2slugOk: !!t2 && (!r.slug || normSlug(t2.slug) === normSlug(r.slug)), v2generic: t2 && GENERIC.has(t2.provider) ? t2.provider : null,
         v2top3: res.candidates.slice(0, 3).map((c) => `${c.provider}:${c.confidence}`) });
       if (++i % 100 === 0) say(`page progress ${i} rows`);
     }
     result.page = { skipped, all: report(list, 'page/all'), page_needed: report(list.filter((r) => !r.urlOnly), 'page/page-needed') };
+    const twoList = list.filter((r) => r.two).map((r) => ({ ...r, ...r.two }));
+    if (twoList.length) {
+      result.page.two_page = report(twoList, 'two-page/all');
+      result.page.two_page_followed = twoList.filter((r) => r.followed).length;
+      const si = twoList.filter((r) => r.stand_in);
+      result.page.stand_in = { rows: si.length, list: si.map((r) => ({ name: r.name, stand_in: r.stand_in, v1: r.v1, v2: r.v2 })) };
+      result.page.two_page_without_stand_in = report(twoList.filter((r) => !r.stand_in), 'two-page/no-stand-in');
+      // post-hoc diagnostic, not a label: custom rows where both detectors name the same ATS (likely a generic reader standing in)
+      result.page.both_name_same_ats_on_custom = twoList.filter((r) => r.label === 'custom' && r.v1 !== 'custom' && r.v1 === r.v2).map((r) => ({ name: r.name, ats: r.v1 }));
+      if (flag('misses')) result.page.two_page_misses = twoList.filter((r) => r.v1 !== r.label || r.v2 !== r.label).map((r) => ({ name: r.name, url: r.url, label: r.label, v1: r.v1, v2: r.v2, top3: r.top3 }));
+    }
     if (flag('misses')) result.page.misses = list.filter((r) => r.v1 !== r.label || r.v2 !== r.label).map((r) => ({ name: r.name, url: r.url, label: r.label, v1: r.v1, v2: r.v2, top3: r.v2top3 }));
   }
 }
@@ -162,7 +195,7 @@ function table(x, title) {
   lines.push(`confusions v2: ${x.confusions.v2.map((c) => `${c.pair} (${c.count})`).join(', ')}`);
   console.log(lines.join('\n'));
 }
-if (!flag('json-only')) { table(result.page?.all, `page tier, ${SPLIT}`); table(result.page?.page_needed, `page tier (page needed), ${SPLIT}`); }
+if (!flag('json-only')) { table(result.page?.two_page, `two-page tier, ${SPLIT}`); table(result.page?.all, `page tier, ${SPLIT}`); table(result.page?.page_needed, `page tier (page needed), ${SPLIT}`); }
 const brief = (x) => x && { rows: x.rows, ats_macro_f1: { v1: x.ats.v1.macro_f1, v2: x.ats.v2.macro_f1, gap_ci95: x.ats.gap_ci95 }, with_custom_macro_f1: { v1: x.with_custom.v1.macro_f1, v2: x.with_custom.v2.macro_f1 }, wins: x.wins, losses: x.losses, top_confusions_v1: x.confusions.v1.slice(0, 5), top_confusions_v2: x.confusions.v2.slice(0, 5) };
 console.log(JSON.stringify({ split: SPLIT, page_all: brief(result.page?.all), page_needed: brief(result.page?.page_needed), url: result.url && { ...brief(result.url.metrics), provider_agree: result.url.provider_agree, slug_agree: result.url.slug_agree, v1_hits: result.url.v1_hits, v1_only: result.url.v1_only } }, null, 1));
 say('done');
