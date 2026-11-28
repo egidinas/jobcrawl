@@ -108,11 +108,13 @@ const FP_MODE = opt('fp', 'arrival');
 // the JSON-LD readers (sitemap, jsonld_direct). Others (softgarden widgets, Workday lists, ...) get their text later (lazy or page read).
 const INLINE = new Set([...Object.entries(providers).filter(([, v]) => !v.fetchDescription && /description/i.test(String(v.fetch))).map(([k]) => k), 'sitemap', 'jsonld_direct']);
 const providerOfBoard = new Map(registry.map((c) => [c.name, c.provider ?? null]));
-// a description saved after the listing (lazy or page read) is known from the next cycle on: here from the next resolver batch (the
-// legacy cycle runs every ~20 min, so a batch of --batch records stands for a cycle)
+// a description saved after the listing (lazy or page read) is known from the day after the row's first day (--late-fp day, default);
+// --late-fp batch: from the next resolver batch (a batch of --batch records standing for a ~20 min legacy cycle; measured 28 Nov: recall
+// 76.6 % instead of 83.8 %, recent window 93 vs 91 of 138, so the day rule stays the default)
+const LATE = opt('late-fp', 'day');
 const fpWhen = FP_MODE === 'cache' ? () => true
-  : (row, board, t, op) => (op === 'refresh' ? String(t ?? '').slice(0, 10) >= (row.first_seen || T0day) : INLINE.has(providerOfBoard.get(board)));
-const BATCH = Number(opt('batch', 1000));
+  : (row, board, t, op) => (op === 'refresh' ? (LATE === 'batch' ? String(t ?? '').slice(0, 10) >= (row.first_seen || T0day) : String(t ?? '').slice(0, 10) > (row.first_seen || T0day)) : INLINE.has(providerOfBoard.get(board)));
+const BATCH = Number(opt('batch', LATE === 'batch' ? 1000 : 20000));
 const SHADOWED = { kept: false, hide: 'filtered' };   // crawl.mjs shadowVerdict: an aggregator's copy of a role the employer's ATS lists
 const EXTRA = { kept: false, hide: 'extra' };
 const keptFor = (row, board, t) => {
@@ -240,7 +242,7 @@ for (const c of registry) if (legacyIdx.has(c.name) !== resIdx.has(c.name)) { ga
 
 const report = {
   legacy_copy: LEG, legacy_at: admit.at, out: OUT, seconds: Math.round((Date.now() - t0) / 1000),
-  replay: { fp_mode: FP_MODE, batch: BATCH, inline_providers: INLINE.size, released_rows: rows.filter((r) => released.has(r.url)).length, epoch: EPOCH, employer_board_listings: companyBoardExtra, history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
+  replay: { fp_mode: FP_MODE, late_fp: LATE, batch: BATCH, inline_providers: INLINE.size, released_rows: rows.filter((r) => released.has(r.url)).length, epoch: EPOCH, employer_board_listings: companyBoardExtra, history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
   dup: { rows: rows.length, agreement: +((rows.length - Object.values(cls).reduce((a, b) => a + b, 0)) / rows.length * 100).toFixed(3), confusion: conf,
     legacy_dup: dupLegacy, resolver_dup: dupResolver, both_dup: dupBoth,
     dup_recall: +(dupBoth / dupLegacy * 100).toFixed(2), window_from: WINDOW, window_confusion: windowConf, dup_precision: +(dupBoth / (dupResolver || 1) * 100).toFixed(2), classes: cls, samples },
