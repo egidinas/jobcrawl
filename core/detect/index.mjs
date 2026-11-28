@@ -134,7 +134,9 @@ export function detectOffline({ url = '', finalUrl = '', html = '', headers = nu
     if (!h.kinds.has(kind)) h.kinds.set(kind, { kind, value: String(value).slice(0, 200), ...(evUrl ? { url: evUrl.slice(0, 300) } : {}) });
     // a pattern's own capture (an API path, an embed's ?for=) names the tenant directly
     const ev = evUrl || (kind === 'markup' || kind === 'cname' || kind === 'meta_generator' || kind === 'header' ? '' : value);
-    const sr = captured && !NOT_SLUG.test(captured) ? { slug: captured, from: 'url' } : slugRule(fp, ev, pageUrl);
+    // the row's own slug rules on the evidence URL first (a Workday API URL still yields tenant|wdN|site); a pattern capture is the fallback
+    const ruled = ev ? slugRule(fp, ev, pageUrl) : null;
+    const sr = (ruled && ruled.from !== 'origin' ? ruled : null) ?? (captured && !NOT_SLUG.test(captured) ? { slug: captured, from: 'url' } : (ruled ?? slugRule(fp, ev, pageUrl)));
     if (sr) {
       const w = WEIGHTS[kind] ?? 0.5;
       // tenant evidence: the slug read from a URL (a board link, an API path, the careers URL itself); a slug made from the page's own
@@ -282,14 +284,46 @@ export async function detect({ url, html, finalUrl, headers, cname = '', fetch: 
  */
 export function followTarget(html, pageUrl, { namedSource = false } = {}) {
   const feats = pageFeatures(html, pageUrl);
-  const iframe = feats.refs.find((r) => r.kind === 'iframe_src' && /job|career|karriere|stellen|recruit|bewerb|vacanc/i.test(r.url));
+  const iframe = feats.refs.find((r) => r.kind === 'iframe_src' && /job|career|karriere|stellen|recruit|bewerb|vacanc|easycruit|jobb|ledig/i.test(r.url));
   if (iframe) return iframe.url;
   if (namedSource) return null;
-  const careers = feats.refs.find((r) => {
-    if (r.kind !== 'link_href' || regDomain(hostOf(r.url)) !== regDomain(hostOf(pageUrl)) || r.url.split('#')[0] === String(pageUrl).split('#')[0]) return false;
-    try { return /\/(?:karriere|careers?|jobs?|stellen(?:angebote)?|vacancies|offene-stellen|join-us|work-with-us|lediga-jobb|jobba-hos-oss)(?:[/?#]|$)/i.test(new URL(r.url).pathname + '/'); } catch { return false; }
-  });
-  return careers?.url ?? null;
+  const best = followCandidates(html, pageUrl)[0];
+  return best?.url ?? null;
+}
+
+// Job-list words in a link's path or text, by strength (r3, from the dev split's Swedish / German homepages): a listing ("lediga jobb",
+// "Stellenangebote", "open positions") beats a careers landing page ("Jobba hos oss", "Karriere"), which beats a weak hint.
+const LIST_PATH = /\/(?:lediga-?(?:jobb|tjanster|tjaenster|stallningar)|ledigajobb|ledige-stillinger|stillinger|avoimet-tyopaikat|tyopaikat|stellenangebote|offene-stellen|stellenmarkt|jobboerse|vacancies|vacatures|open-positions|open-roles|openings|job-?offers|offres-d-emploi|emplois|jobs|jobb)(?:[/?#.]|$)/i;
+const CAREER_PATH = /\/(?:karriere|karriar|karri%c3%a4r|careers?|carrieres?|career-center|stellen|jobba-(?:hos-oss|pa|i)[\w-]*|arbeta-(?:hos-oss|pa|i)[\w-]*|jobba[\w-]*|join-us|work-with-us|werken-bij|rekrytering|recrutement|nous-rejoindre|rekrytointi|ura|arbeiten-bei)(?:[/?#.]|$)/i;
+const LIST_TEXT = /^(?:s[öo]k\s+)?(?:lediga\s+(?:jobb|tj[äa]nster|st[äa]llningar)|ledige\s+stillinger|avoimet\s+ty[öo]paikat|stellenangebote|offene\s+stellen|aktuelle\s+stellen|jobangebote|open\s+(?:positions|roles|vacancies)|current\s+(?:openings|vacancies)|vacancies|vacatures|job\s+openings|offres\s+d.emploi|see\s+all\s+jobs|alle\s+jobs|all\s+jobs)\b/i;
+const CAREER_TEXT = /^(?:jobba\s+(?:hos\s+oss|p[åa]|i)|arbeta\s+(?:hos\s+oss|p[åa]|i)|karri[äa]r|karriere|careers?|jobs?|jobb|join\s+us|work\s+with\s+us|werken\s+bij|carri[èe]res?|rekrytering|bli\s+en\s+av\s+oss)\b/i;
+const LANG_TEXT = /^(?:deutsch|english|svenska|norsk|dansk|suomi|fran[çc]ais|espa[ñn]ol|italiano|nederlands|polski|de|en|sv|fr|nl|fi|no|da)$/i;
+
+/** Same-domain links that may lead to the job list, best first: { url, score, text }. */
+export function followCandidates(html, pageUrl) {
+  const here = String(pageUrl).split('#')[0];
+  const out = new Map();
+  for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]{0,400}?)<\/a>/gi)) {
+    const href = m[1].match(/\bhref\s*=\s*["']([^"'<>]{1,800})["']/i)?.[1];
+    if (!href || /^(?:#|mailto:|tel:|javascript:)/i.test(href.trim())) continue;
+    let u;
+    try { u = new URL(decode(href.trim()), pageUrl || undefined); } catch { continue; }
+    if (!/^https?:$/.test(u.protocol) || regDomain(u.host) !== regDomain(hostOf(pageUrl)) || u.href.split('#')[0] === here) continue;
+    if (/\bhreflang\s*=/i.test(m[1]) || /\.(?:pdf|jpe?g|png|docx?)$/i.test(u.pathname)) continue;
+    const text = decode(m[2].replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+    if (LANG_TEXT.test(text)) continue;   // a language switch is not a careers link
+    let path = u.pathname;
+    try { path = decodeURIComponent(u.pathname); } catch { /* keep raw */ }
+    path = path.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase() + '/';
+    let score = 0;
+    if (LIST_PATH.test(path)) score += 3; else if (CAREER_PATH.test(path)) score += 2;
+    if (LIST_TEXT.test(text)) score += 3; else if (CAREER_TEXT.test(text)) score += 2;
+    if (!score) continue;
+    const k = u.href.split('#')[0];
+    const cur = out.get(k);
+    if (!cur || score > cur.score) out.set(k, { url: k, score, text: text.slice(0, 80) });
+  }
+  return [...out.values()].sort((a, b) => b.score - a.score);
 }
 
 /** Rows for docs and the coverage test: every registry provider must have a fingerprint row. */

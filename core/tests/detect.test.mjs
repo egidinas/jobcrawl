@@ -6,7 +6,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { detect, detectOffline, best, coverage, FINGERPRINTS, SCHEMA, slugFor } from '../detect/index.mjs';
+import { detect, detectOffline, best, coverage, FINGERPRINTS, SCHEMA, slugFor, followTarget, followCandidates } from '../detect/index.mjs';
 import { detectV1 } from '../detect/v1.mjs';
 import { providers, resolve as resolveEntry } from '../../crawler/providers.mjs';
 
@@ -244,4 +244,60 @@ test('CLI detect --detector v2 --html: offline, ranked candidates', () => {
   assert.deepEqual(out.fetched, []);
   const v1 = execFileSync(process.execPath, [cli, 'detect', 'https://jobs.lever.co/acme'], { encoding: 'utf8' });
   assert.match(v1, /^lever:acme \(url\)/);
+});
+// ---- r3: follow rules and EasyCruit markers, built from dev-split pages (never the fresh hold-out) ----
+test('r3 follow: a Swedish homepage follows the listing ("Lediga jobb") over the landing page', () => {
+  // shape of the dev page www.fi.se: both the landing ("Arbeta på FI") and the list ("Lediga jobb") are linked
+  const html = '<nav><a href="/sv/om-fi/arbeta-pa-fi/">Arbeta p&#xE5; FI</a><a href="/sv/om-fi/arbeta-pa-fi/lediga-jobb/">Lediga jobb</a><a href="/sv/kontakt/">Kontakt</a></nav>';
+  assert.equal(followTarget(html, 'https://www.fi.se/'), 'https://www.fi.se/sv/om-fi/arbeta-pa-fi/lediga-jobb/');
+});
+
+test('r3 follow: link text finds a list whose path has no job word (www.osteraker.se, www.malmoopera.se)', () => {
+  const a = '<a href="/subsite/jobbaiosteraker.4.71681f6a17d7773cad81958.html">Jobba i Österåker</a><a href="/subsite/jobbaiosteraker/ledigajobb.4.367d658917909e8fc2b2588.html">Sök lediga jobb</a>';
+  assert.equal(followTarget(a, 'https://www.osteraker.se/'), 'https://www.osteraker.se/subsite/jobbaiosteraker/ledigajobb.4.367d658917909e8fc2b2588.html');
+  assert.equal(followTarget('<a href="/om-oss/lediga-tjanster">Lediga tjänster</a>', 'https://www.malmoopera.se/'), 'https://www.malmoopera.se/om-oss/lediga-tjanster');
+  assert.equal(followTarget('<a href="https://cubsec.se/karriar/">Jobba hos oss</a>', 'https://cubsec.se/'), 'https://cubsec.se/karriar/');
+});
+
+test('r3 follow: a language switch is never the careers link (www.blickfeld.com)', () => {
+  const html = '<link rel="alternate" hreflang="de" href="https://www.blickfeld.com/de/karriere/"><a href="https://www.blickfeld.com/de/karriere/">Deutsch</a>'
+    + '<a href="https://www.blickfeld.com/careers/test-engineer-m-f-d/">Test Engineer (m/f/d)</a>';
+  assert.notEqual(followTarget(html, 'https://www.blickfeld.com/careers/'), 'https://www.blickfeld.com/de/karriere/');
+});
+
+test('r3 follow: other domains, anchors and mail links are never followed', () => {
+  const html = '<a href="https://other.example/lediga-jobb/">Lediga jobb</a><a href="#jobs">Jobs</a><a href="mailto:jobs@acme.example">Jobs</a>';
+  assert.equal(followTarget(html, 'https://www.acme.example/'), null);
+  assert.deepEqual(followCandidates(html, 'https://www.acme.example/'), []);
+});
+
+test('r3 easycruit: a career-center link on the employer page names the tenant (dev page www.kongsberg.com)', () => {
+  const html = '<p>If you already have registered your CV you can access it <a href="https://kongsberg.easycruit.com/career-center/login?iso=gb">by logging in here</a>.</p>';
+  const b = best(detectOffline({ url: 'https://www.kongsberg.com/careers/vacancies/', html }).candidates);
+  assert.equal(b.provider, 'easycruit');
+  assert.equal(b.slug, 'kongsberg');
+  assert.ok(b.evidence.some((e) => e.kind === 'api'), 'career-center is an EasyCruit endpoint');
+  // the XML export URL in a widget config is enough too
+  const x = best(detectOffline({ url: 'https://www.acme.example/jobb', html: '<script>var feed="https://acme.easycruit.com/export/xml/vacancy/list.xml";</script>' }).candidates);
+  assert.equal(x?.slug, 'acme');
+});
+
+test('r3 follow: detect() follows the listing link and finds the EasyCruit board there', async () => {
+  const site = {
+    'https://www.acme.se/': '<a href="/om-oss/">Om oss</a><a href="/om-oss/jobba-hos-oss/lediga-jobb/">Lediga jobb</a>',
+    'https://www.acme.se/om-oss/jobba-hos-oss/lediga-jobb/': '<iframe src="https://acme.easycruit.com/?iso=se"></iframe>',
+  };
+  const seen = [];
+  const r = await detect({ url: 'https://www.acme.se/', fetch: async (u) => { seen.push(u); return page(u, site[u]); }, lookupImpl: publicDns });
+  assert.equal(seen.length, 2);
+  assert.equal(best(r.candidates).provider, 'easycruit');
+  assert.equal(best(r.candidates).slug, 'acme');
+});
+
+test('r3 slug: an API URL keeps the row\'s own slug rule (Workday tenant|wdN|site), the capture is only a fallback', () => {
+  const html = '<script>fetch("https://borgwarner.wd5.myworkdayjobs.com/wday/cxs/borgwarner/BorgWarner_Careers/jobs")</script>'
+    + '<a href="https://borgwarner.wd5.myworkdayjobs.com/BorgWarner_Careers/job/Oroszlany/Engineer_R1">Engineer</a>';
+  const b = best(detectOffline({ url: 'https://www.acme.example/careers', html }).candidates);
+  assert.equal(b.provider, 'workday');
+  assert.equal(b.slug, providers.workday.detect('https://borgwarner.wd5.myworkdayjobs.com/BorgWarner_Careers'));
 });

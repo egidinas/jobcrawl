@@ -190,3 +190,26 @@ that carries a real tenant slug (jobylon over teamtailor/personio, radancy over 
   adp, workday, teamtailor and personio, and are likely a generic reader standing in for an ATS.
 - To settle the default, the next round needs more ATS rows on employer pages: 34 is the binding limit. That means more companies
   with a known website.
+
+## Round 3: follow rules and EasyCruit markers (dev split only)
+
+Round 2's fresh hold-out is spent: these changes were found and checked on the round-1 **dev** split and its cached pages
+(plus a profiler page outside both hold-outs), never on the fresh hold-out pages. **Switching the default needs a new frozen hold-out.**
+
+- **Why easycruit and personio scored 0.** Their hold-out inputs are homepages, and the dev split shows the same pattern: 22 ReachMee
+  rows are Swedish homepages whose board sits one click away, behind "Lediga jobb", "Lediga tjänster" or "Jobba hos oss" links.
+  - The round-2 follow rule found a link on 15 of the 26 missed dev ATS rows; only 2 of those were the job list.
+  - The rest were a landing page, a contact page or a language switch.
+  - Dev Personio pages are already read (F1 0.98); the one miss (blickfeld) carries no Personio trace at all.
+- **Follow rule** (`followCandidates` / `followTarget`):
+  - Same-domain links are scored by path and link text: a listing ("lediga jobb", "Stellenangebote", "open positions", ...) beats a
+    careers landing page ("Jobba hos oss", "Karriere"), which beats nothing.
+  - Swedish, Norwegian, Finnish, Dutch and French words are included.
+  - Language switches (hreflang, "Deutsch") are skipped.
+  - On the 26 missed dev ATS rows: a target on 25 (was 15), the job list on 12 (was 2).
+- **EasyCruit:** API templates `{slug}.easycruit.com/export/xml/vacancy/list.xml` and `/career-center/` (a career-center login link names
+  the tenant, as on www.kongsberg.com), and a "Powered by EasyCruit" footer marker.
+- **Slug fix:** a row's own slug rule on an API URL now wins over the bare pattern capture. A Workday API URL gave `borgwarner`
+  instead of `borgwarner|wd5|BorgWarner_Careers`.
+- **Dev split, one page:** macro-F1 unchanged (v2 0.667, v1 0.670); per-class F1 unchanged. v2 slug accuracy where the provider is
+  right rose from 0.925 to 0.952. The follow-rule gain needs a two-page set to show up in F1.
