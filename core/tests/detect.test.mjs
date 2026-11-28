@@ -75,6 +75,43 @@ test('ranking: an ATS embed outranks the page\'s own job cards; a slugless platf
   assert.equal(best(r.candidates), null);
 });
 
+test('r2 tenant precedence: a markup-only hit does not take the page address over a link that names a tenant (personio vs jobylon)', () => {
+  // shape of the 2026-11-28 hold-out miss: a careers page with Jobylon markup and links to emp.jobylon.com postings, and Personio
+  // posting links naming the tenant; the label is Personio
+  const html = '<div class="jobylon-jobs"></div><script>var u="https://emp.jobylon.com/jobs/";</script>'
+    + '<a href="https://emp.jobylon.com/jobs/395836-financial-controller/">Financial Controller</a>'
+    + '<a href="https://lime-tech.jobs.personio.de/job/2840664?language=en">Backend Developer</a>';
+  const { candidates } = detectOffline({ url: 'https://jobs.lime.example/open-positions/', html });
+  const b = best(candidates);
+  assert.equal(b.provider, 'personio');
+  assert.equal(b.slug, 'lime-tech');
+  assert.ok(b.tenant);
+  const jy = candidates.find((c) => c.provider === 'jobylon');
+  assert.ok(jy && !jy.tenant, 'jobylon is listed, its slug only the page address');
+  // emp.jobylon.com/jobs/123456-title is Jobylon's own host: never a Teamtailor custom domain
+  assert.ok(!candidates.some((c) => c.provider === 'teamtailor'));
+});
+
+test('r2 tenant precedence: an embed with only the page address loses to a tenant link (avature vs radancy)', () => {
+  const html = '<script src="https://services.tmpwebeng.com/magicbullet/"></script>'
+    + '<a href="https://synopsys.avature.net/talentcommunity?jobId=88&source=Radancy">Join our talent community</a>';
+  const { candidates } = detectOffline({ url: 'https://careers.synopsys.example/', html });
+  assert.equal(best(candidates).provider, 'avature');
+  assert.equal(best(candidates).slug, 'https://synopsys.avature.net');
+  const rd = candidates.find((c) => c.provider === 'radancy');
+  assert.ok(rd && !rd.tenant && rd.confidence < 0.9, 'radancy penalised: slug is only the page origin');
+  // with a CNAME to the vendor the careers host IS the tenant: the origin slug is real evidence again
+  const withCname = detectOffline({ url: 'https://careers.synopsys.example/', html: '<script src="https://services.tmpwebeng.com/magicbullet/"></script>', cname: 'x.radancy.net' });
+  assert.ok(best(withCname.candidates).tenant);
+});
+
+test('r2: a slug-less hit seen in markup alone is penalised', () => {
+  const { candidates } = detectOffline({ url: 'https://acme.example/jobs', html: '<div class="attrax-vacancy-tile" data-x="1"></div>' });
+  const a = candidates.find((c) => c.provider === 'attrax');
+  assert.ok(a && a.slug === null && a.confidence < 0.6);
+  assert.equal(best(candidates)?.provider ?? null, null);
+});
+
 test('single-employer readers count only on their own domain', () => {
   const page = detectOffline({ url: 'https://www.bwi.de/karriere', html: '<a href="/karriere/stellen">Stellen</a>' });
   assert.equal(best(page.candidates)?.provider, 'bwi');
