@@ -221,27 +221,50 @@ test('cli: run from a recording writes JSON-lines logs, honours JOBCRAWL_* env, 
   assert.equal(r.status, 0, r.stderr);
 });
 
+/** Spawns the CLI with stderr captured; waitFor(regex, ms) fails with the captured stderr on a deadline; stop() signals and waits (hard deadline). */
+function spawnCli(args) {
+  const child = spawn(process.execPath, [...nodeArgs, ...args], { stdio: ['ignore', 'ignore', 'pipe'], env: ENV });
+  let err = '', code = null;
+  child.stderr.on('data', (d) => { err += d; });
+  const exited = new Promise((ok) => child.on('exit', (c) => { code = c; ok(c); }));
+  const waitFor = async (re, ms = 15000) => {
+    const end = Date.now() + ms;
+    for (;;) {
+      const m = re.exec(err);
+      if (m) return m;
+      if (code !== null) assert.fail(`child exited ${code} before ${re}; stderr:\n${err}`);
+      if (Date.now() > end) assert.fail(`no ${re} within ${ms} ms; stderr:\n${err}`);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  };
+  const stop = async (sig = 'SIGTERM', ms = 10000) => {
+    child.kill(sig);
+    const c = await Promise.race([exited, new Promise((ok) => setTimeout(() => ok('TIMEOUT'), ms).unref())]);
+    if (c === 'TIMEOUT') { child.kill('SIGKILL'); assert.fail(`no exit within ${ms} ms of ${sig}; stderr:\n${err}`); }
+    return c;
+  };
+  return { child, waitFor, stop, err: () => err };
+}
+
 test('cli: --metrics binds loopback and serves while the run is open (daemon, stopped by a signal)', { skip: process.platform === 'win32' && 'POSIX signals' }, async () => {
   const f = fixture(1);
-  const child = spawn(process.execPath, [...nodeArgs, 'run', '--profile', f.prof, '--data', f.data, '--routing', f.routing, '--replay', f.rec, '--daemon', '--interval-min', '60', '--metrics', '127.0.0.1:0', '--log-format', 'json'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  let err = ''; child.stderr.on('data', (d) => { err += d; });
-  const exit = new Promise((ok) => child.on('exit', (c) => ok(c)));
-  const port = await new Promise((ok, bad) => { const t = setInterval(() => { const m = /"metrics-listening".*?"port":(\d+)/.exec(err); if (m) { clearInterval(t); ok(Number(m[1])); } }, 50); setTimeout(() => bad(new Error(`no port: ${err}`)), 20000).unref(); });
-  while (!/"daemon-cycle"/.test(err)) await new Promise((r) => setTimeout(r, 50));
-  const h = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
-  assert.equal(h.schema, 'health/v1');
-  child.kill('SIGTERM');
-  assert.equal(await exit, 143);
+  const p = spawnCli(['run', '--profile', f.prof, '--data', f.data, '--routing', f.routing, '--replay', f.rec, '--daemon', '--interval-min', '60', '--metrics', '127.0.0.1:0', '--log-format', 'json']);
+  try {
+    const port = Number((await p.waitFor(/"metrics-listening".*?"port":(\d+)/))[1]);
+    await p.waitFor(/"daemon-cycle"/);
+    const h = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+    assert.equal(h.schema, 'health/v1');
+    assert.equal(await p.stop('SIGTERM', 5000), 143, p.err());   // prompt exit from the 60-minute sleep
+  } finally { if (p.child.exitCode === null) p.child.kill('SIGKILL'); }
 });
 
 test('cli: SIGTERM mid-run exits 143 with the state consistent, and a restart resumes', { skip: process.platform === 'win32' && 'POSIX signals' }, async () => {
   const f = fixture(6);
-  const child = spawn(process.execPath, [...nodeArgs, 'run', '--profile', f.prof, '--data', f.data, '--routing', f.routing, '--replay', f.rec, '--replay-delay-ms', '300', '--log-format', 'json'], { stdio: ['ignore', 'ignore', 'pipe'] });
-  let err = ''; child.stderr.on('data', (d) => { err += d; });
-  const exit = new Promise((ok) => child.on('exit', (c) => ok(c)));
-  while ((err.match(/"event":"board"/g) ?? []).length < 2) await new Promise((r) => setTimeout(r, 25));
-  child.kill('SIGTERM');
-  assert.equal(await exit, 143, err);
+  const p = spawnCli(['run', '--profile', f.prof, '--data', f.data, '--routing', f.routing, '--replay', f.rec, '--replay-delay-ms', '300', '--log-format', 'json']);
+  try {
+    await p.waitFor(/"event":"board"[\s\S]*"event":"board"/);
+    assert.equal(await p.stop('SIGTERM', 10000), 143, p.err());
+  } finally { if (p.child.exitCode === null) p.child.kill('SIGKILL'); }
   const st = readRunState(f.data);
   assert.equal(st.status, 'interrupted');
   const done = Object.keys(st.done).length;

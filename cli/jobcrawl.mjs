@@ -363,7 +363,7 @@ switch (cmd) {
       try { server = await serveMetrics(metrics, listen); } catch (e) { fail(`--metrics ${opt('metrics')}: ${e.message}`); }
       log.info('metrics-listening', { host: server.host, port: server.port });
     }
-    const sleepAbortable = (ms) => new Promise((ok) => { const t = setTimeout(ok, ms); ac.signal.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); });
+    const sleepAbortable = (ms) => new Promise((ok) => { if (ac.signal.aborted) return ok(); const t = setTimeout(ok, ms); ac.signal.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); });
     const common = { readFor, signal: ac.signal, maxMs: maxMin ? maxMin * 60e3 : null, strict: flag('strict'), staleMs: staleH * 3600e3, providerOf, log, metrics };
     if (delayMs) {   // test seam (with --replay): a slow board, so a signal can arrive mid-run
       const { runBoard } = await import('../core/run-board.mjs');
