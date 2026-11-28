@@ -46,7 +46,7 @@ for i in $(seq 0 "$WAIT_MIN"); do
   [ "$i" = "$WAIT_MIN" ] && die 1 "$REC_UNIT still $st after $WAIT_MIN min"
   sleep 60
 done
-say "step 1 result: $REC_UNIT is $(systemctl --user show "$REC_UNIT" -p ActiveState --value); recording log: $(tail -1 "$R/logs/record.log" 2>/dev/null | cut -c1-200)"
+say "step 1 result: $REC_UNIT is $(systemctl --user show "$REC_UNIT" -p ActiveState --value); recording log: $(tail -1 "$R/logs/record2.log" 2>/dev/null | cut -c1-200)"
 
 # 2 ---------------------------------------------------------------------------------------------------------------------
 guard 2
@@ -108,6 +108,17 @@ say "step 5 result: exit $rc (1 = some boards had no recorded answer, expected)"
 
 # 6 ---------------------------------------------------------------------------------------------------------------------
 say "step 6 start: summary"
+# The live crawl's connect timeouts per cycle over the last 7 days (its cycle logs): how often the uplink drops bursts of new connections.
+# One line per cycle: <cycle> <connect timeouts> <board timeouts> <boards scanned>; read-only on the live logs.
+UPLINK=$R/uplink_7d.tsv
+if [ $DRY = 1 ]; then say "dry-run step 6 would write $UPLINK from ~/atlas/logs/cycle/cycle_*.log (last 7 days)"
+else
+  : > "$UPLINK"
+  find "$HOME/atlas/logs/cycle" -maxdepth 1 -name 'cycle_*.log' -mtime -7 2>/dev/null | sort | while read -r f; do
+    printf '%s\t%s\t%s\t%s\n' "$(basename "$f" .log | cut -c7-)" "$(grep -c UND_ERR_CONNECT_TIMEOUT "$f")" "$(grep -c 'Timed out after' "$f")" "$(grep -o 'Scanned [0-9]*/[0-9]*' "$f" | head -1 | cut -d' ' -f2)" >> "$UPLINK"
+  done
+  say "step 6: uplink table $(wc -l < "$UPLINK") cycles -> $UPLINK"
+fi
 if [ $DRY = 1 ]; then say "dry-run step 6 would write $R/MORNING_SUMMARY.md and copy it and report.md to $R/out/"
 else
   node -e '
@@ -127,6 +138,18 @@ else
       const fails = par.boards.filter((b) => b.verdict === "fail").sort((a, b) => (b.only_legacy + b.only_new) - (a.only_legacy + a.only_new)).slice(0, 15);
       L.push("", "Top parity failures (boards):", ...fails.map((b) => `- ${b.board} (${b.provider}): legacy ${b.legacy}, new ${b.new}, only legacy ${b.only_legacy}, only new ${b.only_new}, title diff ${b.title_diff}`));
     }
+    try {
+      const rows = fs.readFileSync(`${R}/uplink_7d.tsv`, "utf8").trim().split("\n").filter(Boolean).map((l) => l.split("\t"));
+      if (rows.length) {
+        const ct = rows.map((r) => Number(r[1]) || 0), sum = ct.reduce((a, b) => a + b, 0), sorted = [...ct].sort((a, b) => a - b);
+        const days = {};
+        for (const r of rows) { const d = r[0].slice(0, 10); const x = (days[d] ??= { cycles: 0, ct: 0, to: 0 }); x.cycles++; x.ct += Number(r[1]) || 0; x.to += Number(r[2]) || 0; }
+        const worst = rows.slice().sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0)).slice(0, 5);
+        L.push("", `Live crawl connect timeouts (uplink dropping bursts of new connections), last 7 days: ${rows.length} cycles, ${sum} connect timeouts, median ${sorted[Math.floor(sorted.length / 2)]} per cycle, max ${sorted.at(-1)}.`,
+          "| day | cycles | connect timeouts | board timeouts |", "|---|---:|---:|---:|", ...Object.entries(days).map(([d, x]) => `| ${d} | ${x.cycles} | ${x.ct} | ${x.to} |`),
+          `Worst cycles: ${worst.map((r) => `${r[0]} (${r[1]} of ${r[3] || "?"} boards)`).join(", ")}.`);
+      }
+    } catch (e) { L.push("", `Uplink table unavailable: ${e.message}`); }
     L.push("", "Files: out/analysis/report.md, parity.json, ledger.json, logs/morning.log. Parity here compares the night recording with the live history as of this morning: boards that changed in between show as near/fail.");
     fs.writeFileSync(`${R}/MORNING_SUMMARY.md`, L.join("\n") + "\n");
     console.log("summary written");
