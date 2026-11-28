@@ -83,7 +83,16 @@ export class SqliteStore {
     if (file !== ':memory:') mkdirSync(root, { recursive: true });
     this.db = new DatabaseSync(file);
     this.db.exec(`PRAGMA busy_timeout=${Math.max(0, Math.floor(busyMs))}`);
-    this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON');
+    // Switching a new file to WAL needs a short exclusive lock and SQLite does not apply busy_timeout to it: a second process
+    // opening the same new store at that moment gets SQLITE_BUSY. Retry with a small backoff within the busy budget.
+    for (let t0 = Date.now(), wait = 5; ; wait = Math.min(wait * 2, 200)) {
+      try { this.db.exec('PRAGMA journal_mode=WAL'); break; }
+      catch (e) {
+        if (!/locked|busy/i.test(String(e?.message)) || Date.now() - t0 > Math.max(busyMs, 1000)) throw e;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+      }
+    }
+    this.db.exec('PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON');
     this._tx(() => {
       const v = this.db.prepare('PRAGMA user_version').get().user_version;
       if (v > SQLITE_SCHEMA_VERSION) throw new StateError(`${file}: schema version ${v} is newer than this jobcrawl (${SQLITE_SCHEMA_VERSION})`);
