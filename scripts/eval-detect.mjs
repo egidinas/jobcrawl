@@ -2,7 +2,7 @@
 // Detector benchmark (JOBCRAWLX row 2A.5): detector v1 (what ships) vs detector v2 (core/detect) on the frozen split.
 //
 //   node scripts/eval-detect.mjs --split holdout|dev|all [--cache <evalcache dir>] [--tier page|url|both] [--out report.json]
-//        [--split-file bench/detect/split-v1.jsonl] [--min-conf 0.4] [--boot 2000] [--log <file>] [--misses]
+//        [--split-file bench/detect/split-v1.jsonl] [--min-conf 0.4] [--boot 2000] [--log <file>] [--misses] [--json-only]
 //
 // Never touches the network: pages come from --cache only (the eval-detect page cache, <id>.json = { url, final, status, html, cname });
 // a row whose cached HTML no longer has the sha1 the split recorded is skipped and counted.
@@ -147,6 +147,22 @@ if (TIER === 'url' || TIER === 'both') {
 }
 
 if (opt('out')) writeFileSync(opt('out'), JSON.stringify(result, null, 1));
+// the per-class table (both detectors side by side) for each page subset, then the confusion pairs
+function table(x, title) {
+  if (!x) return;
+  const pad = (v, n) => String(v ?? '-').padStart(n);
+  const lines = [`\n${title}: ${x.rows} rows; macro-F1 (ATS classes) v1 ${x.ats.v1.macro_f1} | v2 ${x.ats.v2.macro_f1}  gap 95% [${x.ats.gap_ci95?.lo}, ${x.ats.gap_ci95?.hi}]; with custom v1 ${x.with_custom.v1.macro_f1} | v2 ${x.with_custom.v2.macro_f1}; wins ${x.wins} losses ${x.losses}`,
+    `${'class'.padEnd(24)}${pad('n', 4)}   ${pad('v1 P', 6)}${pad('R', 6)}${pad('F1', 6)}   ${pad('v2 P', 6)}${pad('R', 6)}${pad('F1', 6)}`];
+  const per1 = x.with_custom.v1.per, per2 = x.with_custom.v2.per;
+  for (const k of [...new Set([...Object.keys(per1), ...Object.keys(per2)])].sort((a, b) => ((per2[b] ?? per1[b]).n - (per2[a] ?? per1[a]).n) || a.localeCompare(b))) {
+    const a = per1[k] ?? {}, b = per2[k] ?? {};
+    lines.push(`${(k + (KIND.get(k) === 'site' ? ' (site)' : '')).padEnd(24)}${pad(a.n ?? b.n, 4)}   ${pad(a.p, 6)}${pad(a.r, 6)}${pad(a.f1, 6)}   ${pad(b.p, 6)}${pad(b.r, 6)}${pad(b.f1, 6)}`);
+  }
+  lines.push(`confusions v1: ${x.confusions.v1.map((c) => `${c.pair} (${c.count})`).join(', ')}`);
+  lines.push(`confusions v2: ${x.confusions.v2.map((c) => `${c.pair} (${c.count})`).join(', ')}`);
+  console.log(lines.join('\n'));
+}
+if (!flag('json-only')) { table(result.page?.all, `page tier, ${SPLIT}`); table(result.page?.page_needed, `page tier (page needed), ${SPLIT}`); }
 const brief = (x) => x && { rows: x.rows, ats_macro_f1: { v1: x.ats.v1.macro_f1, v2: x.ats.v2.macro_f1, gap_ci95: x.ats.gap_ci95 }, with_custom_macro_f1: { v1: x.with_custom.v1.macro_f1, v2: x.with_custom.v2.macro_f1 }, wins: x.wins, losses: x.losses, top_confusions_v1: x.confusions.v1.slice(0, 5), top_confusions_v2: x.confusions.v2.slice(0, 5) };
 console.log(JSON.stringify({ split: SPLIT, page_all: brief(result.page?.all), page_needed: brief(result.page?.page_needed), url: result.url && { ...brief(result.url.metrics), provider_agree: result.url.provider_agree, slug_agree: result.url.slug_agree, v1_hits: result.url.v1_hits, v1_only: result.url.v1_only } }, null, 1));
 say('done');

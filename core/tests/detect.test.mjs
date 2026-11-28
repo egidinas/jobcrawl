@@ -116,6 +116,7 @@ test('v1 baseline keeps the shipped order: URL match, link fingerprints, platfor
 
 // ---- fetch path: injected fetch only ----
 const page = (url, body, status = 200) => ({ status, url, headers: new Headers({ 'content-type': 'text/html' }), text: async () => body });
+const publicDns = async () => [{ address: '93.184.216.34' }];   // the guard's DNS hook: every test host resolves to a public address
 
 test('detect(): offline when html is given, even with a fetch', async () => {
   let calls = 0;
@@ -131,7 +132,7 @@ test('detect(): one page plus at most one follow (careers link), never more', as
     'https://www.acme.example/karriere': '<iframe src="https://www.acme.example/jobs-frame"></iframe><a href="https://acme-gmbh.jobs.personio.de/">Jobs</a>',
   };
   const f = async (u) => { seen.push(u); if (!(u in site)) throw new Error(`unexpected request ${u}`); return page(u, site[u]); };
-  const r = await detect({ url: 'https://www.acme.example/', fetch: f });
+  const r = await detect({ url: 'https://www.acme.example/', fetch: f, lookupImpl: publicDns });
   assert.deepEqual(seen, ['https://www.acme.example/', 'https://www.acme.example/karriere']);
   const b = best(r.candidates);
   assert.equal(b.provider, 'personio');
@@ -143,7 +144,7 @@ test('detect(): one page plus at most one follow (careers link), never more', as
 test('detect(): no follow when the first page already names a board', async () => {
   const seen = [];
   const f = async (u) => { seen.push(u); return page(u, '<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script><a href="/careers">c</a>'); };
-  const r = await detect({ url: 'https://acme.example/', fetch: f });
+  const r = await detect({ url: 'https://acme.example/', fetch: f, lookupImpl: publicDns });
   assert.equal(seen.length, 1);
   assert.equal(best(r.candidates).slug, 'acme');
 });
@@ -152,6 +153,14 @@ test('detect(): the default fetch is the egress guard (private addresses refused
   const r = await detect({ url: 'http://127.0.0.1:9/careers', allowFetch: true });
   assert.ok(r.error, 'refused');
   assert.equal(r.fetched.length, 0);
+});
+
+test('detect(): a caller fetch is guarded too: a follow link to a private address is refused before any request', async () => {
+  const seen = [];
+  const f = async (u) => { seen.push(u); return page(u, '<iframe src="http://192.168.1.10/careers-frame"></iframe>'); };
+  const r = await detect({ url: 'https://acme.example/', fetch: f, lookupImpl: publicDns });
+  assert.deepEqual(seen, ['https://acme.example/'], 'the private follow never reached the fetch');
+  assert.match(String(r.fetched[1]?.error ?? ''), /./, 'the refused follow is recorded');
 });
 
 // ---- MCP and CLI switches (default stays v1) ----
@@ -169,6 +178,25 @@ test('MCP detect_board: v1 by default, v2 behind the detector option, same input
   assert.equal(b.data.hits[0].provider, 'greenhouse');
   assert.equal(b.data.hits[0].slug, 'acme');
   assert.ok(typeof b.data.hits[0].confidence === 'number');
+});
+
+test('MCP detect_page with detector v2: private targets refused, nothing reaches the network layer', async () => {
+  const { buildTools } = await import('../mcp/tools.mjs');
+  const store = { kind: 'json', readTransaction: () => [], listBoards: () => [] };
+  const calls = [];
+  const base = async (u) => { calls.push(String(u)); return new Response('<a href="https://jobs.lever.co/acme">x</a>', { status: 200, headers: { 'content-type': 'text/html' } }); };
+  const lookupImpl = async (host) => [{ address: host === 'rebind.example' ? '10.1.2.3' : '93.184.216.34' }];
+  const tool = (await buildTools({ store, allowCrawl: true, fetchImpl: base, lookupImpl, detector: 'v2' })).find((t) => t.name === 'detect_page');
+  for (const url of ['http://127.0.0.1/', 'http://localhost:8080/x', 'http://169.254.169.254/latest/meta-data/', 'http://rebind.example/']) {
+    const r = await tool.handler({ url });
+    assert.equal(r.isError, true, url);
+  }
+  assert.deepEqual(calls, []);
+  const ok = await tool.handler({ url: 'https://example.com/' });
+  assert.equal(ok.isError, false);
+  assert.equal(ok.data.detector, 'v2');
+  assert.equal(ok.data.hits[0].provider, 'lever');
+  assert.deepEqual(calls, ['https://example.com/']);
 });
 
 test('CLI detect --detector v2 --html: offline, ranked candidates', () => {

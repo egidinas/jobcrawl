@@ -221,14 +221,16 @@ export function best(candidates, { minConfidence = ATS_FLOOR } = {}) {
 }
 
 /**
- * Detection with an optional fetch. Without html and with a fetch (or allowFetch), the careers page is fetched through the egress guard;
- * then at most `follow` more pages: the vendor iframe of the page, or its careers link when the page named no source.
+ * Detection with an optional fetch. Without html and with a fetch (or allowFetch), the careers page is fetched through the egress guard
+ * (core/fetch/guard.mjs wraps whatever fetch is passed; lookupImpl is its DNS hook, for tests); then at most `follow` more pages: the
+ * vendor iframe of the page, or its careers link when the page named no source.
  */
-export async function detect({ url, html, finalUrl, headers, cname = '', fetch: fetchImpl, allowFetch = false, follow = 1, timeoutMs = 20000, userAgent } = {}) {
+export async function detect({ url, html, finalUrl, headers, cname = '', fetch: fetchImpl, lookupImpl, allowFetch = false, follow = 1, timeoutMs = 20000, userAgent } = {}) {
   if (!url && !html) throw new TypeError('detect needs url or html');
   if (html || (!fetchImpl && !allowFetch)) return { ...detectOffline({ url, finalUrl, html: html ?? '', headers, cname }), fetched: [] };
+  // every request goes through the egress guard, a caller's fetch too: the follow URL comes from page HTML (untrusted)
   const { makeGuardedFetch } = await import('../fetch/guard.mjs');
-  const f = fetchImpl ?? makeGuardedFetch(globalThis.fetch);
+  const f = makeGuardedFetch(fetchImpl ?? globalThis.fetch, lookupImpl ? { lookupImpl } : {});
   const ua = userAgent ?? (await import('../../crawler/useragent.mjs')).UA;
   const fetched = [];
   const get = async (u) => {

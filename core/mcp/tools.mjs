@@ -313,9 +313,7 @@ function crawlTools({ fetchImpl, lookupImpl, detector = 'v1' }) {
         if (detector === 'v2') {
           // one page plus at most one follow (vendor iframe or careers link), every request and redirect hop through the egress guard
           const { detect } = await import('../detect/index.mjs');
-          const { makeGuardedFetch } = await import('../fetch/guard.mjs');
-          const guarded = makeGuardedFetch(fetchImpl, lookupImpl ? { lookupImpl } : {});
-          const res = await detect({ url, fetch: guarded, follow: 1 });
+          const res = await detect({ url, fetch: fetchImpl, ...(lookupImpl ? { lookupImpl } : {}), follow: 1 });
           const refused = res.error && /Ssrf|refused|not public|private/i.test(res.error) ? { status: 'refused' } : {};
           return { data: markUntrusted({ url, detector, fetched: !res.error, hits: res.candidates.slice(0, 20).map(v2Hit), pages: res.fetched, ...(res.error ? { error: cleanString(res.error, 300) } : {}), ...refused }), isError: !!res.error };
         }

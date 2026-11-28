@@ -31,6 +31,7 @@
     "./core/handshake": "./core/compat/handshake.mjs",
     "./core/graceful": "./core/compat/graceful.mjs",
     "./core/mcp": "./core/mcp/serve.mjs",
+    "./core/detect": "./core/detect/index.mjs",
     "./schemas/*": "./schemas/*",
     "./crawler/*": "./crawler/*",
     "./package.json": "./package.json"
