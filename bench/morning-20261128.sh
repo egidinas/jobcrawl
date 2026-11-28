@@ -12,6 +12,7 @@
 set -u
 R=$HOME/atlas/bench/jcx-record-20261128
 CODE=$R/ops-morning
+REC_CODE=${REC_CODE:-$HOME/atlas/jcx/rec-8726383/code}   # the recorder with pacing and connect retries (jobcrawl fix/record-pacing 8726383)
 LOG=$R/logs/morning.log
 LIVE_SCAN=$HOME/atlas/crawl/scan
 MIN_FREE_GB=45
@@ -35,15 +36,17 @@ if [ ! -f "$R/out/boards.jsonl" ]; then [ $DRY = 1 ] && say "dry-run: no recordi
 cd "$CODE" || die 0 "cannot cd to $CODE"
 
 # 1 ---------------------------------------------------------------------------------------------------------------------
-say "step 1 start: wait for jcx-record.service to be inactive (max 30 min)"
-for i in $(seq 0 30); do
-  st=$(systemctl --user show jcx-record.service -p ActiveState --value)
+REC_UNIT=${REC_UNIT:-jcx-record2.service}   # the re-run of the recording (the 01:20 run, jcx-record.service, failed on connect timeouts)
+WAIT_MIN=${WAIT_MIN:-240}
+say "step 1 start: wait for $REC_UNIT to be inactive (max $WAIT_MIN min)"
+for i in $(seq 0 "$WAIT_MIN"); do
+  st=$(systemctl --user show "$REC_UNIT" -p ActiveState --value)
   [ "$st" = inactive ] || [ "$st" = failed ] && break
   [ $DRY = 1 ] && { say "dry-run: jcx-record is $st (would wait)"; break; }
-  [ "$i" = 30 ] && die 1 "jcx-record.service still $st after 30 min"
+  [ "$i" = "$WAIT_MIN" ] && die 1 "$REC_UNIT still $st after $WAIT_MIN min"
   sleep 60
 done
-say "step 1 result: jcx-record.service is $(systemctl --user show jcx-record.service -p ActiveState --value); recording log: $(tail -1 "$R/logs/record.log" 2>/dev/null | cut -c1-200)"
+say "step 1 result: $REC_UNIT is $(systemctl --user show "$REC_UNIT" -p ActiveState --value); recording log: $(tail -1 "$R/logs/record.log" 2>/dev/null | cut -c1-200)"
 
 # 2 ---------------------------------------------------------------------------------------------------------------------
 guard 2
@@ -69,9 +72,9 @@ if [ "$TO" -gt 0 ]; then
       fs.writeFileSync(sub, JSON.stringify(c));
       console.log(`removed ${lines.length - keep.length} TIMEOUT lines, ${c.tracked_companies.length} boards to re-read`);
     ' "$R/out/boards.jsonl" "$R/companies.json" "$SUB" >> "$LOG" 2>&1 || die 2 "could not prepare the TIMEOUT re-read"
-    node --no-warnings bench/record.mjs --profile "$R/profile" --companies "$SUB" --out "$R/out" --log "$R/logs/record-timeouts.log" \
+    node --no-warnings "$REC_CODE/bench/record.mjs" --profile "$R/profile" --companies "$SUB" --out "$R/out" --log "$R/logs/record-timeouts.log" \
       --seed-cache "$HOME/atlas/crawl/scan" --live-index "$HOME/atlas/raw/index" --live-gap-ms 60000 --live-max-wait-ms 20000 \
-      --concurrency 8 --host-concurrency 2 --host-gap-ms 500 --probe-max 5 --exclude eures,usajobs \
+      --global-gap-ms 250 --connect-retries 2 --concurrency 4 --host-concurrency 2 --host-gap-ms 500 --probe-max 5 --exclude eures,usajobs \
       --stop-at "$(date +%F)T10:45:00+01:00" --hard-stop "$(date +%F)T11:00:00+01:00" --min-free-gb $MIN_FREE_GB >> "$LOG" 2>&1 \
       || die 2 "record.mjs re-read failed (exit $?); see $R/logs/record-timeouts.log"
   fi
