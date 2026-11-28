@@ -198,7 +198,7 @@ export class SqliteStore {
     const getId = this.db.prepare('SELECT id, key FROM ids WHERE key = ?');
     const getAlias = this.db.prepare('SELECT a.id AS id, i.key AS key FROM id_alias a JOIN ids i ON i.id = a.id WHERE a.key = ?');
     const lookup = (k) => this._wrap(() => getId.get(k) ?? getAlias.get(k) ?? null);
-    const memo = new Map(), newIds = new Map(), aliases = new Map(), live = new Set();
+    const memo = new Map(), newIds = new Map(), newByKey = new Map(), aliases = new Map(), live = new Set();
     const keysOf = this.keysOf;
     const idOf = (url) => {
       const keys = keysOf(url);
@@ -209,12 +209,14 @@ export class SqliteStore {
       if (hit) id = hit.id;
       else {
         for (const k of keys.slice(1)) {
-          const h = lookup(k) ?? [...newIds.values()].find((n) => n.keys.includes(k)) ?? null;
+          const h = lookup(k) ?? newByKey.get(k) ?? null;
           if (h && !live.has(h.key ?? h.primary)) { id = h.id; aliases.set(primary, { key: primary, id, reason: `rule-change from ${k}` }); break; }
         }
         if (!id) {
           id = idForKey(primary);
-          newIds.set(primary, { id, key: primary, primary, keys, board, first_seen: now().toISOString() });
+          const n = { id, key: primary, primary, keys, board, first_seen: now().toISOString() };
+          newIds.set(primary, n);
+          for (const k of keys.slice(1)) if (!newByKey.has(k)) newByKey.set(k, n);
           for (const k of keys.slice(1)) if (!lookup(k) && !aliases.has(k)) aliases.set(k, { key: k, id, reason: 'first-sight' });
         }
       }

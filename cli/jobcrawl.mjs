@@ -58,6 +58,8 @@ const out = (obj, text) => { if (JSON_OUT) process.stdout.write(JSON.stringify(o
 const fail = (msg, code = 2) => { if (JSON_OUT) process.stdout.write(JSON.stringify({ error: msg }) + '\n'); else console.error(`jobcrawl ${cmd}: ${msg}`); process.exit(code); };
 
 if (cmd === 'help' || flag('help') || rest.includes('-h')) { console.log(USAGE); process.exit(0); }
+// node:sqlite (leases, the SQLite store, the queue) prints one ExperimentalWarning on Node 22; the CLI drops that warning only
+(await import('../core/state/sqlite-load.mjs')).quietSqliteWarning();
 
 const { existsSync, readFileSync, writeFileSync } = await import('node:fs');
 const { join, dirname, resolve: pathResolve } = await import('node:path');

@@ -213,9 +213,8 @@ function child(args) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-test('two processes: concurrent writers on one store; per-board seq contiguous, global event_id unique and each run contiguous', { timeout: 120000 }, async () => {
-  const root = tmp();
-  (await openSqliteStore(root)).close();
+test('two processes: concurrent first open and writers on one store; per-board seq contiguous, global event_id unique and each run contiguous', { timeout: 120000 }, async () => {
+  const root = tmp();   // not created beforehand: the four processes race on the first open (schema creation) too
   const ws = [child(['writer', root, 'shared', '25', 'x']), child(['writer', root, 'shared', '25', 'y']), child(['writer', root, 'own1', '25', 'p']), child(['writer', root, 'own2', '25', 'q'])];
   const codes = await Promise.all(ws.map((w) => w.exited));
   ws.forEach((w, i) => assert.equal(codes[i], 0, w.err()));
@@ -383,6 +382,14 @@ test('cli: run --store sqlite, feed --after / --consumer --commit, bookmark get/
   assert.equal(r.status, 2); assert.match(r.stderr, /--store expects json or sqlite/);
   r = cli(runArgs(f, ['--store', 'json']));
   assert.equal(r.status, 4, 'a json run on a sqlite folder is refused'); assert.match(r.stderr, /--store sqlite/);
+});
+
+test('cli: the default JSON run prints no ExperimentalWarning either (lease database)', () => {
+  const f = fixture(1);
+  const r = cli(runArgs(f), { warnings: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, '');
+  assert.ok(existsSync(join(f.data, 'leases.sqlite')), 'the JSON path did load node:sqlite');
 });
 
 test('cli: store-import moves a JSON folder without events; a sqlite run before the import is refused (exit 4)', () => {
