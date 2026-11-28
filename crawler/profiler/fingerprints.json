@@ -64,6 +64,7 @@
     { "id": "hrlab", "provider": "hrlab", "hosts": ["hrlab\\.de$"], "cname": [], "markup": ["app\\.hrlab\\.de/(?:[a-z]{2}/)?jobs/", "hrlab-jobs-height"], "slug": null },
     { "id": "applicantpro", "provider": "applicantpro", "hosts": ["\\.applicantpro\\.com$"], "cname": [], "markup": ["applicantpro\\.com/jobs/", "isolved Talent Acquisition"], "slug": null },
     { "id": "werecruit", "provider": "werecruit", "hosts": ["^careers\\.werecruit\\.io$"], "cname": [], "markup": ["careers\\.werecruit\\.io/"], "slug": null },
+    { "id": "candidateportal", "provider": "candidateportal", "hosts": ["\\.uhigher\\.com$"], "cname": [], "markup": ["<title id=\"appTitle\">CandidatePortal</title>"], "slug": null },
     { "id": "dayforce", "provider": "dayforce", "hosts": ["dayforcehcm\\.com$"], "cname": [], "markup": [], "slug": null },
     { "id": "pageup", "provider": "pageup", "hosts": ["pageuppeople\\.com$"], "cname": ["pageup"], "markup": [], "slug": null },
     { "id": "ultipro", "provider": "ultipro", "hosts": ["ultipro\\.com$", "\\.ukg\\.net$"], "cname": [], "markup": [], "slug": null },

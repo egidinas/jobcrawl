@@ -1138,6 +1138,26 @@ export function weRecruitListLink(html, tenant, origin) {
   return m ? (m[1].startsWith('/') ? `${origin}${m[1]}` : m[1]) : '';
 }
 
+// ---- Higher CandidatePortal helpers (exported for tests) ----
+/** Rows of a /jobs_and_alternative_jobs answer: [{ id, title, url, location, department, description, deadline }] (no posting date: applicationDate is the deadline). */
+export function parseCandidatePortalJobs(data, tenant) {
+  const rows = Array.isArray(data?.data) ? data.data : [];
+  const name = (o, lang) => strip(o?.name?.[lang] ?? o?.name?.sv ?? o?.name?.en ?? Object.values(o?.name ?? {})[0] ?? '');
+  return rows.map((r) => {
+    const lang = /^(sv|en|no|fi|da|de)$/.test(r.company?.language ?? '') ? r.company.language : 'sv';
+    const d = String(r.applicationDate ?? '').match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    return {
+      id: String(r.guid ?? r.id ?? ''),
+      title: strip(r.jobTitle ?? ''),
+      url: r.guid ? `https://${tenant}.uhigher.com/${lang}/job-details?job=${r.guid}` : '',
+      location: name(r.jobLocation, lang),
+      department: name(r.jobCategory, lang),
+      description: block(r.jobDescriptionTemplate || r.jobDescription || ''),
+      deadline: d ? `${d[3]}-${d[2]}-${d[1]}` : '',
+    };
+  }).filter((j) => j.id && j.title && j.url);
+}
+
 // ---- Taleo Business Edition helpers (exported for tests) ----
 /** { base, org, cws } of a TBE careers search URL (".../ats/careers/v2/searchResults?org=X&cws=N"); null otherwise. */
 export function taleoBeConfig(b) {
@@ -1298,6 +1318,34 @@ fhDefs.push(
         if (link) { await new Promise((r) => setTimeout(r, 1500)); jobs = parseWeRecruit(await text(link), origin); }
       }
       return { jobs, more: false };
+    },
+  },
+  { // Higher CandidatePortal (Angular app "CandidatePortal" on <tenant>.uhigher.com, route /<lang>/jobs, also on custom domains such as careers.sova.se). Its page carries no data: the app calls
+    // api.uhigher.com/api/v1 (keyless GET): companies/context/company_landing_page/<tenant> gives
+    // the company id, jobs_and_alternative_jobs?company=<id>&publishOnHigher=1&status=active pages the vacancies with their full text.
+    // A tenant whose contract is closed answers 403 "Company is not active": an empty board, not an error. Board = the tenant subdomain.
+    id: 'candidateportal',
+    hosts: [/\.uhigher\.com/i],
+    boardId: (u) => {
+      const m = u.match(/^https?:\/\/([a-z0-9-]+)\.uhigher\.com/i)?.[1]?.toLowerCase();
+      return m && !/^(www|api|docs|wcs|higherjobs|global)$/i.test(m) ? m : null;
+    },
+    delayMs: 400,
+    async page(b, n, st) {
+      if (!labelOk(b)) throw new Error(`candidateportal: bad tenant "${b}"`);
+      const api = 'https://api.uhigher.com/api/v1';
+      const headers = { accept: 'application/json', 'accept-language': 'sv' };
+      if (st.company === undefined) {
+        const res = await req(`${api}/companies/context/company_landing_page/${b}`, { headers });
+        if (res.status === 403 || res.status === 404) { st.company = null; return { jobs: [], more: false }; }
+        if (!res.ok) throw new Error(`HTTP ${res.status} candidateportal ${b}`);
+        st.company = (await res.json())?.data?.[0]?.id ?? null;
+        if (st.company === null) return { jobs: [], more: false };
+      }
+      if (st.company === null) return { jobs: [], more: false };
+      const data = await json(`${api}/jobs_and_alternative_jobs?company=${st.company}&publishOnHigher=1&status=active&limit=100&page=${n}`, { headers });
+      const jobs = parseCandidatePortalJobs(data, b);
+      return { jobs, more: n * 100 < Number(data?.total ?? 0) };
     },
   },
   { // Varbi (Sweden): <tenant>.varbi.com/en/ lists vacancies as table rows (what:job/jobID:N); the date shown is the application deadline, so no postedAt.

@@ -67,6 +67,13 @@ The commit log has the details of each change.
 - `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
   replay); `core/tests/`.
 
+## 2026-11-28: Higher CandidatePortal (uhigher.com)
+
+- **`candidateportal`** (Angular app "CandidatePortal", `<tenant>.uhigher.com`, route `/<lang>/jobs`): the page holds no data; the app reads
+  `api.uhigher.com/api/v1` without a key. `companies/context/company_landing_page/<tenant>` gives the company id, then
+  `jobs_and_alternative_jobs?company=<id>&publishOnHigher=1&status=active&limit=100&page=N` answers title, place, category, full text and
+  application deadline (no posting date). A closed tenant answers 403 "Company is not active" and reads as an empty board. Live: SOVA 14.
+
 ## 2026-11-28: ApplicantPro, WeRecruit, hrlab repaired
 
 - **`applicantpro`** (isolved Talent Acquisition, `<tenant>.applicantpro.com`): board = the tenant; the jobs page gives the domain id, and
