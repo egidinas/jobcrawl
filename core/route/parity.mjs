@@ -68,7 +68,11 @@ export function compareBoard(legacyRows, newOpen, { sameFetch = false } = {}) {
   const union = L.size + N.size - both;
   const overlap = union ? both / union : 1;
   const fieldRate = both ? (title + loc) / both : 0;
-  const verdict = !union ? 'empty' : (onlyL === 0 && onlyN === 0 && title === 0 && loc === 0) ? 'pass' : (overlap >= 0.99 && fieldRate <= 0.01) ? 'near' : 'fail';
+  // With one legacy fetch (sameFetch) the verdict is about the SET of postings: the legacy history keeps the title and location of a
+  // posting's FIRST sighting and never updates them, so field differences there are not disagreement; they are still counted.
+  const verdict = !union ? 'empty'
+    : sameFetch ? (onlyL === 0 && onlyN === 0 ? 'pass' : overlap >= 0.99 ? 'near' : 'fail')
+    : (onlyL === 0 && onlyN === 0 && title === 0 && loc === 0) ? 'pass' : (overlap >= 0.99 && fieldRate <= 0.01) ? 'near' : 'fail';
   return { legacy: L.size, new: N.size, both, only_legacy: onlyL, only_new: onlyN, title_diff: title, location_diff: loc, overlap: +overlap.toFixed(4), verdict, samples };
 }
 
