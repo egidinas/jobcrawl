@@ -53,9 +53,11 @@ export function jdBody(text) {
 /**
  * Facts from a legacy data folder. opts: { history (Map, else read from <dir>/scan-history.tsv), simhash (object, else
  * <dir>/simhash-cache.v2.json), jdDir (default <dir>/jd), isAggregator(row, board) (apply links are read for aggregator rows only, as
- * crawl.mjs loadApplyKeys) }. kept: the legacy row is not filtered or extra.
+ * crawl.mjs loadApplyKeys), fpWhen(row, board) (whether the fingerprint was known when the board listed the row: the legacy crawl
+ * matched a new row only on the description its list answer carried), keptFor(row, board) -> { kept, hide } | null (a board-specific
+ * verdict) }. kept: the legacy row is not filtered or extra.
  */
-export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(dir, 'jd'), isAggregator = () => false } = {}) {
+export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(dir, 'jd'), isAggregator = () => false, fpWhen = () => true, keptFor = null } = {}) {
   const hist = history ?? readHistory(join(dir, 'scan-history.tsv'));
   let sim = simhash;
   if (!sim) { try { sim = JSON.parse(readFileSync(join(dir, 'simhash-cache.v2.json'), 'utf8')); } catch { sim = {}; } }
@@ -69,7 +71,9 @@ export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(
       if (existsSync(f)) { try { applyText = jdBody(readFileSync(f, 'utf8')); } catch { /* unreadable: no apply links */ } }
     }
     const hidden = row.status === 'filtered' || row.status === 'extra';
-    return { company: row.company || undefined, fp: sim[url] || undefined, applyText, kept: !hidden, hide: hidden ? row.status : undefined };
+    const own = keptFor?.(row, rec.board);            // a board-specific verdict (e.g. an aggregator's "shadowed by the employer ATS")
+    const kept = own ? own.kept : !hidden;
+    return { company: row.company || undefined, fp: fpWhen(row, rec.board) ? (sim[url] || undefined) : undefined, applyText, kept, hide: kept ? undefined : (own?.hide ?? row.status) };
   };
   facts.history = hist;
   facts.simhash = sim;

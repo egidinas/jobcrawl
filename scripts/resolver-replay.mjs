@@ -26,6 +26,7 @@ import { isAggregatorEntry, isAggregatorRow, isCrossListing, canonCompany } from
 import { boardOfCompany } from '../crawler/admission.mjs';
 import { protectedFromHistory, loadCatalogueNames, makeEmployerIndex, INDUSTRY_AGGREGATOR_PROVIDERS } from '../crawler/relevance.mjs';
 import { jdFileName } from '../crawler/jdclean.mjs';
+import { providers } from '../crawler/providers.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (n, d) => (argv.includes(`--${n}`) ? argv[argv.indexOf(`--${n}`) + 1] : d);
@@ -62,9 +63,19 @@ log(`start: legacy ${LEG} at ${admit.at}; ${history.size} history rows, ${rows.l
 // ---- listings: board -> [{ url, row, from, idx }] ----
 const listings = new Map();
 const add = (board, l) => (listings.get(board) ?? listings.set(board, []).get(board)).push(l);
+// The board that last listed the row (lifecycle state) and the board its company names: when the last lister is an aggregator board that
+// lists the employer's own URL, the employer's board lists it too (the legacy admission seed and the "shadowed by the employer ATS" verdict)
+const registryNames = new Set(registry.map((c) => c.name));
+let companyBoardExtra = 0;
 rows.forEach((row, idx) => {
-  const board = lc[row.url]?.[0] || boardOfCompany(row.company);
+  const lcBoard = lc[row.url]?.[0];
+  const cBoard = boardOfCompany(row.company);
+  const board = lcBoard || cBoard;
   add(board, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx });
+  if (lcBoard && lcBoard !== cBoard && boardNames.has(lcBoard) && registryNames.has(cBoard) && !boardNames.has(cBoard)) {
+    add(cBoard, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx: idx + 0.5 });
+    companyBoardExtra++;
+  }
 });
 let shadowExtra = 0;
 const SH = opt('shadow');
@@ -82,9 +93,18 @@ if (SH) {
     }
   }
 }
-log(`listings: ${listings.size} boards, ${rows.length} history listings + ${shadowExtra} second-board listings from the shadow store`);
+log(`listings: ${listings.size} boards, ${rows.length} history listings + ${companyBoardExtra} employer-board listings of URLs an aggregator board listed last + ${shadowExtra} second-board listings from the shadow store`);
 
-const facts = legacyFacts(LEG, { history, isAggregator: (row) => isAggregatorRow(row, boardNames) });
+// --fp arrival (default): the fingerprint counts only for boards whose provider returns the description in its list answer (no
+// fetchDescription): the legacy crawl matched a new row on that text only; descriptions read later never re-match a direct row.
+// --fp cache: every fingerprint the legacy cache holds today.
+const FP_MODE = opt('fp', 'arrival');
+const lazy = new Set(Object.entries(providers).filter(([, v]) => v.fetchDescription).map(([k]) => k));
+const providerOfBoard = new Map(registry.map((c) => [c.name, c.provider ?? null]));
+const fpWhen = FP_MODE === 'cache' ? () => true : (row, board) => !lazy.has(providerOfBoard.get(board));
+const SHADOWED = { kept: false, hide: 'filtered' };   // crawl.mjs shadowVerdict: an aggregator's copy of a role the employer's ATS lists
+const keptFor = (row, board) => (boardNames.has(board) && !/\(via /i.test(row.company ?? '') && registryNames.has(boardOfCompany(row.company)) && board !== boardOfCompany(row.company) ? SHADOWED : null);
+const facts = legacyFacts(LEG, { history, isAggregator: (row) => isAggregatorRow(row, boardNames), fpWhen, keptFor });
 const config = { companies: registry, catalogue, rules: 'legacy' };
 const store = await openSqliteStore(OUT);
 const days = [...new Set(rows.map((r) => r.first_seen || T0day))].filter((d) => d <= T0day).sort();
@@ -141,7 +161,11 @@ for (const r of rows) {
     if (ofRow?.status === 'dup') note('resolver dup of a legacy dup (chain)', ex(r.url, { dup_of: ofUrl }));
     else if (ofRow && ofRow.first_seen > r.first_seen) note('resolver dup, legacy open: arrival order (resolver original is younger)', ex(r.url, { dup_of: ofUrl }));
     else if (ofRow && isAggregatorRow(rowObj(r.url), boardNames) && !isAggregatorRow(ofRow, boardNames)) note('resolver dup, legacy open: aggregator copy of a direct posting not yet swept by legacy', ex(r.url, { dup_of: ofUrl }));
-    else note('resolver dup, legacy open: other', ex(r.url, { dup_of: ofUrl }));
+    else {
+      const agg = (x) => (/\(via /i.test(x.company ?? '') ? 'aggregator' : 'direct');
+      const when = !ofRow ? '' : ofRow.first_seen === r.first_seen ? ', same day' : ', original older';
+      note(`resolver dup, legacy open: ${ofRow ? `${agg(ofRow)} original, ${agg(r)} copy${when}` : 'original not a replayed row'}`, ex(r.url, { dup_of: ofUrl, dup_of_title: ofRow?.title }));
+    }
   } else if (r.status === 'dup' && got === 'open') {
     // is there an open legacy row this one cross-lists today?
     const me = rowObj(r.url);
@@ -193,7 +217,7 @@ for (const c of registry) if (legacyIdx.has(c.name) !== resIdx.has(c.name)) { ga
 
 const report = {
   legacy_copy: LEG, legacy_at: admit.at, out: OUT, seconds: Math.round((Date.now() - t0) / 1000),
-  replay: { history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
+  replay: { fp_mode: FP_MODE, employer_board_listings: companyBoardExtra, history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
   dup: { rows: rows.length, agreement: +((rows.length - Object.values(cls).reduce((a, b) => a + b, 0)) / rows.length * 100).toFixed(3), confusion: conf,
     legacy_dup: dupLegacy, resolver_dup: dupResolver, both_dup: dupBoth,
     dup_recall: +(dupBoth / dupLegacy * 100).toFixed(2), dup_precision: +(dupBoth / (dupResolver || 1) * 100).toFixed(2), classes: cls, samples },
