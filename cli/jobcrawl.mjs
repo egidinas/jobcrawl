@@ -45,6 +45,14 @@ commands (phase 0):
       [--store json|sqlite] [--json]
                                              headless run of every routed board on the new path; resumable, SIGTERM-safe, never prompts
                                              (profile and data may come from JOBCRAWL_PROFILE and JOBCRAWL_DATA); see docs/HEADLESS.md
+      [--resolve [--legacy-data <dir>]]       after the boards, run the resolver job once (sqlite store; default off)
+  resolve --data <dir> [--store sqlite] [--profile <dir> | --companies <file>] [--legacy-data <dir>] [--rules legacy|lifecycle]
+          [--batch <n>] [--max-events <n>] [--json]
+                                             the cross-board resolver job (row 1.4): crosslist dups, admission, protected set, the
+                                             3-day sweep and unknown, over the store's per-board events from its bookmark; one lease,
+                                             one checkpoint per batch, writes the resolved/v1 stream (sqlite store only)
+  resolved --data <dir> [--after <seq>] [--limit <n>] | [--groups [--status open|dup|hidden|departed|unknown]] | [--derived]
+                                             the resolved/v1 stream as NDJSON, the resolver's groups, or its derived protected set
   doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json] [--strict]
                                              read-only checks: Node, node:sqlite, profile, user agent, data folder, routing;
                                              --strict exits 5 when a check warns
@@ -97,6 +105,30 @@ const storeKind = () => { const k = opt('store', process.env.JOBCRAWL_STORE || '
 async function openStoreOr(data, kind, code = 4) {
   const { openStore } = await import('../core/state/store.mjs');
   try { return await openStore(data, { kind }); } catch (e) { fail(e.message, code); }
+}
+
+/** Resolver config: the registry entries (aggregator boards, providers, probation) and the catalogue names, from --profile or --companies. */
+async function resolverConfig() {
+  let companies = [], catalogue = [];
+  if (opt('profile')) {
+    PROFILE_MOD ??= await import('../crawler/profile.mjs');
+    let p;
+    try { ({ profile: p, companies } = companiesOf(opt('profile'))); } catch (e) { fail(`profile: ${e.message}`); }
+    catalogue = (await import('../crawler/relevance.mjs')).loadCatalogueNames(p.catalogueFile);
+  } else if (opt('companies')) {
+    try { companies = JSON.parse(readFileSync(pathResolve(opt('companies')), 'utf8')).tracked_companies ?? []; } catch (e) { fail(`--companies: ${e.message}`); }
+  }
+  return { companies, catalogue };
+}
+/** Resolver facts: from a legacy data folder (read-only) with --legacy-data, else from the events' own fields. */
+async function resolverFacts(config) {
+  const f = await import('../core/resolve/facts.mjs');
+  if (!opt('legacy-data')) return f.defaultFacts;
+  const dir = pathResolve(opt('legacy-data'));
+  if (!existsSync(join(dir, 'scan-history.tsv'))) fail(`--legacy-data ${dir} has no scan-history.tsv`);
+  const { isAggregatorEntry, isAggregatorRow } = await import('../crawler/crosslist.mjs');
+  const boardNames = new Set(config.companies.filter(isAggregatorEntry).map((c) => c.name));
+  return f.legacyFacts(dir, { isAggregator: (row) => isAggregatorRow(row, boardNames) });
 }
 
 switch (cmd) {
@@ -448,11 +480,58 @@ switch (cmd) {
         code = r.code; summary = r.summary;
       }
     } catch (e) { log.error('fatal', { error: String(e?.stack ?? e) }); code = EXIT.STATE; }
+    if (flag('resolve') && code !== EXIT.STATE && !ac.signal.aborted) {
+      // opt-in (default off): one resolver run over what the boards just committed; a resolver failure never changes the run's code
+      if (store.kind !== 'sqlite') log.warn('resolve-skipped', { reason: 'the resolver needs --store sqlite' });
+      else {
+        try {
+          const config = await resolverConfig();
+          const { runResolver } = await import('../core/resolve/resolver.mjs');
+          const r = await runResolver(store, { facts: await resolverFacts(config), config, log: (m) => log.info('resolver', { line: m }) });
+          const { engine, ...sum } = r;
+          log.info('resolved', sum);
+          if (summary) summary.resolver = sum;
+        } catch (e) { log.error('resolver-failed', { error: String(e?.message ?? e) }); }
+      }
+    }
     await server?.close();
     store.close();
     log.info('exit', { code });
     if (JSON_OUT) process.stdout.write(JSON.stringify({ code, ...(summary ?? {}) }) + '\n');
     process.exit(code);
+  }
+  case 'resolve': {
+    const data = guardDataDir(opt('data') ?? process.env.JOBCRAWL_DATA);
+    const kind = opt('store', process.env.JOBCRAWL_STORE || 'sqlite');
+    if (kind !== 'sqlite') fail(`the resolver needs --store sqlite (a global event_id, bookmarks and transactions); got "${kind}"`);
+    const rules = opt('rules', 'legacy');
+    if (rules !== 'legacy' && rules !== 'lifecycle') fail(`--rules expects legacy or lifecycle (got "${rules}")`);
+    const num = (n) => { const v = opt(n); if (v == null) return null; const x = Number(v); if (!(Number.isInteger(x) && x > 0)) fail(`--${n} expects a whole number > 0 (got "${v}")`); return x; };
+    const config = await resolverConfig();
+    const store = await openStoreOr(data, 'sqlite');
+    const { runResolver } = await import('../core/resolve/resolver.mjs');
+    let r;
+    try { r = await runResolver(store, { facts: await resolverFacts(config), config: { ...config, rules }, batch: num('batch') ?? 5000, maxEvents: num('max-events'), log: (m) => console.error(m) }); }
+    catch (e) { store.close(); fail(e.message, 4); }
+    store.close();
+    if (r.skipped) { out({ skipped: r.skipped }, `resolve: ${r.skipped}`); process.exit(3); }
+    const { engine, ...sum } = r;
+    out(sum, `resolved: event_id ${sum.from ?? 'none'} -> ${sum.bookmark}, ${sum.applied} records applied, ${sum.records} resolved records (seq ${sum.seq})${sum.bootstrapped ? ', bootstrapped from the stored postings' : ''}`);
+    break;
+  }
+  case 'resolved': {
+    const data = pathResolve(opt('data') ?? process.env.JOBCRAWL_DATA ?? fail('--data <dir> is required'));
+    const store = await openStoreOr(data, 'sqlite');
+    const m = await import('../core/resolve/resolver.mjs');
+    let rows;
+    try {
+      rows = flag('derived') ? m.derivedSet(store).map((name) => ({ kind: 'protected', name }))
+        : flag('groups') ? m.resolvedGroups(store, { status: opt('status') ?? null })
+        : m.resolvedRecords(store, { after: Number(opt('after', 0)), limit: Number(opt('limit', 1000)) });
+    } catch (e) { store.close(); fail(e.message, 4); }
+    store.close();
+    for (const r of rows) process.stdout.write(JSON.stringify(r) + '\n');
+    break;
   }
   case 'doctor': {
     const checks = [];

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/egidinas/jobcrawl/schemas/resolved-v1.schema.json",
+  "title": "jobcrawl resolved event (resolved/v1)",
+  "description": "One status transition of a posting across boards, written by the resolver job (core/resolve). Numbered by the resolver's own seq (+1 per record); src_event_id is the global event_id of the per-board record (or checkpoint) it came from. Per-board streams say what one board observed; this stream says what the posting is: open, a cross-listed dup of another posting, hidden by every board's filters, departed, or unknown.",
+  "type": "object",
+  "required": ["schema", "seq", "t", "op", "id", "status", "boards", "admitting"],
+  "properties": {
+    "schema": { "const": "resolved/v1" },
+    "seq": { "type": "integer", "minimum": 1 },
+    "src_event_id": { "type": "integer", "minimum": 0 },
+    "t": { "type": "string", "format": "date-time" },
+    "op": { "enum": ["added", "changed", "reappeared", "undup", "dup", "hidden", "departed", "unknown"], "description": "added: first time open; reappeared: open again after hidden/departed/unknown; undup: a dup takes over because its original left; changed: fields or boards changed while visible (suspect: two different posting keys resolved to this id)" },
+    "id": { "type": "string", "pattern": "^jc1_[a-z2-7]{32}$" },
+    "status": { "enum": ["open", "dup", "hidden", "departed", "unknown"] },
+    "dup_of": { "type": "string", "pattern": "^jc1_[a-z2-7]{32}$" },
+    "boards": { "type": "array", "items": { "type": "string" } },
+    "admitting": { "type": "array", "items": { "type": "string" }, "description": "boards that listed and kept the posting within the 48 h admission hold" },
+    "url": { "type": "string" },
+    "title": { "type": "string" },
+    "company": { "type": "string" },
+    "location": { "type": "string" },
+    "first_seen": { "type": "string" },
+    "reason": { "type": "string" },
+    "fields": { "type": "array", "items": { "type": "string" } },
+    "suspect": { "enum": ["shared-url"] }
+  },
+  "additionalProperties": false
+}

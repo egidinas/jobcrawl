@@ -110,6 +110,14 @@ export class SqliteStore {
     });
   }
 
+  /**
+   * Runs fn(db) in one write transaction (BEGIN IMMEDIATE) and returns its result; a throw rolls everything back. Additive seam for a
+   * consumer that commits its own tables together with its position in the event log (the resolver, core/resolve/resolver.mjs).
+   */
+  withTransaction(fn) { return this._tx(() => fn(this.db)); }
+  /** Runs fn(db) in one read transaction (a consistent snapshot across statements). */
+  readTransaction(fn) { return this._read(() => fn(this.db)); }
+
   // ---- board state ----
   listBoards() { return this._wrap(() => this.db.prepare('SELECT board FROM boards ORDER BY board').all().map((r) => r.board)); }
 
