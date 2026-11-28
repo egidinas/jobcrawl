@@ -197,7 +197,10 @@ export function createResolver(state = null, config = {}) {
       }
       // legacy: only a new row and a relisted dup are matched against the open rows; a filtered, extra or gone row that is kept again
       // turns open directly (an aggregator one is caught by the next sweep)
-      const c = g.status === null || g.status === 'dup' ? crosslist(g, t) : { s: 'open' };
+      // a seeded group whose recorded verdict is 'open' (facts.verdict at the baseline epoch: the legacy row was open) is adopted as is,
+      // like the legacy crawl, which never re-matches a row it already holds
+      const adoptOpen = g.status === null && g.adopt === 'open';
+      const c = (g.status === null && !adoptOpen) || g.status === 'dup' ? crosslist(g, t) : { s: 'open' };
       if (c.s === 'dup') { const was = g.status; g.dup_of = c.of; if (setStatus(g, 'dup', t, { why: 'cross-listing' })) stats.dupMarked++; else if (was === 'dup') dirtyG.add(g.id); return; }
       const wasDup = g.status === 'dup';
       g.dup_of = null;
@@ -410,6 +413,7 @@ export function createResolver(state = null, config = {}) {
       const { m, g } = upsertMember({ board, id, t, posting: { url: rec.url, title: rec.title, datePosted: rec.posted, jobLocation: rec.location ? [{ address: { name: rec.location } }] : undefined, jobcrawl: { first_seen: rec.first_seen, last_seen: rec.last_seen } } }, f, status);
       m.first_seen = rec.first_seen ?? m.first_seen; m.last_seen = rec.last_seen ?? m.last_seen; m.misses = rec.misses ?? 0;
       if (status === 'open' && m.kept) admit(g, board, m.last_seen);
+      if (f.verdict === 'open' || f.verdict === 'dup') { g.adopt = g.adopt === 'open' ? 'open' : f.verdict; dirtyG.add(g.id); }
       return g;
     },
     /** After seeding: computes every seeded group's status silently (the baseline epoch emits nothing). */
@@ -417,6 +421,7 @@ export function createResolver(state = null, config = {}) {
       const ids = Object.keys(st.groups).filter((id) => st.groups[id].status === null)
         .sort((a, b) => (rep(st.groups[a])?.first_seen ?? '').localeCompare(rep(st.groups[b])?.first_seen ?? '') || (a < b ? -1 : 1));
       for (const id of ids) recompute(st.groups[id], now);
+      for (const id of ids) delete st.groups[id].adopt;
       tick(now);
       out.length = 0;
     },

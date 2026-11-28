@@ -337,3 +337,28 @@ test('resolver: a fingerprint that arrives late (refresh) feeds the aggregator s
   assert.equal(resolvedRecords(store).at(-1).reason, 'cross-listing sweep');
   store.close();
 });
+
+test('resolver: at the baseline epoch a recorded legacy verdict is adopted (open rows are not re-matched); without one the seed is matched', async () => {
+  const D2 = 'https://boards.greenhouse.io/acme/jobs/4012399';
+  const mk = async () => {
+    const src = await openSqliteStore(tmp());
+    await read(src, 'Acme', at(0), [item(DIRECT), item(D2)]);
+    const store = await openSqliteStore(tmp());
+    const st = src.openBoard('Acme');
+    store.withTransaction((db) => {
+      for (const [id, rec] of Object.entries(st.postings)) db.prepare('INSERT INTO postings (board, id, status, rec) VALUES (?, ?, ?, ?)').run('Acme', id, rec.status, JSON.stringify(rec));
+      const { postings, ...meta } = st;
+      db.prepare('INSERT INTO boards (board, seq, state, updated_at) VALUES (?, ?, ?, ?)').run('Acme', st.seq, JSON.stringify(meta), at(0).toISOString());
+      db.prepare('INSERT INTO imports (board, source, seq, event_id, postings, at) VALUES (?, ?, ?, ?, ?, ?)').run('Acme', 'test', st.seq, 0, 2, at(0).toISOString());
+    });
+    src.close();
+    return store;
+  };
+  const withVerdict = await mk();
+  await resolve(withVerdict, (rec) => ({ company: 'Acme', fp: FP, verdict: rec.op === 'seed' ? 'open' : undefined }), 1);
+  assert.deepEqual([statusOf(withVerdict, DIRECT), statusOf(withVerdict, D2)], ['open', 'open']);
+  const without = await mk();
+  await resolve(without, () => ({ company: 'Acme', fp: FP }), 1);
+  assert.deepEqual([statusOf(without, DIRECT), statusOf(without, D2)].sort(), ['dup', 'open']);
+  withVerdict.close(); without.close();
+});

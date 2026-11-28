@@ -74,7 +74,9 @@ export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(
     const hidden = row.status === 'filtered' || row.status === 'extra';
     const own = keptFor?.(row, rec.board, rec.t);            // a board-specific verdict (e.g. an aggregator's "shadowed by the employer ATS")
     const kept = own ? own.kept : !hidden;
-    return { company: row.company || undefined, fp: known ? (sim[url] || undefined) : undefined, applyText, kept, hide: kept ? undefined : (own?.hide ?? row.status) };
+    // at the baseline epoch the legacy verdict is recorded and adopted (an open row is not re-matched; a dup row looks for its original)
+    const verdict = rec.op === 'seed' && (row.status === 'open' || row.status === 'dup') ? row.status : undefined;
+    return { company: row.company || undefined, fp: known ? (sim[url] || undefined) : undefined, applyText, kept, hide: kept ? undefined : (own?.hide ?? row.status), verdict };
   };
   facts.history = hist;
   facts.simhash = sim;
