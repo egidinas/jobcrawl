@@ -31,10 +31,16 @@ commands (phase 0):
                                              per-cycle same-fetch parity of the shadow store into the migration ledger
                                              baseline epoch from the legacy history, without events (read-only on the legacy side)
   snapshot --data <dir> [--status open|departed|all] [--store json|sqlite]
+           [--format ndjson|jsonfeed|rss [--from delta|resolved] [--fields a,b] [--out <file>] [--title t] [--link url] [--feed-url url]]
+                                             a full snapshot, rendered (default fields: title, company, location, url, date_posted, first_seen,
+                                             excerpt; description only by naming it in --fields; private fields are refused)
                                              full read as NDJSON (header with per-board watermarks, then postings; sqlite adds the
                                              global event_id watermark)
   feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}'] [--store json|sqlite]   committed delta events as NDJSON
   feed --data <dir> --store sqlite [--after <event_id> | --consumer <name> [--commit]] [--limit <n>]
+       [--format ndjson|jsonfeed|rss [--from delta|resolved] [--fields a,b] [--out <file>]]
+                                             with --format: the additions after the bookmark, rendered; --commit moves the consumer's
+                                             bookmark only after the file is written (resolved stream: its own seq cursor)
                                              records after a global event_id (or a consumer's bookmark; --commit moves the bookmark
                                              to the last record written)
   bookmark get|set|list --data <dir> [--consumer <name>] [--event-id <n>] [--json]   named consumer bookmarks (sqlite store)
@@ -129,6 +135,29 @@ async function resolverFacts(config) {
   const { isAggregatorEntry, isAggregatorRow } = await import('../crawler/crosslist.mjs');
   const boardNames = new Set(config.companies.filter(isAggregatorEntry).map((c) => c.name));
   return f.legacyFacts(dir, { isAggregator: (row) => isAggregatorRow(row, boardNames) });
+}
+
+/** Output options of snapshot/feed --format: format, source stream, field allowlist (private fields refused, exit 2), render options. */
+async function outputOptions() {
+  const { FORMATS } = await import('../core/outputs/render.mjs');
+  const { parseFields, FieldError } = await import('../core/outputs/fields.mjs');
+  const { SOURCES } = await import('../core/outputs/source.mjs');
+  const format = opt('format');
+  if (!FORMATS.includes(format)) fail(`--format expects ${FORMATS.join(', ')} (got "${format}")`);
+  const from = opt('from', 'delta');
+  if (!SOURCES.includes(from)) fail(`--from expects ${SOURCES.join(' or ')} (got "${from}")`);
+  let fields;
+  try { fields = parseFields(opt('fields')); } catch (e) { if (e instanceof FieldError) fail(e.message); throw e; }
+  const now = opt('now') ? new Date(opt('now')) : new Date();
+  if (Number.isNaN(now.getTime())) fail(`--now expects an ISO time (got "${opt('now')}")`);
+  const r = { fields, from, now };
+  for (const [k, n] of [['title', 'title'], ['link', 'link'], ['feedUrl', 'feed-url'], ['description', 'description']]) if (opt(n)) r[k] = opt(n);
+  return { format, from, out: opt('out'), render: r };
+}
+function writeOutput(file, text) {
+  if (!file) { process.stdout.write(text); return; }
+  const f = pathResolve(file);
+  try { writeFileSync(f, text); } catch (e) { fail(`--out ${f}: ${e.message}`, 4); }
 }
 
 switch (cmd) {
@@ -342,6 +371,21 @@ switch (cmd) {
   case 'snapshot': {
     const data = pathResolve(opt('data') ?? fail('--data <dir> is required'));
     const st = opt('status', 'open');
+    if (opt('format')) {
+      const o = await outputOptions();
+      const store = await openStoreOr(data, o.from === 'resolved' ? 'sqlite' : storeKind());
+      let text;
+      try {
+        const { readSnapshot } = await import('../core/outputs/source.mjs');
+        const { render } = await import('../core/outputs/render.mjs');
+        const snap = readSnapshot(store, { from: o.from, status: st });
+        text = render(o.format, snap.records, { ...o.render, kind: 'snapshot', watermark: snap.header.watermark });
+      } catch (e) { store.close(); fail(e.message, 4); }
+      store.close();
+      writeOutput(o.out, text);
+      break;
+    }
+    if (opt('fields') != null || opt('from') != null || opt('out') != null) fail('--fields, --from and --out need --format ndjson|jsonfeed|rss');
     const store = await openStoreOr(data, storeKind());
     for (const line of store.snapshot({ status: st === 'all' ? null : st })) process.stdout.write(JSON.stringify(line) + '\n');
     store.close();
@@ -352,6 +396,25 @@ switch (cmd) {
     let since;
     if (opt('since-json')) { try { since = JSON.parse(opt('since-json')); } catch (e) { fail(`--since-json: ${e.message}`); } }
     else since = Object.fromEntries(String(opt('since', '')).split(',').filter(Boolean).map((p) => { const i = p.lastIndexOf('='); return [p.slice(0, i), Number(p.slice(i + 1))]; }));
+    if (opt('format')) {
+      const o = await outputOptions();
+      const store = await openStoreOr(data, 'sqlite');
+      const consumer = opt('consumer');
+      let text, res;
+      try {
+        const src = await import('../core/outputs/source.mjs');
+        const { render } = await import('../core/outputs/render.mjs');
+        const after = consumer ? src.bookmarkGet(store, consumer, o.from) : Number(opt('after', 0));
+        if (!(after >= 0)) fail(`--after expects a cursor >= 0 (got "${opt('after')}")`);
+        res = src.readAfter(store, { from: o.from, after, limit: Number(opt('limit', 1000)) });
+        text = render(o.format, res.records, { ...o.render, kind: 'delta', watermark: { from: after, to: res.last } });
+        writeOutput(o.out, text);
+        if (consumer && flag('commit') && res.last > after) src.bookmarkSet(store, consumer, o.from, res.last);
+      } catch (e) { store.close(); fail(e.message, 4); }
+      store.close();
+      break;
+    }
+    if (opt('fields') != null || opt('from') != null || opt('out') != null) fail('--fields, --from and --out need --format ndjson|jsonfeed|rss');
     const store = await openStoreOr(data, storeKind());
     if (opt('after') != null || opt('consumer')) {
       if (store.kind !== 'sqlite') fail('--after and --consumer need --store sqlite (a global event_id)');

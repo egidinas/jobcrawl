@@ -1,0 +1,79 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "jobcrawl postings",
+  "_jobcrawl": {
+    "schema": "outputs/v1",
+    "generated": "2026-11-28T12:00:00.000Z",
+    "fields": [
+      "title",
+      "company",
+      "location",
+      "url",
+      "date_posted",
+      "first_seen",
+      "excerpt"
+    ]
+  },
+  "items": [
+    {
+      "id": "jc1_dfo2trybcg4hiyfk3fagicyfpqeiqawi",
+      "url": "https://boards.greenhouse.io/acme/jobs/404",
+      "title": "Quality Lead",
+      "date_published": "2026-11-22T06:00:00.000Z",
+      "authors": [
+        {
+          "name": "Acme"
+        }
+      ],
+      "_jobcrawl": {
+        "location": "Munich, Germany",
+        "first_seen": "2026-11-22T06:00:00.000Z"
+      }
+    },
+    {
+      "id": "jc1_eh2my4hh7dllk72biyc3alrf7antvqcn",
+      "url": "https://jobs.lever.co/beta/aaaa-1111",
+      "title": "Systems Engineer",
+      "date_published": "2026-11-21T06:00:00.000Z",
+      "authors": [
+        {
+          "name": "Beta"
+        }
+      ],
+      "_jobcrawl": {
+        "location": "Berlin",
+        "first_seen": "2026-11-21T06:00:00.000Z"
+      }
+    },
+    {
+      "id": "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d",
+      "url": "https://boards.greenhouse.io/acme/jobs/401",
+      "title": "Senior Thermal Engineer (m/w/d)",
+      "date_published": "2026-11-20T06:00:00.000Z",
+      "authors": [
+        {
+          "name": "Acme"
+        }
+      ],
+      "_jobcrawl": {
+        "location": "Munich, Germany",
+        "first_seen": "2026-11-20T06:00:00.000Z"
+      }
+    },
+    {
+      "id": "jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l",
+      "url": "https://boards.greenhouse.io/acme/jobs/402",
+      "title": "AIT Manager <Munich> & Test",
+      "date_published": "2026-11-20T06:00:00.000Z",
+      "authors": [
+        {
+          "name": "Acme"
+        }
+      ],
+      "_jobcrawl": {
+        "location": "Oberpfaffenhofen, Germany",
+        "first_seen": "2026-11-20T06:00:00.000Z"
+      }
+    }
+  ]
+}

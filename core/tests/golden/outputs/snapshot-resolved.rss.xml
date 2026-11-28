@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+<title>jobcrawl postings</title>
+<link>https://example.invalid/</link>
+<description>Job postings</description>
+<lastBuildDate>Sun, 22 Nov 2026 06:00:00 GMT</lastBuildDate>
+<generator>jobcrawl</generator>
+<item>
+<title>Quality Lead</title>
+<link>https://boards.greenhouse.io/acme/jobs/404</link>
+<guid isPermaLink="false">jc1_dfo2trybcg4hiyfk3fagicyfpqeiqawi</guid>
+<pubDate>Sun, 22 Nov 2026 06:00:00 GMT</pubDate>
+<dc:creator>Acme</dc:creator>
+<category>Munich, Germany</category>
+</item>
+<item>
+<title>Systems Engineer</title>
+<link>https://jobs.lever.co/beta/aaaa-1111</link>
+<guid isPermaLink="false">jc1_eh2my4hh7dllk72biyc3alrf7antvqcn</guid>
+<pubDate>Sat, 21 Nov 2026 06:00:00 GMT</pubDate>
+<dc:creator>Beta</dc:creator>
+<category>Berlin</category>
+</item>
+<item>
+<title>Senior Thermal Engineer (m/w/d)</title>
+<link>https://boards.greenhouse.io/acme/jobs/401</link>
+<guid isPermaLink="false">jc1_afaefqnto57f2l44s75mvxhe26hgkv7d</guid>
+<pubDate>Fri, 20 Nov 2026 06:00:00 GMT</pubDate>
+<dc:creator>Acme</dc:creator>
+<category>Munich, Germany</category>
+</item>
+<item>
+<title>AIT Manager &lt;Munich&gt; &amp; Test</title>
+<link>https://boards.greenhouse.io/acme/jobs/402</link>
+<guid isPermaLink="false">jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l</guid>
+<pubDate>Fri, 20 Nov 2026 06:00:00 GMT</pubDate>
+<dc:creator>Acme</dc:creator>
+<category>Oberpfaffenhofen, Germany</category>
+</item>
+</channel>
+</rss>

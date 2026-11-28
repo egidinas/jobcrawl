@@ -56,7 +56,7 @@ test('ssrf: private, loopback, link-local, mapped and non-http targets are refus
 });
 
 test('cli: no arguments, help, --help and -h print usage, exit 0, use no network', () => {
-  for (const a of [[], ['help'], ['--help'], ['-h'], ['crawl', '--help'], ['dual-run', '--help']]) {
+  for (const a of [[], ['help'], ['--help'], ['-h'], ['crawl', '--help'], ['dual-run', '--help'], ['snapshot', '--help'], ['feed', '--help']]) {
     const r = cli(a);
     assert.equal(r.status, 0, `${a.join(' ')}: ${r.stderr}`);
     assert.match(r.stdout, /jobcrawl <command>/);
