@@ -10,7 +10,12 @@
 // errorCode(err) gives the cause code of a fetch error.
 const CONNECT_CODES = new Set(['UND_ERR_CONNECT_TIMEOUT', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'UND_ERR_SOCKET', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE']);
 
-export const errorCode = (e) => String(e?.cause?.code ?? e?.code ?? e?.cause?.name ?? e?.name ?? 'ERROR');
+// the string code of a fetch error: cause.code (undici, system errors), else the error name (a DOMException such as an AbortSignal timeout
+// carries a numeric legacy code, e.g. 23, which says nothing)
+export const errorCode = (e) => {
+  for (const c of [e?.cause?.code, e?.code]) if (typeof c === 'string' && c) return c;
+  return String(e?.cause?.name ?? e?.name ?? 'ERROR');
+};
 export const isConnectError = (e) => CONNECT_CODES.has(errorCode(e));
 
 export function makePacedFetch(base, { gapMs = 250, retries = 2, backoffMs = [3000, 10000], onError = () => {}, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = Date.now } = {}) {

@@ -49,6 +49,7 @@ test('error codes: the cause code behind "fetch failed"', () => {
   assert.equal(errorCode(connectErr('EAI_AGAIN')), 'EAI_AGAIN');
   assert.equal(isConnectError(connectErr()), true);
   assert.equal(isConnectError(new Error('x')), false);
+  assert.equal(errorCode(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 'TimeoutError', 'not the numeric legacy code 23');
 });
 
 test('reproduction: an uplink that drops bursts of new connections fails a burst of 8; paced, all 8 get through', async () => {
