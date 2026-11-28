@@ -76,8 +76,8 @@ cp "$D/routing-new.json" "$D/routing-B.json"
   console.log(`seeded ${add.length} rows (${[...per].map(([k, v]) => k + " " + v).join(", ")}); in the stores ${inStore / 2} of ${add.length}`);
 ' "$D/A/scan-history.tsv" "$D/B/scan-history.tsv" "$D/store-A" "$D/store-B" "$BOARDS") >> "$D/drill.log" 2>&1 || { log "STOPPED: seeding"; exit 1; }
 tail -1 "$D/drill.log"
-compare() {
-  node -e '
+compare() {   # whole-file comparisons of ~180 MB histories: a bigger heap than a unit's default (~2 GB)
+  node --max-old-space-size=8192 -e '
     const fs = require("fs"); const [a, b, names] = process.argv.slice(1); const want = new Set(names.split("|"));
     const mask = (t) => t.replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<T>").replace(/\b1\d{12}\b/g, "<EPOCH>");
     const whole = (f) => { try { return mask(fs.readFileSync(a + "/" + f, "utf8")) === mask(fs.readFileSync(b + "/" + f, "utf8")); } catch { return false; } };
@@ -104,7 +104,8 @@ for run in 1 2 3 4; do
   crawl A & pa=$!; crawl B & pb=$!
   wait $pa || { log "run $run: A failed"; ok=0; }
   wait $pb || { log "run $run: B failed"; ok=0; }
-  line=$(compare)
+  line=$(compare 2>>"$D/compare.err")
+  [ -n "$line" ] || { ok=0; line="{}"; log "run $run: compare failed (see compare.err)"; }
   chk=$(node "$OPS/authority-check.mjs" "$D/B-run$run.log" --routing "$D/routing-B.json" --boards "$BOARDS"); crc=$?
   log "run $run ($([ "$run" = 4 ] && echo 'back to live routing' || echo 'routed new')): $line"
   log "run $run checker (exit $crc): $chk"
