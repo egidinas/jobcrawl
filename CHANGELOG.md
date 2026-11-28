@@ -3,6 +3,22 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-28: resolver job (row 1.4, branch feat/resolver-1-4; default off)
+
+- **Resolver** (`core/resolve/`): the cross-board logic of the legacy cycle (crosslist dups and the direct-over-aggregator swap, admission
+  with its 48 h hold, the protected employer set, the 3-day sweep and `unknown`) as one consumer of the SQLite store's event log. It keeps a
+  member per (board, posting id) and a group per posting id, and writes the **resolved/v1** stream (`schemas/resolved-v1.schema.json`,
+  its own `seq`). Legacy modules are imported unchanged (`crawler/crosslist.mjs`, `relevance.mjs`); admission is checked against
+  `crawler/admission.mjs` by a differential test.
+- **Lease + checkpoints**: one lease row (board `*`, token-fenced); per batch one `BEGIN IMMEDIATE` commit of members, groups, resolved
+  records, derived set and bookmark (compare-and-swap), so a crash resumes with no double records. Records are applied by global
+  `event_id` only (seq-null `refreshed` records included). A store with imported boards starts from a silent baseline epoch.
+- **CLI**: `jobcrawl resolve --data <dir> [--store sqlite] [--profile <dir> | --companies <file>] [--legacy-data <dir>] [--rules legacy|lifecycle]`,
+  `jobcrawl resolved` (stream, `--groups`, `--derived`), `jobcrawl run --resolve` (opt-in). JSON stores are refused (exit 2).
+- **Replay acceptance**: `scripts/resolver-replay.mjs` replays a copy of the legacy history through the per-board path and compares dup,
+  admission and protected-set verdicts with the legacy files.
+- `SqliteStore.withTransaction / readTransaction` (additive seam).
+
 ## 2026-11-28: SQLite state store (row 1.1, branch feat/store-sqlite-1-1; JSON stays the default)
 
 - **SQLite backend** (`core/state/sqlite-store.mjs`, one `<data>/store.sqlite`): WAL, `busy_timeout` set first, `synchronous=FULL`, every

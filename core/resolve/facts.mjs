@@ -54,8 +54,8 @@ export function jdBody(text) {
  * Facts from a legacy data folder. opts: { history (Map, else read from <dir>/scan-history.tsv), simhash (object, else
  * <dir>/simhash-cache.v2.json), jdDir (default <dir>/jd), isAggregator(row, board) (apply links are read for aggregator rows only, as
  * crawl.mjs loadApplyKeys), fpWhen(row, board) (whether the fingerprint was known when the board listed the row: the legacy crawl
- * matched a new row only on the description its list answer carried), keptFor(row, board) -> { kept, hide } | null (a board-specific
- * verdict) }. kept: the legacy row is not filtered or extra.
+ * matched a new row only on the description its list answer carried), keptFor(row, board, t) -> { kept, hide } | null (a board-specific
+ * verdict, or one that changed over time) }. kept: the legacy row is not filtered or extra.
  */
 export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(dir, 'jd'), isAggregator = () => false, fpWhen = () => true, keptFor = null } = {}) {
   const hist = history ?? readHistory(join(dir, 'scan-history.tsv'));
@@ -71,7 +71,7 @@ export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(
       if (existsSync(f)) { try { applyText = jdBody(readFileSync(f, 'utf8')); } catch { /* unreadable: no apply links */ } }
     }
     const hidden = row.status === 'filtered' || row.status === 'extra';
-    const own = keptFor?.(row, rec.board);            // a board-specific verdict (e.g. an aggregator's "shadowed by the employer ATS")
+    const own = keptFor?.(row, rec.board, rec.t);            // a board-specific verdict (e.g. an aggregator's "shadowed by the employer ATS")
     const kept = own ? own.kept : !hidden;
     return { company: row.company || undefined, fp: fpWhen(row, rec.board) ? (sim[url] || undefined) : undefined, applyText, kept, hide: kept ? undefined : (own?.hide ?? row.status) };
   };

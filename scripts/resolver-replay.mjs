@@ -66,12 +66,17 @@ const add = (board, l) => (listings.get(board) ?? listings.set(board, []).get(bo
 // The board that last listed the row (lifecycle state) and the board its company names: when the last lister is an aggregator board that
 // lists the employer's own URL, the employer's board lists it too (the legacy admission seed and the "shadowed by the employer ATS" verdict)
 const registryNames = new Set(registry.map((c) => c.name));
+// title release (crawl.mjs loadTitleRelease, <data>/title-released.tsv url -> day): such a row was a title-only 'extra' row until that day
+// and then turned open without a cross-listing check; replayed as a hidden listing whose verdict changes on that day (a 'changed' record)
+const released = new Map();
+if (existsSync(join(LEG, 'title-released.tsv'))) for (const l of readFileSync(join(LEG, 'title-released.tsv'), 'utf8').split('\n').slice(1)) { const [u, d] = l.split('\t'); if (u && d) released.set(u, d); }
 let companyBoardExtra = 0;
 rows.forEach((row, idx) => {
   const lcBoard = lc[row.url]?.[0];
   const cBoard = boardOfCompany(row.company);
   const board = lcBoard || cBoard;
-  add(board, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx });
+  const rel = released.get(row.url);
+  add(board, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx, rel: rel && rel > (row.first_seen || T0day) ? rel : undefined });
   if (lcBoard && lcBoard !== cBoard && boardNames.has(lcBoard) && registryNames.has(cBoard) && !boardNames.has(cBoard)) {
     add(cBoard, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx: idx + 0.5 });
     companyBoardExtra++;
@@ -99,22 +104,30 @@ log(`listings: ${listings.size} boards, ${rows.length} history listings + ${comp
 // fetchDescription): the legacy crawl matched a new row on that text only; descriptions read later never re-match a direct row.
 // --fp cache: every fingerprint the legacy cache holds today.
 const FP_MODE = opt('fp', 'arrival');
-const lazy = new Set(Object.entries(providers).filter(([, v]) => v.fetchDescription).map(([k]) => k));
+// Proxy for "the list answer carries the description": providers without fetchDescription whose fetch maps a description field, plus
+// the JSON-LD readers (sitemap, jsonld_direct). Others (softgarden widgets, Workday lists, ...) get their text later (lazy or page read).
+const INLINE = new Set([...Object.entries(providers).filter(([, v]) => !v.fetchDescription && /description/i.test(String(v.fetch))).map(([k]) => k), 'sitemap', 'jsonld_direct']);
 const providerOfBoard = new Map(registry.map((c) => [c.name, c.provider ?? null]));
-const fpWhen = FP_MODE === 'cache' ? () => true : (row, board) => !lazy.has(providerOfBoard.get(board));
+const fpWhen = FP_MODE === 'cache' ? () => true : (row, board) => INLINE.has(providerOfBoard.get(board));
 const SHADOWED = { kept: false, hide: 'filtered' };   // crawl.mjs shadowVerdict: an aggregator's copy of a role the employer's ATS lists
-const keptFor = (row, board) => (boardNames.has(board) && !/\(via /i.test(row.company ?? '') && registryNames.has(boardOfCompany(row.company)) && board !== boardOfCompany(row.company) ? SHADOWED : null);
+const EXTRA = { kept: false, hide: 'extra' };
+const keptFor = (row, board, t) => {
+  if (boardNames.has(board) && !/\(via /i.test(row.company ?? '') && registryNames.has(boardOfCompany(row.company)) && board !== boardOfCompany(row.company)) return SHADOWED;
+  const rel = released.get(row.url);
+  if (rel && t && String(t).slice(0, 10) < rel && rel > (row.first_seen || T0day)) return EXTRA;
+  return null;
+};
 const facts = legacyFacts(LEG, { history, isAggregator: (row) => isAggregatorRow(row, boardNames), fpWhen, keptFor });
 const config = { companies: registry, catalogue, rules: 'legacy' };
 const store = await openSqliteStore(OUT);
 const days = [...new Set(rows.map((r) => r.first_seen || T0day))].filter((d) => d <= T0day).sort();
 let runs = 0, events = 0;
 for (const [di, D] of days.entries()) {
-  const due = [...listings].map(([b, ls]) => [b, ls, ls.filter((l) => l.from === D)]).filter(([, , nw]) => nw.length)
+  const due = [...listings].map(([b, ls]) => [b, ls, ls.filter((l) => l.from === D || l.rel === D)]).filter(([, , nw]) => nw.length)
     .sort((a, b) => Math.min(...a[2].map((l) => l.idx)) - Math.min(...b[2].map((l) => l.idx)));
   let k = 0;
   for (const [board, ls] of due) {
-    const items = ls.filter((l) => l.from <= D).sort((a, b) => a.idx - b.idx).map((l) => ({ url: l.url, title: l.title, location: l.location, postedAt: l.posted }));
+    const items = ls.filter((l) => l.from <= D).sort((a, b) => a.idx - b.idx).map((l) => ({ url: l.url, title: l.title, location: l.location, postedAt: l.rel && D < l.rel ? '' : l.posted }));
     const when = new Date(Date.parse(`${D}T00:00:00Z`) + (k++) * 1000);
     const r = await runBoardOn(store, { name: board }, { read: { ok: true, items, complete: true, emptyOk: true }, now: () => when, rules: LEGACY_RULES });
     runs++; events += r.events?.length ?? 0;
@@ -143,6 +156,7 @@ const fpOf = (u) => facts.simhash[u] ?? '';
 const ex = (u, extra = {}) => { const r = history.get(u); return { url: u, company: r.company, title: r.title, location: r.location, first_seen: r.first_seen, ...extra }; };
 
 // dup
+let EPOCH = '9999'; for (const r of history.values()) if (r.first_seen && r.first_seen < EPOCH) EPOCH = r.first_seen;
 const conf = {}; const cls = {}; const samples = {};
 const note = (c, e) => { cls[c] = (cls[c] ?? 0) + 1; (samples[c] ??= []).length < 4 && samples[c].push(e); };
 const openRowsList = rows.filter((r) => r.status === 'open');
@@ -159,6 +173,7 @@ for (const r of rows) {
     const ofUrl = of ? urlsById.get(of.id)?.[0] : null;
     const ofRow = ofUrl ? history.get(ofUrl) : null;
     if (ofRow?.status === 'dup') note('resolver dup of a legacy dup (chain)', ex(r.url, { dup_of: ofUrl }));
+    else if (ofRow && ofRow.first_seen === EPOCH && r.first_seen === EPOCH) note('resolver dup, legacy open: both rows from the history first day (inserted by older code, never re-matched)', ex(r.url, { dup_of: ofUrl }));
     else if (ofRow && ofRow.first_seen > r.first_seen) note('resolver dup, legacy open: arrival order (resolver original is younger)', ex(r.url, { dup_of: ofUrl }));
     else if (ofRow && isAggregatorRow(rowObj(r.url), boardNames) && !isAggregatorRow(ofRow, boardNames)) note('resolver dup, legacy open: aggregator copy of a direct posting not yet swept by legacy', ex(r.url, { dup_of: ofUrl }));
     else {
@@ -217,7 +232,7 @@ for (const c of registry) if (legacyIdx.has(c.name) !== resIdx.has(c.name)) { ga
 
 const report = {
   legacy_copy: LEG, legacy_at: admit.at, out: OUT, seconds: Math.round((Date.now() - t0) / 1000),
-  replay: { fp_mode: FP_MODE, employer_board_listings: companyBoardExtra, history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
+  replay: { fp_mode: FP_MODE, inline_providers: INLINE.size, released_rows: rows.filter((r) => released.has(r.url)).length, epoch: EPOCH, employer_board_listings: companyBoardExtra, history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
   dup: { rows: rows.length, agreement: +((rows.length - Object.values(cls).reduce((a, b) => a + b, 0)) / rows.length * 100).toFixed(3), confusion: conf,
     legacy_dup: dupLegacy, resolver_dup: dupResolver, both_dup: dupBoth,
     dup_recall: +(dupBoth / dupLegacy * 100).toFixed(2), dup_precision: +(dupBoth / (dupResolver || 1) * 100).toFixed(2), classes: cls, samples },
