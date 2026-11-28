@@ -87,14 +87,25 @@ if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`
 configurePolicy(policyFromProfile(PROFILE, OUT_DIR));
 if (!flag('jd-cleanup-only')) { installGuard(); console.log(`crawl: policy robots=${PROFILE.robots}${Object.keys(PROFILE.robotsHosts).length ? ` (${Object.keys(PROFILE.robotsHosts).length} host overrides)` : ''}, ${PROFILE.optOutHosts.length} opted-out hosts`); }
 // Conditional-request cache (core/fetch/conditional.mjs): off unless the profile lists hosts in crawl.conditional_cache.hosts.
+// The profile is shared between hosts: `dir` must be an absolute path whose parent folder exists on THIS host, else the cache stays off
+// with a log line (so a NUC path in a profile the PC also reads switches the cache off on the PC instead of creating folders there).
 const CONDITIONAL = PROFILE.raw?.crawl?.conditional_cache;
-if (!flag('jd-cleanup-only') && !flag('dry-run') && Array.isArray(CONDITIONAL?.hosts) && CONDITIONAL.hosts.length) {
+let conditionalSummaryFn = null;
+if (CONDITIONAL !== undefined && !(CONDITIONAL && typeof CONDITIONAL === 'object' && Array.isArray(CONDITIONAL.hosts) && CONDITIONAL.hosts.every((h) => typeof h === 'string'))) {
+  console.error(`crawl: WARNING crawl.conditional_cache must be { "hosts": ["host", "*.domain", ...], "dir": "/absolute/path", ... }; got ${JSON.stringify(CONDITIONAL).slice(0, 200)}: conditional requests OFF`);
+} else if (!flag('jd-cleanup-only') && !flag('dry-run') && CONDITIONAL?.hosts?.length) {
   try {
-    const { installConditionalCache } = await import('../core/fetch/conditional.mjs');
+    const { installConditionalCache, conditionalSummary } = await import('../core/fetch/conditional.mjs');
     const { checkPlacement, defaultDir } = await import('../core/paths.mjs');
+    const { isAbsolute, dirname } = await import('node:path');
+    const { recordServedFromCache } = await import('./rawcapture.mjs');
+    if (CONDITIONAL.dir && !isAbsolute(String(CONDITIONAL.dir))) throw new Error(`crawl.conditional_cache.dir must be an absolute path, got ${CONDITIONAL.dir}`);
+    if (CONDITIONAL.dir && !existsSync(dirname(pathResolve(String(CONDITIONAL.dir))))) throw new Error(`the parent of crawl.conditional_cache.dir (${CONDITIONAL.dir}) does not exist on this host`);
     // outside the data folder and outside any git work tree (a data folder is swept into commits on some hosts)
-    const dir = checkPlacement(CONDITIONAL.dir ? pathResolve(PROFILE.dir, CONDITIONAL.dir) : defaultDir('http-cache', OUT_DIR), OUT_DIR, 'HTTP cache');
-    installConditionalCache({ dir, hosts: CONDITIONAL.hosts, maxMb: Number(CONDITIONAL.max_mb) || 20, totalMb: Number(CONDITIONAL.total_mb) || 500 });
+    const dir = checkPlacement(CONDITIONAL.dir ? pathResolve(String(CONDITIONAL.dir)) : defaultDir('http-cache', OUT_DIR), OUT_DIR, 'HTTP cache');
+    installConditionalCache({ dir, hosts: CONDITIONAL.hosts, maxMb: Number(CONDITIONAL.max_mb) || 20, totalMb: Number(CONDITIONAL.total_mb) || 500,
+      maxAgeDays: Number(CONDITIONAL.max_age_days) || 7, onServed: RAW_ON ? recordServedFromCache : null });
+    conditionalSummaryFn = conditionalSummary;
     console.log(`crawl: conditional requests on for ${CONDITIONAL.hosts.length} host pattern(s), cache ${dir}`);
   } catch (e) { console.error(`crawl: conditional requests OFF (${e.message})`); }
 }
@@ -1091,6 +1102,7 @@ if (flag('jd-cleanup-only')) {
 } else {
   await scan();
   if (RAW_ON) console.log(`crawl: ${rawCaptureSummary()}`);
+  if (conditionalSummaryFn) console.log(`crawl: ${conditionalSummaryFn()}`);
   // The legacy outputs are written; now (and only when armed) the answers of the boards routed shadow go to the new per-board path in its
   // own folder (core/route/shadow-hook.mjs: off by default, budgets per board and per cycle, never throws).
   if (SHADOW_INPUT) {

@@ -49,9 +49,22 @@ function store(dir, entry, body) {
 }
 
 /** Wrap globalThis.fetch so that every successful text/JSON/HTML/XML response is stored under dir. Returns false if dir is unset. */
+let captureDir = null;
+/**
+ * An index row for an answer the conditional cache served after a 304 (core/fetch/conditional.mjs): the raw capture sees only the bare
+ * 304, so without this an unchanged board would leave no row for the cycle. The body is the cached one (stored once per content, so
+ * normally only the index line is new); the row is marked `cache: "revalidated"`. No-op when the raw capture is off.
+ */
+export function recordServedFromCache({ url, ct = '', body }) {
+  if (!captureDir || !body) return;
+  try { store(captureDir, { t: new Date().toISOString(), url, method: 'GET', status: 200, ct, cache: 'revalidated' }, Buffer.isBuffer(body) ? body : Buffer.from(body)); }
+  catch { stats.errors++; }
+}
+
 export function installRawCapture(dir = process.env.JOBCRAWL_RAW_DIR) {
   if (!dir || installed) return Boolean(dir && installed);
   installed = true;
+  captureDir = dir;
   mkdirSync(dir, { recursive: true });
   const origFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
