@@ -1,0 +1,12 @@
+{
+  "split": "bench/detect/split-v2.jsonl",
+  "salt": "jcx-detect-2a5-r2",
+  "built_by": "bench/detect/build-split-v2.mjs --companies madenetwork.de/crawler/companies.json (2026-11-28) --split-v1 bench/detect/split-v1.jsonl --sites ~/atlas/profiler/sites_v2.jsonl --target 145",
+  "rows": 141,
+  "exclusions": "every group with a v1 hold-out row (spent) or a v1 cached page (v2 was tuned on those)",
+  "all_rows_holdout": "nothing is tuned on this set; the evaluation runs once",
+  "pages": "per row the input URL and its first follow (core/detect followTarget: board iframe, else same-domain careers link), fetched from the PC by bench/detect/fetch-pages.mjs: one request at a time, >= 1.5 s apart, robots.txt strict, budget 600 requests; pinned by sha1 in bench/detect/split-v2.pages.jsonl before any v2 run",
+  "headline": "two-page tier: v1 = detectV1 on page 1, else on the follow page when page 1 gives no provider; v2 = detect() over the same cached pages (its own follow rule). Macro-F1 over multi-tenant ATS classes seen in labels or predictions, custom rows as negatives; paired bootstrap 2000, seed 12345",
+  "secondary": ["one-page tier (page 1 only)", "custom as a class", "rows tagged stand_in (config names an ATS) reported separately", "post-hoc diagnostic: custom rows where v1 and v2 name the same ATS"],
+  "decision": "v2 becomes the CLI/MCP default only if the lower bound of the headline gap (v2 - v1) is > 0; otherwise v1 stays"
+}

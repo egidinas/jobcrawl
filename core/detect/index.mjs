@@ -258,12 +258,7 @@ export async function detect({ url, html, finalUrl, headers, cname = '', fetch: 
   let res = detectOffline({ url, finalUrl: page.final, html: page.html, headers: page.headers, cname });
   const top = best(res.candidates.filter((c) => c.kind !== 'generic'), { minConfidence: 0.8 });
   if (follow > 0 && !top) {
-    // one follow: the iframe that carries a board, else the page's careers link
-    const feats = pageFeatures(page.html, page.final);
-    const iframe = feats.refs.find((r) => r.kind === 'iframe_src' && /job|career|karriere|stellen|recruit|bewerb|vacanc/i.test(r.url));
-    const careers = !res.candidates.some((c) => c.kind !== 'generic') && feats.refs.find((r) => r.kind === 'link_href' && regDomain(hostOf(r.url)) === regDomain(hostOf(page.final)) && r.url !== page.final
-      && /\/(?:karriere|careers?|jobs?|stellen(?:angebote)?|vacancies|offene-stellen|join-us|work-with-us)(?:[/?#]|$)/i.test(new URL(r.url).pathname + '/'));
-    const next = iframe?.url ?? (careers ? careers.url : null);
+    const next = followTarget(page.html, page.final, { namedSource: res.candidates.some((c) => c.kind !== 'generic') });
     if (next) {
       try {
         const p2 = await get(next);
@@ -279,6 +274,22 @@ export async function detect({ url, html, finalUrl, headers, cname = '', fetch: 
     }
   }
   return { ...res, fetched };
+}
+
+/**
+ * The one page detect() follows from a fetched page: the iframe that carries a board, else (only when the page named no source) the
+ * careers link on the page's own domain; null when there is neither. Exported so a benchmark cache fetches exactly this page.
+ */
+export function followTarget(html, pageUrl, { namedSource = false } = {}) {
+  const feats = pageFeatures(html, pageUrl);
+  const iframe = feats.refs.find((r) => r.kind === 'iframe_src' && /job|career|karriere|stellen|recruit|bewerb|vacanc/i.test(r.url));
+  if (iframe) return iframe.url;
+  if (namedSource) return null;
+  const careers = feats.refs.find((r) => {
+    if (r.kind !== 'link_href' || regDomain(hostOf(r.url)) !== regDomain(hostOf(pageUrl)) || r.url.split('#')[0] === String(pageUrl).split('#')[0]) return false;
+    try { return /\/(?:karriere|careers?|jobs?|stellen(?:angebote)?|vacancies|offene-stellen|join-us|work-with-us|lediga-jobb|jobba-hos-oss)(?:[/?#]|$)/i.test(new URL(r.url).pathname + '/'); } catch { return false; }
+  });
+  return careers?.url ?? null;
 }
 
 /** Rows for docs and the coverage test: every registry provider must have a fingerprint row. */
