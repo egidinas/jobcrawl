@@ -620,6 +620,14 @@ async function scan() {
     for (let at = row.company.indexOf('(via '); at >= 0; at = row.company.indexOf('(via ', at + 1)) if (row.company.endsWith(')')) keys.add(row.company.slice(at + 5, -1));
     for (const k of keys) (openByBoard.get(k) ?? openByBoard.set(k, []).get(k)).push(row);
   }
+  // Strangler-fig authority swap (core/route/authority.mjs): only with JOBCRAWL_SHADOW, a routing file with allow_new: true and boards
+  // routed `new`. For those boards the close decision for missing open roles comes from the new per-board path (same answer, same rule).
+  let AUTH = null;
+  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) {
+    try { AUTH = await (await import('../core/route/authority.mjs')).prepareAuthority({ dataDir: OUT_DIR, companies, results, history }); }
+    catch (e) { console.error(`[authority] off this cycle: ${e?.message ?? e}`); AUTH = null; }
+  }
+  const authMod = AUTH ? await import('../core/route/authority.mjs') : null;
   // Hide only by the admitting board (admission.mjs). Before any board is processed, every complete answer withdraws its board's
   // admissions of the URLs it no longer lists, so a role its admitting board says is gone closes exactly as it did before the rule.
   const adm = openAdmissions(OUT_DIR, {
@@ -870,10 +878,13 @@ async function scan() {
     // an empty answer is a complete one only with the provider's positive empty signal (a swallowed error looks the same)
     lc?.fetched(name, trow, live, { cls: trow.cls, complete: res.jobs.length > 0 || res.jobs.emptyOk === true, emptyOk: res.jobs.emptyOk === true });
     let held = 0;
+    authMod?.reached(AUTH, name);
     for (const row of openRows) {
       if (!live.has(row.url)) {
         if (lc?.mode === 'on' && !lc.closable(row.url)) { held++; continue; }   // MADE_LIFECYCLE=on: gone only on K misses + the floor
         if (adm.mayClose(row.url, name)) continue;   // another board admitted it within 48 h and still lists it (admission.mjs)
+        const byNew = authMod ? authMod.decide(AUTH, name, row.url) : null;   // board routed `new`: the new path decides (null: legacy rule)
+        if (byNew === false) continue;
         row.status = 'gone';
         problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
       }
@@ -1054,10 +1065,14 @@ async function scan() {
   // Strangler-fig shadow (core/route/shadow-hook.mjs): only when JOBCRAWL_SHADOW is set, a compact copy of the routed boards' answers and of
   // their rows' final legacy status is taken here (the crawl's own objects are not kept), and the hook runs after scan() (end of file).
   if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) {
-    try { SHADOW_INPUT = (await import('../core/route/shadow-hook.mjs')).captureShadowInput({ companies, results, history }); }
+    try {
+      const skip = AUTH ? (await import('../core/route/authority.mjs')).authorityBoards(AUTH) : new Set();
+      SHADOW_INPUT = (await import('../core/route/shadow-hook.mjs')).captureShadowInput({ companies: companies.filter((e) => !skip.has(e.name)), results: results.filter((_, i) => !skip.has(companies[i].name)), history });
+    }
     catch (e) { console.error(`[shadow] capture skipped: ${e?.message ?? e}`); }
   }
   saveHistory(history);
+  if (AUTH) { try { authMod.commitAuthority(AUTH); } catch (e) { console.error(`[authority] commit failed: ${e?.message ?? e}`); } }
   // the released urls that are still open (a role that closed or turned 'extra' again, e.g. with the switch off, leaves the file)
   if (titleRel?.extra) {   // the extra shift counts what it released, so its max_total holds across cycles
     const x = titleRel.extra.data;

@@ -27,6 +27,8 @@ commands (phase 0):
            [--boards all|routed] [--companies <file>] [--lifecycle <state.json> | --no-lifecycle] [--skew-min 60] [--report <file>] [--json]
                                              shadow run from a recording (no second live crawl), compared with the legacy history
   import --profile <dir> --data <dir> --legacy-data <dir> [--companies <file>] [--boards all|routed] [--routing <file>] [--replace] [--json]
+  ledger-shadow --shadow <store> --lifecycle <state.json> --ledger <file> [--routing <file>] [--companies <file>] [--max-gap-min 90] [--json]
+                                             per-cycle same-fetch parity of the shadow store into the migration ledger
                                              baseline epoch from the legacy history, without events (read-only on the legacy side)
   snapshot --data <dir> [--status open|departed|all]   full read as NDJSON (header with per-board watermarks, then postings)
   feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}']   committed delta events as NDJSON
@@ -232,6 +234,52 @@ switch (cmd) {
     catch (e) { fail(e.message); }
     out(sum, `imported ${sum.imported} boards, replaced ${sum.replaced} (${sum.rows} rows), kept ${sum.kept}, lease busy ${sum.busy}, without rows ${sum.empty}`);
     if (sum.busy) process.exit(3);
+    break;
+  }
+  case 'ledger-shadow': {
+    // Per-cycle parity of the shadow store against the legacy crawl's answer of the SAME fetch (lifecycle state), into the ledger: a
+    // board earns a pass when the postings the shadow saw in its last read equal the urls of the legacy fetch of that cycle (shared
+    // postings excluded). Only a legacy fetch at most --max-gap-min (90) minutes before the shadow's read and newer than the last one
+    // recorded for the board counts, so each fetch is recorded once. Read-only on the shadow store and the lifecycle state.
+    const store = opt('shadow'), lc = opt('lifecycle'), lf = opt('ledger');
+    if (!store || !lc || !lf) fail('--shadow <store> --lifecycle <state.json> --ledger <file> are required');
+    const maxGap = Number(opt('max-gap-min', 90)) * 60000;
+    const { lifecycleIndex, compareBoard } = await import('../core/route/parity.mjs');
+    const { loadLedger, saveLedger, recordParity, ledgerSummary } = await import('../core/route/ledger.mjs');
+    const { loadRouting } = await import('../core/route/router.mjs');
+    const { listBoards, openBoard } = await import('../core/state/board-store.mjs');
+    let routing;
+    try { routing = loadRouting(opt('routing') ?? process.env.JOBCRAWL_ROUTING); } catch (e) { fail(e.message); }
+    const idx = lifecycleIndex(pathResolve(lc));
+    const ledger = loadLedger(pathResolve(lf));
+    // the provider of each board (for the provider routes in the ledger), from --companies when given
+    const providerOf = new Map();
+    if (opt('companies')) {
+      const { resolve: resolveEntry } = await import('../crawler/providers.mjs');
+      for (const e of JSON.parse(readFileSync(pathResolve(opt('companies')), 'utf8')).tracked_companies ?? []) if (e?.name) providerOf.set(e.name, resolveEntry(e)?.provider ?? e.provider ?? null);
+    }
+    const reports = [], skipped = { no_read: 0, no_fetch: 0, gap: 0, recorded: 0 };
+    for (const board of listBoards(pathResolve(store))) {
+      const st = openBoard(pathResolve(store), board);
+      const readAt = Date.parse(st.last_ok ?? '');
+      if (!readAt) { skipped.no_read++; continue; }
+      const f = idx.fetches.get(board);
+      if (!f) { skipped.no_fetch++; continue; }
+      if (f.at > readAt || readAt - f.at > maxGap) { skipped.gap++; continue; }
+      if ((ledger.boards[board]?.last_fetch ?? 0) >= f.at) { skipped.recorded++; continue; }
+      const seen = Object.entries(st.postings).filter(([, p]) => p.status === 'open' && Date.parse(p.last_seen) === readAt).map(([id, p]) => ({ id, ...p }));
+      const c = compareBoard(f.urls.map((u) => ({ url: u, title: '', location: '' })), seen, { sameFetch: true, ownBoard: board, urlBoard: idx.urlBoard });
+      reports.push({ board, provider: providerOf.get(board) ?? null, ...c, legacy_fetch: new Date(f.at).toISOString() });
+      (ledger.boards[board] ??= { provider: providerOf.get(board) ?? null, route: 'legacy', since: new Date().toISOString(), parity: [] }).last_fetch = f.at;
+    }
+    recordParity(ledger, reports, routing);
+    saveLedger(pathResolve(lf), ledger);
+    const v = {};
+    for (const r of reports) v[r.verdict] = (v[r.verdict] ?? 0) + 1;
+    const summary = ledgerSummary(ledger);
+    console.error(`[ledger-shadow] recorded ${reports.length} board(s) ${JSON.stringify(v)}; skipped ${JSON.stringify(skipped)}; ledger ${JSON.stringify(summary)}`);
+    out({ recorded: reports.length, verdicts: v, skipped, ledger: summary, failing: reports.filter((r) => r.verdict !== 'pass' && r.verdict !== 'empty').map((r) => ({ board: r.board, verdict: r.verdict, only_legacy: r.only_legacy, only_new: r.only_new })) },
+      `recorded ${reports.length}: ${JSON.stringify(v)}; eligible ${summary.eligible}`);
     break;
   }
   case 'snapshot': {
