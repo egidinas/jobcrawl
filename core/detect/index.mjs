@@ -129,14 +129,18 @@ export function detectOffline({ url = '', finalUrl = '', html = '', headers = nu
   const hits = new Map();
   const hit = (fp, kind, value, evUrl = '', captured = null) => {
     let h = hits.get(fp.id);
-    if (!h) { h = { fp, kinds: new Map(), slugs: new Map(), count: 0 }; hits.set(fp.id, h); }
+    if (!h) { h = { fp, kinds: new Map(), slugs: new Map(), fallback: new Map(), count: 0 }; hits.set(fp.id, h); }
     h.count++;
     if (!h.kinds.has(kind)) h.kinds.set(kind, { kind, value: String(value).slice(0, 200), ...(evUrl ? { url: evUrl.slice(0, 300) } : {}) });
     // a pattern's own capture (an API path, an embed's ?for=) names the tenant directly
-    const sr = captured && !NOT_SLUG.test(captured) ? { slug: captured, from: 'url' } : slugRule(fp, evUrl || (kind === 'markup' || kind === 'cname' || kind === 'meta_generator' || kind === 'header' ? '' : value), pageUrl);
+    const ev = evUrl || (kind === 'markup' || kind === 'cname' || kind === 'meta_generator' || kind === 'header' ? '' : value);
+    const sr = captured && !NOT_SLUG.test(captured) ? { slug: captured, from: 'url' } : slugRule(fp, ev, pageUrl);
     if (sr) {
       const w = WEIGHTS[kind] ?? 0.5;
-      h.slugs.set(sr.slug, (h.slugs.get(sr.slug) ?? 0) + w);
+      // tenant evidence: the slug read from a URL (a board link, an API path, the careers URL itself); a slug made from the page's own
+      // address because markup (or a CNAME, a header) named the platform is only a fallback (tenant-evidence precedence, r2)
+      const m = ev ? h.slugs : h.fallback;
+      m.set(sr.slug, (m.get(sr.slug) ?? 0) + w);
       if (sr.from === 'url' || sr.from === 'detect' || sr.from === 'const') h.boardUrl = true;
     }
   };
@@ -173,9 +177,10 @@ export function detectOffline({ url = '', finalUrl = '', html = '', headers = nu
         let extra = false, cap = null;
         for (const r of fp.htmlRx[ref.kind] ?? []) { const m = ref.url.match(r); if (m) { extra = true; cap = m[1] ?? null; break; } }
         const onHost = !!fp.hostAny?.test(h);
-        // a URL-pattern match off the vendor's hosts (a tenant's custom domain, a /jobs/1234567-title path) counts only on a vendor host
+        // a URL-pattern match off the vendor's hosts (a tenant's custom domain, a /jobs/1234567-title path) counts only on the page's own domain,
         // or the page's own domain, never on a link to some other site (v1's rule)
-        const onUrl = !onHost && !!fp.urlAny?.test(ref.url) && (vendorHost || ownDoms.has(regDomain(h)));
+        // or another source's vendor host: emp.jobylon.com/jobs/123456-title is Jobylon, not a Teamtailor custom domain (r2)
+        const onUrl = !onHost && !!fp.urlAny?.test(ref.url) && ownDoms.has(regDomain(h));
         if (extra || onHost || onUrl) hit(fp, ref.kind, h, ref.url, cap);
       }
     }
@@ -189,10 +194,10 @@ export function detectOffline({ url = '', finalUrl = '', html = '', headers = nu
     }
     // providers whose detect() reads markup (BITE embeds carry the tenant in a data attribute)
     const bite = ACTIVE.find((p) => p.provider === 'bite');
-    if (bite) { try { const s = providers.bite.detect(html); if (s) { hit(bite, 'markup', 'data-bite-jobs-api-listing'); hits.get('bite').slugs.set(s, 9); } } catch { /* no */ } }
+    if (bite) { try { const s = providers.bite.detect(html); if (s) { hit(bite, 'markup', 'data-bite-jobs-api-listing'); hits.get('bite').slugs.set(s, 9); /* tenant evidence */ } } catch { /* no */ } }
   }
   const out = [];
-  for (const { fp, kinds, slugs, count, boardUrl } of hits.values()) {
+  for (const { fp, kinds, slugs, fallback, count, boardUrl } of hits.values()) {
     const mult = (k) => fp.weights?.[k] ?? 1;
     let conf = 1 - [...kinds.keys()].reduce((acc, k) => acc * (1 - Math.min(0.99, (WEIGHTS[k] ?? 0.5) * mult(k))), 1);
     const strong = [...kinds.keys()].some((k) => !['link_href', 'inline', 'jsonld'].includes(k));
@@ -200,8 +205,16 @@ export function detectOffline({ url = '', finalUrl = '', html = '', headers = nu
     if (!strong) conf *= 0.9;
     // a recognisable board URL (the source's own pattern names a tenant) is worth more than a bare vendor host
     if (boardUrl) conf = 1 - (1 - conf) * 0.85;
-    const slug = [...slugs.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-    out.push({ provider: fp.provider, ...(fp.platform ? { platform: fp.platform } : {}), kind: fp.kind, slug, confidence: +conf.toFixed(3), hits: count, order: ORDER.get(fp.id) ?? 999, evidence: [...kinds.values()] });
+    const top = (m) => [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+    // the careers host itself is the vendor's (careers URL, redirect, CNAME): its origin is a real tenant address, not a fallback
+    const hostIsVendor = kinds.has('url') || kinds.has('redirect') || kinds.has('cname');
+    const tenant = slugs.size > 0 || (hostIsVendor && fallback.size > 0);
+    const slug = top(slugs) ?? top(fallback);
+    // penalties (r2): a slug that is only the page's own address, and a slug-less hit seen in markup alone, are weak readings
+    const markupOnly = [...kinds.keys()].every((k) => ['markup', 'meta_generator', 'jsonld', 'inline'].includes(k));
+    if (slug && !tenant) conf *= 0.75;
+    else if (!slug && markupOnly) conf *= 0.75;
+    out.push({ provider: fp.provider, ...(fp.platform ? { platform: fp.platform } : {}), kind: fp.kind, slug, tenant, confidence: +conf.toFixed(3), hits: count, order: ORDER.get(fp.id) ?? 999, evidence: [...kinds.values()] });
   }
   if (html && content) out.push(...contentCandidates({ html, pageUrl, features, ats: out }));
   out.sort(byRank);
@@ -213,7 +226,8 @@ export function detectOffline({ url = '', finalUrl = '', html = '', headers = nu
 export const ATS_FLOOR = 0.4;
 // A named source without a slug (an unsupported tenant UI, a platform with no reader) is reported but is not a readable answer.
 const tierOf = (c) => (c.kind !== 'generic' && c.provider && c.slug && c.confidence >= ATS_FLOOR ? 1 : 0);
-export const byRank = (a, b) => tierOf(b) - tierOf(a) || b.confidence - a.confidence || (b.slug ? 1 : 0) - (a.slug ? 1 : 0) || (a.order ?? 999) - (b.order ?? 999) || (b.hits ?? 0) - (a.hits ?? 0);
+// Within the readable tier, evidence that names a tenant outranks a slug made from the page's own address (r2).
+export const byRank = (a, b) => tierOf(b) - tierOf(a) || (tierOf(a) ? (b.tenant ? 1 : 0) - (a.tenant ? 1 : 0) : 0) || b.confidence - a.confidence || (b.slug ? 1 : 0) - (a.slug ? 1 : 0) || (a.order ?? 999) - (b.order ?? 999) || (b.hits ?? 0) - (a.hits ?? 0);
 
 /** The one answer for a page: the first readable candidate in rank order at or above minConfidence, else null. */
 export function best(candidates, { minConfidence = ATS_FLOOR } = {}) {
