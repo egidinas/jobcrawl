@@ -21,9 +21,9 @@ export function detectStore(root) {
   return { json: json.listBoards(root).length > 0, sqlite: existsSync(join(root, SQLITE_FILE)) };
 }
 
-export function jsonStore(root, { keepDescription = false } = {}) {
+export function jsonStore(root, { keepDescription = false, storeText = false } = {}) {
   return {
-    kind: 'json', root, keepDescription,
+    kind: 'json', root, keepDescription, storeText,
     supports: (name) => ['openBoard', 'commitRun', 'lease', 'listBoards', 'readEvents', 'snapshot'].includes(name),
     openBoard: (board, opts) => json.openBoard(root, board, opts),
     commitRun: (board, state, events) => json.commitRun(root, board, state, events),

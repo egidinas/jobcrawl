@@ -157,12 +157,15 @@ export async function runResolver(store, { facts = defaultFacts, config = {}, ba
     }
     if (bookmark == null) {
       // baseline epoch: the postings the store holds now, at the max event_id read in the same snapshot
-      const { at, rows } = store.readTransaction((db) => ({
+      const { at, rows, text } = store.readTransaction((db) => ({
         at: Number(db.prepare('SELECT COALESCE(MAX(event_id), 0) AS m FROM events').get().m),
         rows: db.prepare('SELECT board, id, rec FROM postings ORDER BY board, id').all(),
+        text: new Map(db.prepare('SELECT id, content_hash AS h, excerpt FROM posting_text').all().map((t) => [t.id, t])),
       }));
       for (const r of rows) {
         const rec = JSON.parse(r.rec);
+        const tx = text.get(r.id);
+        if (tx && tx.h === (rec.dh ?? '')) rec.excerpt = tx.excerpt;
         engine.seed(r.board, r.id, rec, facts({ board: r.board, id: r.id, op: 'seed', t: rec.last_seen, posting: { url: rec.url, title: rec.title, jobcrawl: { board: r.board, id: r.id, status: rec.status, first_seen: rec.first_seen, last_seen: rec.last_seen } } }) ?? {});
       }
       engine.settleSeed(now().toISOString());

@@ -428,7 +428,7 @@ export function createResolver(state = null, config = {}) {
     /** Seeds a member from a stored posting record (bootstrap from an imported store: a baseline epoch, no resolved records). */
     seed(board, id, rec, f = {}, t = rec.last_seen) {
       const status = rec.status === 'departed' ? 'departed' : rec.status === 'unknown' ? 'unknown' : 'open';
-      const { m, g } = upsertMember({ board, id, t, posting: { url: rec.url, title: rec.title, datePosted: rec.posted, jobLocation: rec.location ? [{ address: { name: rec.location } }] : undefined, jobcrawl: { first_seen: rec.first_seen, last_seen: rec.last_seen } } }, f, status);
+      const { m, g } = upsertMember({ board, id, t, posting: { url: rec.url, title: rec.title, datePosted: rec.posted, jobLocation: rec.location ? [{ address: { name: rec.location } }] : undefined, jobcrawl: { first_seen: rec.first_seen, last_seen: rec.last_seen, ...(rec.excerpt ? { excerpt: rec.excerpt } : {}) } } }, f, status);
       m.first_seen = rec.first_seen ?? m.first_seen; m.last_seen = rec.last_seen ?? m.last_seen; m.misses = rec.misses ?? 0;
       if (status === 'open' && m.kept) admit(g, board, m.last_seen);
       if (f.verdict === 'open' || f.verdict === 'dup') { g.adopt = g.adopt === 'open' ? 'open' : f.verdict; dirtyG.add(g.id); }

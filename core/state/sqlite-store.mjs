@@ -73,8 +73,9 @@ const PROJ_FIELDS = (a, b) => {
 const EVENT_OPS = new Set(['added', 'changed', 'reappeared', 'departed']);
 
 export class SqliteStore {
-  constructor(DatabaseSync, root, { file = join(root, SQLITE_FILE), busyMs = 5000, clock = Date.now, keysOf = defaultKeysOf, keepDescription = false } = {}) {
+  constructor(DatabaseSync, root, { file = join(root, SQLITE_FILE), busyMs = 5000, clock = Date.now, keysOf = defaultKeysOf, keepDescription = false, storeText = false } = {}) {
     this.keepDescription = keepDescription;
+    this.storeText = storeText;
     this.textWrites = 0;
     this.kind = 'sqlite';
     this.root = root; this.file = file; this.clock = clock; this.keysOf = keysOf;

@@ -77,7 +77,7 @@ export function toPosting(board, id, rec) {
   return p;
 }
 
-export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_RULES, guard = DEFAULT_GUARD, maxJobs = null, idOf = postingId, keepDescription = false } = {}) {
+export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_RULES, guard = DEFAULT_GUARD, maxJobs = null, idOf = postingId, storeText = false, keepDescription = false } = {}) {
   if (!board) throw new Error('applyRun: opts.board is required');
   const state = prev ? structuredClone(prev) : emptyState(board);
   if (state.board !== board) throw new Error(`applyRun: state is for board "${state.board}", not "${board}"`);
@@ -103,7 +103,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
     const f = fieldsOf(it);
     const rec = state.postings[id];
     if (!rec) {
-      const r = (state.postings[id] = { ...f, ...textOf(it, { keepDescription }), first_seen: t, last_seen: t, misses: 0, status: 'open' });
+      const r = (state.postings[id] = { ...f, ...(storeText || keepDescription ? textOf(it, { keepDescription }) : {}), first_seen: t, last_seen: t, misses: 0, status: 'open' });
       emit('added', { id, posting: toPosting(board, id, r) });
       continue;
     }
@@ -112,7 +112,7 @@ export function applyRun(prev, run, { board, now = new Date(), rules = DEFAULT_R
     if (f.dh != null && rec.dh == null) rec.dh = f.dh;
     for (const k of diffs) rec[k] = f[k];
     rec.url = f.url;
-    Object.assign(rec, textOf(it, { keepDescription }));
+    if (storeText || keepDescription) Object.assign(rec, textOf(it, { keepDescription }));
     rec.last_seen = t;
     rec.misses = 0;
     if (rec.bl) {

@@ -1,0 +1,256 @@
+[
+ {
+  "state": {
+   "schema": "board-state/v1",
+   "board": "Acme",
+   "seq": 4,
+   "runs": 1,
+   "last_run": "2026-11-20T06:00:00.000Z",
+   "last_ok": "2026-11-20T06:00:00.000Z",
+   "last_complete": "2026-11-20T06:00:00.000Z",
+   "guard_hold": 0,
+   "postings": {
+    "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d": {
+     "url": "https://boards.greenhouse.io/acme/jobs/401",
+     "title": "Senior Thermal Engineer (m/w/d)",
+     "location": "Oberpfaffenhofen, Germany",
+     "posted": "2026-11-02",
+     "dh": "6590adc7b8f6a5f0",
+     "first_seen": "2026-11-20T06:00:00.000Z",
+     "last_seen": "2026-11-20T06:00:00.000Z",
+     "misses": 0,
+     "status": "open"
+    },
+    "jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l": {
+     "url": "https://boards.greenhouse.io/acme/jobs/402",
+     "title": "AIT Manager",
+     "location": "Munich, Germany",
+     "posted": "2026-11-03",
+     "dh": "ba4349c70a2fa371",
+     "first_seen": "2026-11-20T06:00:00.000Z",
+     "last_seen": "2026-11-20T06:00:00.000Z",
+     "misses": 0,
+     "status": "open"
+    },
+    "jc1_vxo5gunohxjbp2ntkpse5msw6jwuap2u": {
+     "url": "https://boards.greenhouse.io/acme/jobs/403",
+     "title": "Quality Lead",
+     "location": "Munich, Germany",
+     "posted": "2026-11-04",
+     "dh": null,
+     "first_seen": "2026-11-20T06:00:00.000Z",
+     "last_seen": "2026-11-20T06:00:00.000Z",
+     "misses": 0,
+     "status": "open"
+    }
+   }
+  },
+  "events": [
+   {
+    "schema": "delta/v1",
+    "producer": "@egidinas/jobcrawl@0.0.0-phase0",
+    "board": "Acme",
+    "seq": 1,
+    "run": "2026-11-20T06:00:00.000Z#0",
+    "t": "2026-11-20T06:00:00.000Z",
+    "op": "added",
+    "id": "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d",
+    "posting": {
+     "@type": "JobPosting",
+     "title": "Senior Thermal Engineer (m/w/d)",
+     "url": "https://boards.greenhouse.io/acme/jobs/401",
+     "datePosted": "2026-11-02",
+     "jobLocation": [
+      {
+       "@type": "Place",
+       "address": {
+        "name": "Oberpfaffenhofen, Germany"
+       }
+      }
+     ],
+     "jobcrawl": {
+      "schema": "posting/v1",
+      "id": "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d",
+      "board": "Acme",
+      "status": "open",
+      "first_seen": "2026-11-20T06:00:00.000Z",
+      "last_seen": "2026-11-20T06:00:00.000Z",
+      "content_hash": "6590adc7b8f6a5f0"
+     }
+    }
+   },
+   {
+    "schema": "delta/v1",
+    "producer": "@egidinas/jobcrawl@0.0.0-phase0",
+    "board": "Acme",
+    "seq": 2,
+    "run": "2026-11-20T06:00:00.000Z#0",
+    "t": "2026-11-20T06:00:00.000Z",
+    "op": "added",
+    "id": "jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l",
+    "posting": {
+     "@type": "JobPosting",
+     "title": "AIT Manager",
+     "url": "https://boards.greenhouse.io/acme/jobs/402",
+     "datePosted": "2026-11-03",
+     "jobLocation": [
+      {
+       "@type": "Place",
+       "address": {
+        "name": "Munich, Germany"
+       }
+      }
+     ],
+     "jobcrawl": {
+      "schema": "posting/v1",
+      "id": "jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l",
+      "board": "Acme",
+      "status": "open",
+      "first_seen": "2026-11-20T06:00:00.000Z",
+      "last_seen": "2026-11-20T06:00:00.000Z",
+      "content_hash": "ba4349c70a2fa371"
+     }
+    }
+   },
+   {
+    "schema": "delta/v1",
+    "producer": "@egidinas/jobcrawl@0.0.0-phase0",
+    "board": "Acme",
+    "seq": 3,
+    "run": "2026-11-20T06:00:00.000Z#0",
+    "t": "2026-11-20T06:00:00.000Z",
+    "op": "added",
+    "id": "jc1_vxo5gunohxjbp2ntkpse5msw6jwuap2u",
+    "posting": {
+     "@type": "JobPosting",
+     "title": "Quality Lead",
+     "url": "https://boards.greenhouse.io/acme/jobs/403",
+     "datePosted": "2026-11-04",
+     "jobLocation": [
+      {
+       "@type": "Place",
+       "address": {
+        "name": "Munich, Germany"
+       }
+      }
+     ],
+     "jobcrawl": {
+      "schema": "posting/v1",
+      "id": "jc1_vxo5gunohxjbp2ntkpse5msw6jwuap2u",
+      "board": "Acme",
+      "status": "open",
+      "first_seen": "2026-11-20T06:00:00.000Z",
+      "last_seen": "2026-11-20T06:00:00.000Z"
+     }
+    }
+   },
+   {
+    "schema": "delta/v1",
+    "producer": "@egidinas/jobcrawl@0.0.0-phase0",
+    "board": "Acme",
+    "seq": 4,
+    "run": "2026-11-20T06:00:00.000Z#0",
+    "t": "2026-11-20T06:00:00.000Z",
+    "op": "board-ok",
+    "n": 3,
+    "complete": true
+   }
+  ]
+ },
+ {
+  "state": {
+   "schema": "board-state/v1",
+   "board": "Acme",
+   "seq": 6,
+   "runs": 2,
+   "last_run": "2026-11-21T06:00:00.000Z",
+   "last_ok": "2026-11-21T06:00:00.000Z",
+   "last_complete": "2026-11-21T06:00:00.000Z",
+   "guard_hold": 0,
+   "postings": {
+    "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d": {
+     "url": "https://boards.greenhouse.io/acme/jobs/401",
+     "title": "Senior Thermal Engineer (m/w/d)",
+     "location": "Oberpfaffenhofen, Germany",
+     "posted": "2026-11-02",
+     "dh": "39b74025135af5bf",
+     "first_seen": "2026-11-20T06:00:00.000Z",
+     "last_seen": "2026-11-21T06:00:00.000Z",
+     "misses": 0,
+     "status": "open"
+    },
+    "jc1_l2ozz6hb2ppugqbjuxovnpqvqb3frw4l": {
+     "url": "https://boards.greenhouse.io/acme/jobs/402",
+     "title": "AIT Manager",
+     "location": "Munich, Germany",
+     "posted": "2026-11-03",
+     "dh": "ba4349c70a2fa371",
+     "first_seen": "2026-11-20T06:00:00.000Z",
+     "last_seen": "2026-11-21T06:00:00.000Z",
+     "misses": 0,
+     "status": "open"
+    },
+    "jc1_vxo5gunohxjbp2ntkpse5msw6jwuap2u": {
+     "url": "https://boards.greenhouse.io/acme/jobs/403",
+     "title": "Quality Lead",
+     "location": "Munich, Germany",
+     "posted": "2026-11-04",
+     "dh": null,
+     "first_seen": "2026-11-20T06:00:00.000Z",
+     "last_seen": "2026-11-20T06:00:00.000Z",
+     "misses": 1,
+     "status": "open"
+    }
+   }
+  },
+  "events": [
+   {
+    "schema": "delta/v1",
+    "producer": "@egidinas/jobcrawl@0.0.0-phase0",
+    "board": "Acme",
+    "seq": 5,
+    "run": "2026-11-21T06:00:00.000Z#1",
+    "t": "2026-11-21T06:00:00.000Z",
+    "op": "changed",
+    "id": "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d",
+    "fields": [
+     "dh"
+    ],
+    "posting": {
+     "@type": "JobPosting",
+     "title": "Senior Thermal Engineer (m/w/d)",
+     "url": "https://boards.greenhouse.io/acme/jobs/401",
+     "datePosted": "2026-11-02",
+     "jobLocation": [
+      {
+       "@type": "Place",
+       "address": {
+        "name": "Oberpfaffenhofen, Germany"
+       }
+      }
+     ],
+     "jobcrawl": {
+      "schema": "posting/v1",
+      "id": "jc1_afaefqnto57f2l44s75mvxhe26hgkv7d",
+      "board": "Acme",
+      "status": "open",
+      "first_seen": "2026-11-20T06:00:00.000Z",
+      "last_seen": "2026-11-21T06:00:00.000Z",
+      "content_hash": "39b74025135af5bf"
+     }
+    }
+   },
+   {
+    "schema": "delta/v1",
+    "producer": "@egidinas/jobcrawl@0.0.0-phase0",
+    "board": "Acme",
+    "seq": 6,
+    "run": "2026-11-21T06:00:00.000Z#1",
+    "t": "2026-11-21T06:00:00.000Z",
+    "op": "board-ok",
+    "n": 2,
+    "complete": true
+   }
+  ]
+ }
+]

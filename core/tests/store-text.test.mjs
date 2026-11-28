@@ -14,6 +14,8 @@ import { runBoardOn } from '../run-board.mjs';
 import { runResolver, resolvedRecords } from '../resolve/resolver.mjs';
 import { boardKey } from '../state/board-store.mjs';
 import { validate } from '../schema/validate.mjs';
+import { applyRun } from '../delta/board-delta.mjs';
+import { RUNS } from './helpers/text-fixture.mjs';
 import { textOf, splitText, excerptOf, EXCERPT_CHARS } from '../text.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,7 +58,7 @@ test('text: excerpt is plain, whitespace-normalised, at most 1,200 characters; t
 });
 
 test('sqlite: text lives in posting_text keyed by id and content hash; unchanged postings write nothing', async () => {
-  const store = await openSqliteStore(tmp());
+  const store = await openSqliteStore(tmp(), { storeText: true });
   await read(store, T(20), items());
   assert.equal(textRows(store).length, 2, 'two postings have text');
   assert.ok(textRows(store).every((r) => r.d === 0), 'no description by default');
@@ -89,7 +91,7 @@ test('sqlite: keepDescription stores the full text; the default does not', async
 
 test('json backend: the same fields on the posting record; an old state without text stays valid', async () => {
   const root = tmp();
-  const store = jsonStore(root);
+  const store = jsonStore(root, { storeText: true });
   await read(store, T(20), items().slice(2));                       // an "old" state: no text at all
   assert.equal(store.snapshot().length, 2);
   assert.equal(store.snapshot()[1].jobcrawl.excerpt, undefined);
@@ -106,7 +108,7 @@ test('json backend: the same fields on the posting record; an old state without 
 });
 
 test('resolved/v1 carries the excerpt as an optional field and still validates', async () => {
-  const store = await openSqliteStore(tmp());
+  const store = await openSqliteStore(tmp(), { storeText: true });
   await read(store, T(20), items());
   await runResolver(store, { facts: () => ({}), config: { companies: [] }, now: () => T(20, 12) });
   const recs = resolvedRecords(store, { after: 0, limit: 100 });
@@ -119,7 +121,7 @@ test('resolved/v1 carries the excerpt as an optional field and still validates',
 
 test('golden: excerpts through snapshot and feed outputs, both streams', async () => {
   const dir = tmp();
-  const store = await openSqliteStore(dir);
+  const store = await openSqliteStore(dir, { storeText: true });
   await read(store, T(20), items());
   await runResolver(store, { facts: () => ({}), config: { companies: [] }, now: () => T(20, 12) });
   store.close();
@@ -159,4 +161,57 @@ test('e2e: empty data dir, a replayed read, resolve, then RSS with excerpts (and
   const full = run(['snapshot', '--data', data2, '--store', 'sqlite', '--format', 'ndjson', '--fields', 'title,description', '--now', NOW]).split('\n').filter(Boolean).slice(1).map((l) => JSON.parse(l));
   assert.ok(full.find((r) => r.title === 'AIT Manager').description.length > EXCERPT_CHARS);
   assert.equal(full.find((r) => r.title === 'Quality Lead').description, null);
+});
+
+test('opt-in: applyRun and the stores with default options are byte-identical to main d50ace8 (shadow hook, authority)', async () => {
+  const a = applyRun(null, RUNS[0].run, { board: 'Acme', now: new Date(RUNS[0].now) });
+  const b = applyRun(a.state, RUNS[1].run, { board: 'Acme', now: new Date(RUNS[1].now) });
+  const f = join(GOLD, 'applyrun-main-d50ace8.json');
+  const eol = String.fromCharCode(10), cr = String.fromCharCode(13);
+  assert.equal(JSON.stringify([a, b], null, 1) + eol, readFileSync(f, 'utf8').split(cr + eol).join(eol), 'state and events of default applyRun equal the ones main produced');
+  // the stores without the option store no text either (runBoardOn with a default store)
+  const sq = await openSqliteStore(tmp());
+  await read(sq, T(20), items());
+  assert.equal(textRows(sq).length, 0);
+  assert.ok(!JSON.stringify(sq.events({ after: 0 })).includes('excerpt'));
+  sq.close();
+  const js = jsonStore(tmp());
+  await read(js, T(20), items());
+  assert.ok(!JSON.stringify(js.openBoard('Acme')).includes('excerpt'));
+});
+
+test('opt-in: the CLI run stores excerpts by default, --no-excerpt and a plain store command do not', () => {
+  const base = tmp('jcx-txt-optin-');
+  const prof = join(base, 'profile'), rec = join(base, 'rec');
+  for (const d of [prof, join(rec, 'lists')]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(prof, 'profile.json'), JSON.stringify({ name: 't', crawl: { user_agent: 'jcx-test (+https://example.org)' } }));
+  writeFileSync(join(prof, 'companies.json'), JSON.stringify({ tracked_companies: [{ name: 'Acme', provider: 'greenhouse', slug: 'acme' }] }));
+  writeFileSync(join(rec, 'lists', `${boardKey('Acme')}.json.gz`), gzipSync(JSON.stringify({ board: 'Acme', provider: 'greenhouse', complete: true, items: items() })));
+  const routing = join(base, 'routing.json');
+  writeFileSync(routing, JSON.stringify({ schema: 'routing/v1', providers: { greenhouse: 'shadow' } }));
+  const go = (data, extra = []) => run(['run', '--profile', prof, '--data', data, '--routing', routing, '--replay', rec, '--store', 'sqlite', ...extra]);
+  const feed = (data) => run(['snapshot', '--data', data, '--store', 'sqlite', '--format', 'ndjson', '--now', NOW]);
+  go(join(base, 'on'));
+  assert.ok(feed(join(base, 'on')).includes('Senior Thermal Engineer (m/w/d) At Acme Space'));
+  go(join(base, 'off'), ['--no-excerpt']);
+  assert.ok(!feed(join(base, 'off')).includes('At Acme Space'));
+  writeFileSync(join(prof, 'profile.json'), JSON.stringify({ name: 't', store: { excerpt: false }, crawl: { user_agent: 'jcx-test (+https://example.org)' } }));
+});
+
+test('resolver bootstrap seeds excerpts from posting_text when present', async () => {
+  const dir = tmp();
+  const jd = tmp();
+  const js = jsonStore(jd, { storeText: true });
+  await read(js, T(20), items());
+  const sq = await openSqliteStore(dir);
+  sq.importJson(jd);
+  await runResolver(sq, { facts: () => ({}), config: { companies: [] }, now: () => T(20, 12) });
+  const [snap] = [sq.snapshot().slice(1)];
+  assert.ok(snap.find((p) => p.title === 'AIT Manager').jobcrawl.excerpt, 'imported text is in posting_text');
+  // a refresh after bootstrap carries the member excerpt into a resolved record
+  await read(sq, T(21), items(THERMAL_V2));
+  await runResolver(sq, { facts: () => ({}), config: { companies: [] }, now: () => T(21, 12) });
+  const recs = resolvedRecords(sq, { after: 0, limit: 100 });
+  assert.ok(recs.some((r) => r.excerpt), 'a resolved record carries an excerpt');
+  sq.close();
 });
