@@ -4,8 +4,9 @@ Which job-board source reads a careers page: an ATS (Greenhouse, Personio, Teamt
 single-employer reader, or, for a custom board with no ATS, one of the generic readers (`jsonld_direct`, `sitemap`,
 `paginated_list`) with a proposed config. JOBCRAWLX row 2A.5.
 
-Status: **behind a switch** (`--detector v2`); the default stays v1. On the frozen hold-out v2 does **not** beat v1 (see
-[Benchmark](#benchmark)), so the acceptance line of row 2A.5 is not met yet.
+Status: **behind a switch** (`--detector v2`); the default stays v1. Round 1 hold-out: v2 below v1. Round 2 (fresh split, two pages
+per company): v2 above v1 on the point estimate, but the interval's lower bound is below 0, so by the pre-registered rule v1 stays
+the default (see [Benchmark](#benchmark) and [Round 2](#round-2-fresh-split-two-pages-per-company)).
 
 ## API
 
@@ -133,10 +134,8 @@ URL tier: v2 from data alone gives the same provider and slug as `providers.reso
   - v2 only: `personio -> jobylon`, `avature -> radancy`.
 - Slug accuracy of v2 where the provider is right: 0.94. Generic subtype (which generic reader) where v2 says custom: 5 of 9.
 
-**Known defect (next fix):** a markup-only hit takes an origin slug from the page for free and can outrank evidence that carries a real
-tenant slug. jobylon over teamtailor on dev (taxistockholm, greencargo) showed it before the hold-out run, and the hold-out's
-jobylon and radancy errors look like the same pattern. Fix it in a separate commit, validate on dev, and label any later hold-out run
-post-hoc.
+**Known defect (fixed in round 2, `904b65f`):** a markup-only hit took an origin slug from the page for free and could outrank evidence
+that carries a real tenant slug (jobylon over teamtailor/personio, radancy over avature). Round 1's hold-out was not re-run.
 
 **Limits of this benchmark**
 - It sees one page per company and no response headers. It cannot measure the follow, header fingerprints or sitemap detection
@@ -147,3 +146,47 @@ post-hoc.
 - A clean acceptance needs fresh cached pages (two pages per company, so the follow counts) and a larger hold-out.
 - The profiler's raw capture (`~/atlas/profiler/pages`, about 2,500 careers pages) was not used for scoring. Its labels come from
   v1's own cascade, so it is biased towards v1.
+
+## Round 2: fresh split, two pages per company
+
+**Changes to v2** (`904b65f`, validated on the round-1 dev split only: unchanged at 0.667 vs 0.670, 5 wins / 2 losses):
+- Tenant-evidence precedence. A slug made from the page's own address, because markup or a header named the platform, is a fallback.
+  It gets confidence x0.75 and ranks below any readable candidate whose slug came from a URL (board link, API path, careers URL).
+  A CNAME, careers URL or redirect on the vendor keeps the origin as real evidence.
+- A slug-less hit seen in markup alone gets confidence x0.75.
+- A URL-pattern match on another vendor's host no longer counts: `emp.jobylon.com/jobs/123456-x` is not a Teamtailor custom domain.
+- Tests cover the personio/jobylon and avature/radancy cases.
+
+**Benchmark v2** (protocol pre-registered in `bench/detect/split-v2.meta.json`)
+- Split: `bench/detect/split-v2.jsonl`, frozen at `f909e20` before any page was fetched.
+  - 141 fresh companies; every group with a round-1 hold-out row or a round-1 cached page is excluded.
+  - Every row is hold-out, and the evaluation ran once.
+  - Input is the employer's own careers page: the configured careers URL, or, for ATS-URL entries, the profiler company list's
+    careers page or homepage.
+  - Labels from today's `companies.json`. `stand_in` marks custom rows whose config names an ATS (config only); one row has it.
+- Pages: fetched from the PC with `bench/detect/fetch-pages.mjs`.
+  - One request at a time, at least 1.5 s apart, robots.txt strict, through the egress guard: 369 requests in 10 minutes.
+  - Per row, the input page and its first follow (`followTarget`: board iframe, else the same-domain careers link).
+  - Pinned by sha1 at `1af9941` (`split-v2.pages.jsonl`) before any detector ran: 134 usable rows (34 ATS, 100 custom), 80 with a follow.
+- Headline: the two-page tier. v1 reads the follow page when page 1 gives nothing. v2 runs `detect()` over a cache-only fetch, with its
+  own follow rule; it followed on 62 rows.
+
+| set | rows | macro-F1 v1 | macro-F1 v2 | gap 95 % (bootstrap) | wins / losses | micro-F1 v1 / v2 |
+|---|---|---|---|---|---|---|
+| **two-page (headline)** | **134** | **0.181** | **0.208** | **[-0.023, +0.150]** | **4 / 1** | 0.571 / 0.623 |
+| two-page, stand-in row left out | 133 | 0.181 | 0.208 | [0.000, +0.140] | 4 / 1 | |
+| one page | 134 | 0.205 | 0.238 | [-0.041, +0.165] | 2 / 1 | |
+| two-page, custom as a class | 134 | 0.239 | 0.265 | | | |
+
+**Decision:** the lower bound of the headline gap is -0.023, not above 0, so v1 stays the CLI/MCP default.
+
+**Reading it**
+- Absolute macro-F1 is low because of easycruit (5 rows, both 0), personio (2, both 0), greenhouse and recruitee (1 each, both 0).
+  The careers page does not name the board, even after one follow.
+- v2's gains: teamtailor precision 0.85 to 0.92, workday 0.40 to 0.67, and two `custom -> reachmee` false positives gone.
+  Its one loss is `custom -> hirehive`.
+- Shared misses: `easycruit -> custom` (5), `varbi -> custom` (4), `personio -> custom` (2).
+- Post-hoc diagnostic, not a label: on 7 custom rows both detectors name the same ATS. These are rexx, successfactors_classic, varbi,
+  adp, workday, teamtailor and personio, and are likely a generic reader standing in for an ATS.
+- To settle the default, the next round needs more ATS rows on employer pages: 34 is the binding limit. That means more companies
+  with a known website.
