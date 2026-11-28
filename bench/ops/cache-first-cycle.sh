@@ -3,7 +3,8 @@
 # jcx-cache-first.timer every 10 min. It picks the first cycle log (started after ~/atlas/jcx/cache_armed_at) whose crawl printed
 # "conditional requests on|OFF" (only the new code prints that), waits until that cycle has its "[cycle] result:" line, then writes
 # ~/atlas/jcx/cache_first_cycle.txt: the "crawl: conditional cache:" counters, the cycle result, connect/board timeout counts.
-# Rollback, without any git change, when the cycle failed (result not OK, crawl step failed, OOM/FATAL) or cache errors > 5 % of the
+# Rollback, without any git change, when the cycle failed (preferred: a made-cycle drop-in with JOBCRAWL_CONDITIONAL_CACHE=0 when the
+# crawl code honours it, jobcrawl 3b64151 and later; otherwise the blocking file below) (result not OK, crawl step failed, OOM/FATAL) or cache errors > 5 % of the
 # cached requests: the cache folder is renamed to http-cache.disabled-<time> and a FILE named http-cache is put in its place, so the
 # crawl's install step fails to create the folder and logs "conditional requests OFF" on the next cycle (core/fetch/conditional.mjs,
 # crawl.mjs). Undo: delete the file (the folder is re-created on the next cycle). Then it stops its own timer.
@@ -47,8 +48,18 @@ echo "$result" | grep -q "result: OK" || bad="${bad:+$bad; }cycle result not OK"
 awk -v r="$rate" 'BEGIN{exit !(r+0 > 5)}' && bad="${bad:+$bad; }cache errors ${rate} % > 5 %"
 if [ -n "$bad" ] && echo "$onoff" | grep -q "requests on"; then
   stamp=$(date +%Y%m%d-%H%M%S)
-  { [ -d "$CACHE" ] && mv "$CACHE" "$CACHE.disabled-$stamp"; } ; : > "$CACHE"
-  echo "ROLLED BACK ($bad): $CACHE.disabled-$stamp kept; a file now blocks $CACHE, so the next cycle logs 'conditional requests OFF'. Undo: rm $CACHE ($(date -Is))" >> "$OUT"
+  DROPIN=$HOME/.config/systemd/user/made-cycle.service.d/jcx-cache-off.conf
+  if grep -q JOBCRAWL_CONDITIONAL_CACHE "$HOME/atlas/crawl/code/jobcrawl/crawler/crawl.mjs" 2>/dev/null; then
+    # the crawl honours the switch: a drop-in turns the cache off for the made-cycle unit (undo: delete it + daemon-reload)
+    printf '%s
+' "# JOBCRAWLX: conditional cache switched off by jcx-cache-first at $(date -Is) ($bad). Undo: delete this file + systemctl --user daemon-reload." '[Service]' 'Environment=JOBCRAWL_CONDITIONAL_CACHE=0' > "$DROPIN"
+    systemctl --user daemon-reload
+    echo "ROLLED BACK ($bad): $DROPIN sets JOBCRAWL_CONDITIONAL_CACHE=0 for made-cycle; the next cycle logs 'conditional requests OFF'. Undo: rm $DROPIN && systemctl --user daemon-reload ($(date -Is))" >> "$OUT"
+  else
+    # older crawl without the switch: a file blocks the cache folder, so the install step fails and logs OFF (undo: rm the file)
+    { [ -d "$CACHE" ] && mv "$CACHE" "$CACHE.disabled-$stamp"; } ; : > "$CACHE"
+    echo "ROLLED BACK ($bad): $CACHE.disabled-$stamp kept; a file now blocks $CACHE, so the next cycle logs 'conditional requests OFF'. Undo: rm $CACHE ($(date -Is))" >> "$OUT"
+  fi
 fi
 say "result written to $OUT${bad:+ (bad: $bad)}"
 systemctl --user stop jcx-cache-first.timer
