@@ -178,7 +178,6 @@ export function createResolver(state = null, config = {}) {
     const orig = findOriginal(g);
     if (orig && isAgg(orig) && !isAgg(g)) {             // the employer's own posting replaces the aggregator copy
       orig.dup_of = g.id; setStatus(orig, 'dup', t, { why: 'aggregator copy of a direct posting' }); stats.swaps++;
-      indexValid = false;
       return { s: 'open' };
     }
     if (orig) return { s: 'dup', of: orig.id };
@@ -191,7 +190,7 @@ export function createResolver(state = null, config = {}) {
     if (b.s === 'open') {
       if (g.swept && !membersOf(g).some((m) => ms(m.last_seen) > g.swept)) return;   // swept: only a new listing reopens it
       if (g.swept) { delete g.swept; dirtyG.add(g.id); }
-      if (g.status === 'open') return;
+      if (g.status === 'open') { if (indexValid && indexed(g)) addToIndex(g); return; }   // a changed title or text adds its new keys
       if (g.status === 'dup') {
         const o = st.groups[g.dup_of];
         if (o && o.status === 'open') return;            // the original is still open: stays a dup
@@ -203,7 +202,7 @@ export function createResolver(state = null, config = {}) {
       const wasDup = g.status === 'dup';
       g.dup_of = null;
       if (setStatus(g, 'open', t, { why }) && wasDup) stats.takeovers++;
-      indexValid = false;
+      if (indexValid && indexed(g)) addToIndex(g);   // the index only grows; candidates() skips groups that are no longer open
       return;
     }
     // legacy: dup and extra rows are not closed by a board's miss (only open rows are); the 3-day sweep retires them
@@ -212,7 +211,8 @@ export function createResolver(state = null, config = {}) {
     if (g.swept && g.status === 'departed' && b.s !== 'open') return;
     const wasOpen = g.status === 'open';
     if (b.s === 'hidden') { g.hide = b.hide; }
-    if (setStatus(g, b.s, t, { why })) { if (wasOpen) indexValid = false; if (g.status !== 'dup') g.dup_of = null; }
+    if (setStatus(g, b.s, t, { why })) { if (g.status !== 'dup') g.dup_of = null; }
+    void wasOpen;
   }
 
   // ---- input ----
@@ -348,7 +348,7 @@ export function createResolver(state = null, config = {}) {
       if (g.status !== 'open' || !isAgg(g) || !indexed(g)) continue;
       const r = rowOf(g);
       for (const o of candidates(g, true)) {
-        if (isCrossListing(r.fp, r, rowOf(o).fp, rowOf(o), boardNames)) { g.dup_of = o.id; setStatus(g, 'dup', t, { why: 'cross-listing sweep' }); stats.dupMarked++; indexValid = false; break; }
+        if (isCrossListing(r.fp, r, rowOf(o).fp, rowOf(o), boardNames)) { g.dup_of = o.id; setStatus(g, 'dup', t, { why: 'cross-listing sweep' }); stats.dupMarked++; break; }
       }
     }
     // 3-day sweep (crawl.mjs end of scan): day granularity, as the legacy string compare. config.sweep === false turns it off (a replay
@@ -360,10 +360,10 @@ export function createResolver(state = null, config = {}) {
       const ms_ = membersOf(g);
       const last = ms_.reduce((a, m) => maxT(a, m.last_seen), null);
       if (!last || day(last) >= cutoff) continue;
-      if (rules === RULES.legacy) { g.swept = t; setStatus(g, 'departed', t, { why: 'sweep' }); stats.swept++; indexValid = false; continue; }
+      if (rules === RULES.legacy) { g.swept = t; setStatus(g, 'departed', t, { why: 'sweep' }); stats.swept++; continue; }
       const closable = ms_.some((m) => (m.misses ?? 0) >= K_MISSES && t - ms(m.last_seen) >= FLOOR_H * 3600e3);
-      if (closable) { g.swept = t; setStatus(g, 'departed', t, { why: 'sweep' }); stats.swept++; indexValid = false; }
-      else if (t - ms(last) >= UNKNOWN_DAYS * DAY && g.status !== 'unknown') { g.swept = t; setStatus(g, 'unknown', t, { why: 'sweep' }); stats.unknown++; indexValid = false; }
+      if (closable) { g.swept = t; setStatus(g, 'departed', t, { why: 'sweep' }); stats.swept++; }
+      else if (t - ms(last) >= UNKNOWN_DAYS * DAY && g.status !== 'unknown') { g.swept = t; setStatus(g, 'unknown', t, { why: 'sweep' }); stats.unknown++; }
     }
   }
 
