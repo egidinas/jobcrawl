@@ -78,7 +78,7 @@ rows.forEach((row, idx) => {
   const rel = released.get(row.url);
   add(board, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx, rel: rel && rel > (row.first_seen || T0day) ? rel : undefined });
   if (lcBoard && lcBoard !== cBoard && boardNames.has(lcBoard) && registryNames.has(cBoard) && !boardNames.has(cBoard)) {
-    add(cBoard, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx: idx + 0.5 });
+    add(cBoard, { url: row.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx: idx + 0.5, rel: rel && rel > (row.first_seen || T0day) ? rel : undefined });
     companyBoardExtra++;
   }
 });
@@ -93,7 +93,7 @@ if (SH) {
       if (p.status !== 'open' || have.has(p.url) || T0 - Date.parse(p.last_seen) >= 48 * 3600e3) continue;
       const row = history.get(p.url);
       if (!row || (row.status !== 'open' && row.status !== 'dup')) continue;   // a second board on a URL the replay holds
-      add(st.board, { url: p.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx: rows.length + shadowExtra });
+      add(st.board, { url: p.url, title: row.title, location: row.location, posted: row.posted, from: row.first_seen || T0day, idx: rows.length + shadowExtra, rel: released.get(p.url) > (row.first_seen || T0day) ? released.get(p.url) : undefined });
       shadowExtra++;
     }
   }
@@ -195,6 +195,10 @@ for (const r of rows) {
     }
   } else note(`other (${k2})`, ex(r.url));
 }
+// the recent window: rows that arrived while the legacy crawl ran today's code and the cycle logs cover it (default: 3 days before the copy)
+const WINDOW = opt('window', new Date(T0 - 2 * 864e5).toISOString().slice(0, 10));
+const windowConf = {};
+for (const r of rows) { if ((r.first_seen || '') < WINDOW) continue; const k3 = `${r.status}->${groups.get(idOfUrl.get(r.url))?.status ?? 'missing'}`; windowConf[k3] = (windowConf[k3] ?? 0) + 1; }
 const dupLegacy = rows.filter((r) => r.status === 'dup').length;
 const dupBoth = conf['dup->dup'] ?? 0;
 const dupResolver = [...rows].filter((r) => groups.get(idOfUrl.get(r.url))?.status === 'dup').length;
@@ -237,7 +241,7 @@ const report = {
   replay: { fp_mode: FP_MODE, inline_providers: INLINE.size, released_rows: rows.filter((r) => released.has(r.url)).length, epoch: EPOCH, employer_board_listings: companyBoardExtra, history_rows: history.size, replayed_rows: rows.length, second_board_listings: shadowExtra, boards: listings.size, board_runs: runs, resolved_records: fin.seq },
   dup: { rows: rows.length, agreement: +((rows.length - Object.values(cls).reduce((a, b) => a + b, 0)) / rows.length * 100).toFixed(3), confusion: conf,
     legacy_dup: dupLegacy, resolver_dup: dupResolver, both_dup: dupBoth,
-    dup_recall: +(dupBoth / dupLegacy * 100).toFixed(2), dup_precision: +(dupBoth / (dupResolver || 1) * 100).toFixed(2), classes: cls, samples },
+    dup_recall: +(dupBoth / dupLegacy * 100).toFixed(2), window_from: WINDOW, window_confusion: windowConf, dup_precision: +(dupBoth / (dupResolver || 1) * 100).toFixed(2), classes: cls, samples },
   admission: { urls: adm.compared, agreement: +(adm.equal / adm.compared * 100).toFixed(3), classes: adm.classes, samples: adm.samples },
   protected: { legacy: Lp.size, resolver: Rp.size, only_legacy: onlyL.length, only_resolver: onlyR.length, only_legacy_sample: onlyL.slice(0, 8), only_resolver_sample: onlyR.slice(0, 8), registry_gate_decisions_differ: gateDiff, gate_examples: gateEx },
   resolver_stats: fin.stats,

@@ -95,10 +95,13 @@ export function createResolver(state = null, config = {}) {
   const isAgg = (g) => { const r = rowOf(g); return r ? isAggregatorRow(r, boardNames) : false; };
   const indexed = (g) => { const r = rowOf(g); return Boolean(r && (r.fp || rowPostingKeys(r).length)); };
 
+  /** The boards that list the posting now (member open), sorted: the `boards` of a resolved record. */
+  const listing = (g) => membersOf(g).filter((m) => m.status === 'open').map((m) => m.board).sort();
   function emit(g, op, t, extra = {}) {
+    if (op !== 'changed') g.boards_sig = listing(g).join('');
     const m = rep(g);
     out.push({ schema: RESOLVED_SCHEMA, seq: ++st.seq, t: new Date(ms(t)).toISOString(), op, id: g.id, status: g.status,
-      boards: [...g.members].sort(), admitting: Object.keys(g.adm).sort(),
+      boards: listing(g), admitting: Object.keys(g.adm).sort(),
       ...(g.dup_of ? { dup_of: g.dup_of } : {}),
       ...(m ? { url: m.url, title: m.title, company: m.company, location: m.location || undefined, first_seen: g.first_open ?? m.first_seen } : {}),
       ...extra });
@@ -218,6 +221,17 @@ export function createResolver(state = null, config = {}) {
     void wasOpen;
   }
 
+  /** A visible group whose set of listing boards changed without a status change: a 'changed' record (design §3.3: a posting that leaves
+   *  board A and stays on board B is changed, not departed). */
+  function boardsChanged(g, t) {
+    if (g.status !== 'open' && g.status !== 'dup') return;
+    const sig = listing(g).join('');
+    if (g.boards_sig === undefined) { g.boards_sig = sig; return; }
+    if (sig === g.boards_sig) return;
+    emit(g, 'changed', t, { fields: ['boards'] });
+    g.boards_sig = sig; dirtyG.add(g.id);
+  }
+
   // ---- input ----
   function upsertMember(rec, f, status) {
     const p = rec.posting ?? {};
@@ -274,6 +288,7 @@ export function createResolver(state = null, config = {}) {
         recompute(g, t, rec.op === 'changed' ? 'changed' : undefined);
         if (rec._suspect && g.status) emit(g, 'changed', t, { suspect: rec._suspect });
         else if (rec.op === 'changed' && (g.status === 'open' || g.status === 'dup')) emit(g, 'changed', t, { fields: rec.fields });
+        boardsChanged(g, t);
         return;
       }
       case 'refreshed': {
@@ -295,6 +310,7 @@ export function createResolver(state = null, config = {}) {
         withdraw(g, rec.board);
         if (held.length && g.status === 'open') stats.blockedClose++;
         recompute(g, t);
+        boardsChanged(g, t);
         return;
       }
       default: stats.ignored++;

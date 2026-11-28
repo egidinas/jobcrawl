@@ -182,6 +182,9 @@ export async function runResolver(store, { facts = defaultFacts, config = {}, ba
         return views.get(board);
       };
       let lastT = null;
+      // facts that arrived since the last batch (saved descriptions) are known before this batch's arrivals are matched, as the legacy
+      // crawl builds its index from the saved descriptions at cycle start
+      engine.refresh(facts, recs[0].t);
       for (const rec of recs) {
         if (rec.op === 'board-ok') engine.boardOk(rec.board, rec.t, viewOf(rec.board));
         else if (rec.op !== 'board-failed') engine.apply(rec, rec.op === 'departed' || rec.op === 'unknown' ? {} : (facts(rec) ?? {}));

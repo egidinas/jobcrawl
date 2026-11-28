@@ -362,3 +362,20 @@ test('resolver: at the baseline epoch a recorded legacy verdict is adopted (open
   assert.deepEqual([statusOf(without, DIRECT), statusOf(without, D2)].sort(), ['dup', 'open']);
   withVerdict.close(); without.close();
 });
+
+test('resolver: a posting that leaves board A and stays on board B is changed (boards updated), not departed', async () => {
+  const store = await openSqliteStore(tmp());
+  const facts = () => ({ company: 'Acme' });
+  await read(store, 'Acme', at(0), [item(DIRECT)]);
+  await read(store, 'Acme Careers', at(0.1), [item(DIRECT)]);
+  await resolve(store, facts, 0.5);
+  await read(store, 'Acme Careers', at(1), []);
+  await resolve(store, facts, 1.5);
+  assert.equal(statusOf(store, DIRECT), 'open');
+  const recs = resolvedRecords(store);
+  assert.deepEqual(recs.map((r) => r.op), ['added', 'changed', 'changed']);
+  assert.deepEqual(recs[1].boards, ['Acme', 'Acme Careers']);
+  assert.deepEqual(recs[2].boards, ['Acme']);
+  assert.deepEqual(recs[2].fields, ['boards']);
+  store.close();
+});
