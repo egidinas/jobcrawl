@@ -215,3 +215,37 @@ test('resolver bootstrap seeds excerpts from posting_text when present', async (
   assert.ok(recs.some((r) => r.excerpt), 'a resolved record carries an excerpt');
   sq.close();
 });
+
+test('opt-in: profile key store.excerpt turns the excerpt on for commands that are not run/crawl (dual-run), and --no-excerpt wins over it', () => {
+  const base = tmp('jcx-txt-profkey-');
+  const rec = join(base, 'rec'), legacy = join(base, 'legacy');
+  for (const d of [join(rec, 'lists'), legacy]) mkdirSync(d, { recursive: true });
+  const its = items();
+  writeFileSync(join(rec, 'lists', `${boardKey('Acme')}.json.gz`), gzipSync(JSON.stringify({ board: 'Acme', provider: 'greenhouse', complete: true, items: its })));
+  writeFileSync(join(legacy, 'scan-history.tsv'), 'url\tcompany\ttitle\tlocation\tfirst_seen\tlast_seen\tstatus\tposted\n'
+    + its.map((i) => `${i.url}\tAcme\t${i.title}\t${i.location}\t2026-11-01\t2026-11-27\topen\t`).join('\n') + '\n');
+  const routing = join(base, 'routing.json');
+  writeFileSync(routing, JSON.stringify({ schema: 'routing/v1', providers: { greenhouse: 'shadow' } }));
+  let n = 0;
+  const profile = (store) => {
+    const p = join(base, `profile-${n++}`);
+    mkdirSync(p, { recursive: true });
+    writeFileSync(join(p, 'profile.json'), JSON.stringify({ name: 't', ...(store === undefined ? {} : { store }), crawl: { user_agent: 'jcx-test (+https://example.org)' } }));
+    writeFileSync(join(p, 'companies.json'), JSON.stringify({ tracked_companies: [{ name: 'Acme', provider: 'greenhouse', slug: 'acme' }] }));
+    return p;
+  };
+  // dual-run is neither run nor crawl: only the profile key (or JOBCRAWL_STORE_TEXT) can switch the excerpt on
+  const excerpts = (store, extra = [], env = {}) => {
+    const data = join(base, `data-${n++}`);
+    run(['dual-run', '--profile', profile(store), '--data', data, '--legacy-data', legacy, '--replay', rec, '--routing', routing, '--json', ...extra], env);
+    const posts = Object.values(jsonStore(data).openBoard('Acme').postings);
+    assert.equal(posts.length, 3);
+    return posts.filter((p) => p.excerpt).length;
+  };
+  assert.equal(excerpts(undefined), 0, 'no profile key: no excerpt for dual-run');
+  assert.equal(excerpts({ excerpt: false }), 0, 'store.excerpt false: no excerpt');
+  assert.equal(excerpts({ excerpt: 'yes' }), 0, 'only the boolean true counts');
+  assert.equal(excerpts({ excerpt: true }), 2, 'store.excerpt true: the two postings with a description carry one');
+  assert.equal(excerpts({ excerpt: true }, ['--no-excerpt']), 0, '--no-excerpt wins over the profile');
+  assert.equal(excerpts(undefined, [], { JOBCRAWL_STORE_TEXT: '1' }), 2, 'the environment switch does the same');
+});
