@@ -42,10 +42,10 @@ commands (phase 0):
                                              JSON board states -> <data>/store.sqlite, without events (read-only on the JSON side)
   run [--profile <dir>] [--data <dir>] [--routing <file>] [--board <name>] [--replay <recording>] [--max-minutes <n>] [--every-min <n>]
       [--daemon [--interval-min <n>]] [--metrics [host]:port] [--log-format json|text] [--log-file <file>] [--strict] [--stale-hours <n>]
-      [--store json|sqlite] [--json]
+      [--store json|sqlite] [--resolve [--legacy-data <dir>]] [--json]
                                              headless run of every routed board on the new path; resumable, SIGTERM-safe, never prompts
-                                             (profile and data may come from JOBCRAWL_PROFILE and JOBCRAWL_DATA); see docs/HEADLESS.md
-      [--resolve [--legacy-data <dir>]]       after the boards, run the resolver job once (sqlite store; default off)
+                                             (profile and data may come from JOBCRAWL_PROFILE and JOBCRAWL_DATA); see docs/HEADLESS.md;
+                                             --resolve (default off): then one resolver run over what the boards committed (sqlite)
   resolve --data <dir> [--store sqlite] [--profile <dir> | --companies <file>] [--legacy-data <dir>] [--rules legacy|lifecycle]
           [--batch <n>] [--max-events <n>] [--json]
                                              the cross-board resolver job (row 1.4): crosslist dups, admission, protected set, the

@@ -284,3 +284,56 @@ test('resolver: the JSON store is refused; the CLI resolves a sqlite data folder
   const r3 = spawnSync(process.execPath, [CLI, 'resolved', '--data', data, '--json'], { encoding: 'utf8', env });
   assert.equal(r3.status, 0, r3.stderr);
 });
+
+test('resolver: jobcrawl run --resolve runs the resolver after the boards (sqlite); without the flag nothing of the resolver is written', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  const { gzipSync } = await import('node:zlib');
+  const { boardKey } = await import('../state/board-store.mjs');
+  const base = tmp('jcx-res-run-');
+  const prof = join(base, 'profile'), rec = join(base, 'rec');
+  for (const d of [prof, join(rec, 'lists')]) mkdirSync(d, { recursive: true });
+  writeFileSync(join(prof, 'profile.json'), JSON.stringify({ name: 't', crawl: { user_agent: 'jcx-test (+https://example.org)' } }));
+  const boards = [{ name: 'B1', provider: 'greenhouse', slug: 'b1' }, { name: 'B2', provider: 'greenhouse', slug: 'b2' }];
+  writeFileSync(join(prof, 'companies.json'), JSON.stringify({ tracked_companies: boards }));
+  for (const b of boards) writeFileSync(join(rec, 'lists', `${boardKey(b.name)}.json.gz`), gzipSync(JSON.stringify({ board: b.name, provider: 'greenhouse', complete: true, items: [item(DIRECT)] })));
+  const routing = join(base, 'routing.json');
+  writeFileSync(routing, JSON.stringify({ schema: 'routing/v1', providers: { greenhouse: 'shadow' } }));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('JOBCRAWL_')));
+  const run = (data, extra) => spawnSync(process.execPath, ['--no-warnings', CLI, 'run', '--profile', prof, '--data', data, '--routing', routing, '--replay', rec, '--store', 'sqlite', '--json', ...extra], { encoding: 'utf8', env, input: '' });
+  const off = run(join(base, 'd-off'), []);
+  assert.equal(off.status, 0, off.stderr);
+  const s0 = await openSqliteStore(join(base, 'd-off'));
+  assert.equal(s0.db.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name LIKE 'resolve%'").get().n, 0);
+  s0.close();
+  const on = run(join(base, 'd-on'), ['--resolve']);
+  assert.equal(on.status, 0, on.stderr);
+  const res = JSON.parse(on.stdout.trim().split('\n').at(-1));
+  assert.equal(res.resolver.bootstrapped, true);
+  const s1 = await openSqliteStore(join(base, 'd-on'));
+  const g = resolvedGroups(s1).find((x) => x.id === postingId(DIRECT));
+  assert.deepEqual(Object.keys(g.adm).sort(), ['B1', 'B2']);   // one posting, two admitting boards
+  s1.close();
+});
+
+test('resolver: a fingerprint that arrives late (refresh) feeds the aggregator sweep; the arrival decision itself is not re-taken', async () => {
+  const store = await openSqliteStore(tmp());
+  let late = false;
+  const facts = (rec) => {
+    const url = rec.posting?.url;
+    if (url === DIRECT) return { company: 'Acme GmbH', fp: late || rec.op !== 'refresh' ? undefined : undefined };
+    if (url === AGG) return { company: 'Acme (via Space-Careers)', fp: FP };
+    return {};
+  };
+  await read(store, 'Acme', at(0), [item(DIRECT)]);
+  await read(store, 'Space-Careers', at(1), [item(AGG, 'Senior Thermal Engineer')]);
+  await resolve(store, facts, 2);
+  assert.equal(statusOf(store, AGG), 'open');                      // the direct posting has no text yet: no match
+  late = true;
+  const facts2 = (rec) => (rec.posting?.url === DIRECT ? { company: 'Acme GmbH', fp: rec.op === 'refresh' ? FP : undefined } : facts(rec));
+  await read(store, 'Acme', at(3), [item(DIRECT)]);
+  await resolve(store, facts2, 4);
+  assert.equal(statusOf(store, AGG), 'dup');                       // the sweep matches it once the direct text is known
+  assert.equal(statusOf(store, DIRECT), 'open');
+  assert.equal(resolvedRecords(store).at(-1).reason, 'cross-listing sweep');
+  store.close();
+});

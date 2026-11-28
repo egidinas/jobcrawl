@@ -326,6 +326,29 @@ export function createResolver(state = null, config = {}) {
   }
 
   /**
+   * Facts that arrive late: a description read after the listing (a lazy detail fetch, an enrichment) gives a fingerprint or apply links
+   * the arrival lacked. For every member of an open or dup group that still lacks them, facts are asked again (op 'refresh'); a newly
+   * known fingerprint feeds later matches against this group and the aggregator sweep, as the legacy crawl's index reads the saved
+   * descriptions every cycle. The group's own arrival decision is not re-taken (the legacy rule).
+   */
+  function refresh(factsFn, t) {
+    if (typeof factsFn !== 'function') return 0;
+    let n = 0;
+    for (const g of Object.values(st.groups)) {
+      if (g.status !== 'open' && g.status !== 'dup') continue;
+      for (const m of membersOf(g)) {
+        if (m.fp && m.ak) continue;
+        const f = factsFn({ board: m.board, id: m.id, op: 'refresh', t, posting: { url: m.url, title: m.title } }) ?? {};
+        let changed = false;
+        if (!m.fp && f.fp) { m.fp = f.fp; changed = true; }
+        if (!m.ak && f.applyText) { const ak = applyUrls(f.applyText); if (ak.length) { m.ak = ak; changed = true; } }
+        if (changed) { n++; dirtyM.add(mk(m.board, m.id)); rows.delete(g.id); if (g.status === 'open' && indexValid) addToIndex(g); }
+      }
+    }
+    return n;
+  }
+
+  /**
    * End of a resolver run at `now`: hold expiry, takeovers whose original left, the cross-listing sweep of open aggregator groups, and the
    * 3-day sweep. Idempotent for one `now`.
    */
@@ -380,7 +403,7 @@ export function createResolver(state = null, config = {}) {
 
   return {
     state: st, stats, rules,
-    apply, boardOk, tick,
+    apply, boardOk, tick, refresh,
     /** Seeds a member from a stored posting record (bootstrap from an imported store: a baseline epoch, no resolved records). */
     seed(board, id, rec, f = {}, t = rec.last_seen) {
       const status = rec.status === 'departed' ? 'departed' : rec.status === 'unknown' ? 'unknown' : 'open';

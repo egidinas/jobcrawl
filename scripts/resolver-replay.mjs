@@ -108,7 +108,9 @@ const FP_MODE = opt('fp', 'arrival');
 // the JSON-LD readers (sitemap, jsonld_direct). Others (softgarden widgets, Workday lists, ...) get their text later (lazy or page read).
 const INLINE = new Set([...Object.entries(providers).filter(([, v]) => !v.fetchDescription && /description/i.test(String(v.fetch))).map(([k]) => k), 'sitemap', 'jsonld_direct']);
 const providerOfBoard = new Map(registry.map((c) => [c.name, c.provider ?? null]));
-const fpWhen = FP_MODE === 'cache' ? () => true : (row, board) => INLINE.has(providerOfBoard.get(board));
+// a description saved after the listing (lazy or page read) is known from the next cycle on: the refresh after the row's first day
+const fpWhen = FP_MODE === 'cache' ? () => true
+  : (row, board, t, op) => (op === 'refresh' ? String(t ?? '').slice(0, 10) > (row.first_seen || T0day) : INLINE.has(providerOfBoard.get(board)));
 const SHADOWED = { kept: false, hide: 'filtered' };   // crawl.mjs shadowVerdict: an aggregator's copy of a role the employer's ATS lists
 const EXTRA = { kept: false, hide: 'extra' };
 const keptFor = (row, board, t) => {
@@ -127,7 +129,7 @@ for (const [di, D] of days.entries()) {
     .sort((a, b) => Math.min(...a[2].map((l) => l.idx)) - Math.min(...b[2].map((l) => l.idx)));
   let k = 0;
   for (const [board, ls] of due) {
-    const items = ls.filter((l) => l.from <= D).sort((a, b) => a.idx - b.idx).map((l) => ({ url: l.url, title: l.title, location: l.location, postedAt: l.rel && D < l.rel ? '' : l.posted }));
+    const items = ls.filter((l) => l.from <= D).sort((a, b) => a.idx - b.idx).map((l) => ({ url: l.url, title: l.title, location: l.location, postedAt: l.rel && D < l.rel ? '1970-01-01' : l.posted }));   // the sentinel makes the release day a 'changed' record
     const when = new Date(Date.parse(`${D}T00:00:00Z`) + (k++) * 1000);
     const r = await runBoardOn(store, { name: board }, { read: { ok: true, items, complete: true, emptyOk: true }, now: () => when, rules: LEGACY_RULES });
     runs++; events += r.events?.length ?? 0;

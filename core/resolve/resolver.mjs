@@ -187,7 +187,7 @@ export async function runResolver(store, { facts = defaultFacts, config = {}, ba
         else if (rec.op !== 'board-failed') engine.apply(rec, rec.op === 'departed' || rec.op === 'unknown' ? {} : (facts(rec) ?? {}));
         if (rec.t && (!lastT || rec.t > lastT)) lastT = rec.t;
       }
-      if (lastT) engine.tick(lastT);
+      if (lastT) { engine.refresh(facts, lastT); engine.tick(lastT); }
       const last = recs.at(-1).event_id;
       const r = commit(engine, { expect: bookmark, bookmark: last, srcEventId: last, meta: { rules, last_event_t: lastT } });
       n++;
@@ -195,6 +195,7 @@ export async function runResolver(store, { facts = defaultFacts, config = {}, ba
       log(`[resolver] applied ${applied} records (to event_id ${last}), ${records} resolved records`);
     }
     if (tickAtEnd) {
+      engine.refresh(facts, now().toISOString());
       engine.tick(now().toISOString());
       const r = commit(engine, { expect: bookmark, bookmark, srcEventId: bookmark, meta: { rules, last_tick: now().toISOString() }, derived: derivedSets(engine) });
       n++;

@@ -53,8 +53,8 @@ export function jdBody(text) {
 /**
  * Facts from a legacy data folder. opts: { history (Map, else read from <dir>/scan-history.tsv), simhash (object, else
  * <dir>/simhash-cache.v2.json), jdDir (default <dir>/jd), isAggregator(row, board) (apply links are read for aggregator rows only, as
- * crawl.mjs loadApplyKeys), fpWhen(row, board) (whether the fingerprint was known when the board listed the row: the legacy crawl
- * matched a new row only on the description its list answer carried), keptFor(row, board, t) -> { kept, hide } | null (a board-specific
+ * crawl.mjs loadApplyKeys), fpWhen(row, board, t, op) (whether the fingerprint was known at that record: the legacy crawl matched a
+ * new row only on the description its list answer carried, and read the saved descriptions of older rows; op 'refresh' asks again later), keptFor(row, board, t) -> { kept, hide } | null (a board-specific
  * verdict, or one that changed over time) }. kept: the legacy row is not filtered or extra.
  */
 export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(dir, 'jd'), isAggregator = () => false, fpWhen = () => true, keptFor = null } = {}) {
@@ -66,14 +66,15 @@ export function legacyFacts(dir, { history = null, simhash = null, jdDir = join(
     const row = url ? hist.get(url) : null;
     if (!row) return { ...defaultFacts(rec), kept: true };
     let applyText;
-    if (isAggregator(row, rec.board)) {
+    const known = fpWhen(row, rec.board, rec.t, rec.op);   // the description (fingerprint and apply links) is known at this record
+    if (known && isAggregator(row, rec.board)) {
       const f = join(jdDir, jdFileName(url));
       if (existsSync(f)) { try { applyText = jdBody(readFileSync(f, 'utf8')); } catch { /* unreadable: no apply links */ } }
     }
     const hidden = row.status === 'filtered' || row.status === 'extra';
     const own = keptFor?.(row, rec.board, rec.t);            // a board-specific verdict (e.g. an aggregator's "shadowed by the employer ATS")
     const kept = own ? own.kept : !hidden;
-    return { company: row.company || undefined, fp: fpWhen(row, rec.board) ? (sim[url] || undefined) : undefined, applyText, kept, hide: kept ? undefined : (own?.hide ?? row.status) };
+    return { company: row.company || undefined, fp: known ? (sim[url] || undefined) : undefined, applyText, kept, hide: kept ? undefined : (own?.hide ?? row.status) };
   };
   facts.history = hist;
   facts.simhash = sim;
