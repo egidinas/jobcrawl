@@ -118,6 +118,7 @@ export function commitAuthority(auth, { log = console.log, now = () => new Date(
       const at = now().toISOString();
       if (b.state.last_ok === b.readAt) b.state.last_ok = at;
       for (const p of Object.values(b.state.postings)) { if (p.last_seen === b.readAt) p.last_seen = at; if (p.first_seen === b.readAt) p.first_seen = at; }
+      for (const e of b.events) if (e.op === 'board-ok') e.by = 'authority';   // the read was applied by the authority path (not the hook)
       commitRun(auth.root, board, b.state, b.events);
       s.committed++;
     } catch (e) { s.errors++; log(`[authority] ${board}: commit failed: ${e?.message ?? e}`); }

@@ -4,11 +4,11 @@
 // provider-wide `new` refused.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { applyRun } from '../delta/board-delta.mjs';
-import { commitRun, lease, openBoard } from '../state/board-store.mjs';
+import { boardKey, commitRun, lease, openBoard } from '../state/board-store.mjs';
 import { prepareAuthority, decide, reached, commitAuthority, authorityBoards } from '../route/authority.mjs';
 
 const U = (b, n) => `https://boards.greenhouse.io/${b}/jobs/${n}`;
@@ -110,4 +110,6 @@ test('F6: the read time is stamped at commit; F8: boards not reached are left to
   assert.equal(st.last_ok, t1.toISOString());
   const seen = Object.values(st.postings).filter((p) => p.status === 'open' && p.last_seen === st.last_ok).map((p) => p.url).sort();
   assert.deepEqual(seen, [U('A', 1), U('A', 2)], 'the postings of this read carry the commit time');
+  const ev = readFileSync(join(store, 'boards', boardKey('A'), 'events.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(ev.filter((e) => e.op === 'board-ok').at(-1).by, 'authority', 'the read is marked as applied by the authority path');
 });
