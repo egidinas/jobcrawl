@@ -1098,6 +1098,46 @@ export function parseRexxFeed(xml) {
   return out;
 }
 
+// ---- ApplicantPro (isolved Talent Acquisition) and WeRecruit helpers (exported for tests) ----
+/** The numeric domain id the jobs page hands to its listing component ("domainId : 15073"); '' when absent. */
+export function applicantProDomainId(html) {
+  return String(html).match(/\bdomainId\s*:\s*(\d{1,10})\b/)?.[1] ?? '';
+}
+/** Rows of the /core/jobs/<domainId> JSON answer: [{ id, title, url, location, postedAt, department }]. */
+export function parseApplicantProJobs(data, tenant) {
+  const rows = Array.isArray(data?.data?.jobs) ? data.data.jobs : [];
+  return rows.map((r) => {
+    const m = String(r.startDateRef ?? '').match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/);
+    const mon = m ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].indexOf(m[1]) + 1 : 0;
+    return {
+      id: String(r.id ?? ''),
+      title: strip(r.title ?? ''),
+      url: /^https:\/\/[a-z0-9-]+\.applicantpro\.com\/jobs\/\d+$/i.test(r.jobUrl ?? '') ? r.jobUrl : `https://${tenant}.applicantpro.com/jobs/${r.id}`,
+      location: strip(r.jobLocation || [r.city, r.abbreviation, r.iso3].filter(Boolean).join(', ')),
+      department: strip(r.orgTitle ?? ''),
+      postedAt: mon ? `${m[3]}-${String(mon).padStart(2, '0')}-${m[2].padStart(2, '0')}` : '',
+    };
+  }).filter((j) => j.id && j.title);
+}
+/** The tenant's offer cards on a WeRecruit page: [{ id, title, url, location }]; spontaneous applications are not postings. */
+export function parseWeRecruit(html, origin) {
+  const out = [], seen = new Set();
+  for (const m of String(html).matchAll(/<a\b[^>]*href="((?:https:\/\/careers\.werecruit\.io)?\/[a-z]{2}\/[\w-]+\/(?:offers|offres)\/([\w-]+-([0-9a-f]{6})))"[^>]*>([\s\S]*?)<\/a>/gi)) {
+    const slug = m[2];
+    if (/^(?:spontaneous-application|candidature-spontanee)/i.test(slug) || seen.has(m[3])) continue;
+    const title = strip(m[4].match(/<h3\b[^>]*>([\s\S]*?)<\/h3>/i)?.[1] ?? '');
+    if (!title) continue;
+    seen.add(m[3]);
+    out.push({ id: m[3], title, url: m[1].startsWith('/') ? `${origin}${m[1]}` : m[1], location: strip(m[4].match(/fa-map-marker-alt[\s\S]*?<p\b[^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? '') });
+  }
+  return out;
+}
+/** The short-id page of a tenant ("/en/<tenant>/eb51ac"), which lists every offer when the tenant home does not. */
+export function weRecruitListLink(html, tenant, origin) {
+  const m = String(html).match(new RegExp(`href="((?:https://careers\.werecruit\.io)?/[a-z]{2}/${tenant}/[0-9a-f]{6})"`, 'i'));
+  return m ? (m[1].startsWith('/') ? `${origin}${m[1]}` : m[1]) : '';
+}
+
 // ---- Taleo Business Edition helpers (exported for tests) ----
 /** { base, org, cws } of a TBE careers search URL (".../ats/careers/v2/searchResults?org=X&cws=N"); null otherwise. */
 export function taleoBeConfig(b) {
@@ -1224,6 +1264,40 @@ fhDefs.push(
       const fresh = jobs.filter((j) => !st.seen.has(j.id));
       for (const j of fresh) st.seen.add(j.id);
       return { jobs: fresh, more: fresh.length > 0 && /searchResults\?next&(?:amp;)?rowFrom=/.test(html) };
+    },
+  },
+  { // ApplicantPro (isolved Talent Acquisition, <tenant>.applicantpro.com). The jobs page is a Vue shell; its listing component asks
+    // /core/jobs/<domainId>?getParams=<json> (the domain id is in the page), which answers every vacancy in one JSON document.
+    // Board = the tenant subdomain. Descriptions come from the posting page's JobPosting JSON-LD through the detail fallback.
+    id: 'applicantpro',
+    hosts: [/\.applicantpro\.com/i],
+    boardId: (u) => okSlug(u.match(/^https?:\/\/([a-z0-9-]+)\.applicantpro\.com/i)?.[1]?.toLowerCase()),
+    async page(b) {
+      if (!labelOk(b)) throw new Error(`applicantpro: bad tenant "${b}"`);
+      const origin = `https://${b}.applicantpro.com`;
+      const domainId = applicantProDomainId(await text(`${origin}/jobs/`));
+      if (!domainId) throw new Error(`applicantpro: no domain id on ${origin}/jobs/`);
+      const data = await (await req(`${origin}/core/jobs/${domainId}?getParams=%7B%7D`, { headers: { accept: 'application/json' } })).json();
+      if (!data?.success) throw new Error(`applicantpro: ${b} answered ${JSON.stringify(data).slice(0, 120)}`);
+      return { jobs: parseApplicantProJobs(data, b), more: false };
+    },
+  },
+  { // WeRecruit (careers.werecruit.io/<lang>/<tenant>; France). Offer cards (h3 title, place) sit on the page behind the tenant's short-id
+    // link, so the home page is read first and the list page second. Board = the tenant. No dates, no JSON-LD on offers.
+    id: 'werecruit',
+    hosts: [/careers\.werecruit\.io/i],
+    boardId: (u) => okSlug(u.match(/^https?:\/\/careers\.werecruit\.io\/(?:[a-z]{2}\/)?([a-z0-9-]+)(?=[/?#]|$)/i)?.[1]?.toLowerCase()),
+    delayMs: 1500,
+    async page(b) {
+      if (!labelOk(b)) throw new Error(`werecruit: bad tenant "${b}"`);
+      const origin = 'https://careers.werecruit.io';
+      const home = await text(`${origin}/en/${b}`);
+      let jobs = parseWeRecruit(home, origin);
+      if (!jobs.length) {
+        const link = weRecruitListLink(home, b, origin);
+        if (link) { await new Promise((r) => setTimeout(r, 1500)); jobs = parseWeRecruit(await text(link), origin); }
+      }
+      return { jobs, more: false };
     },
   },
   { // Varbi (Sweden): <tenant>.varbi.com/en/ lists vacancies as table rows (what:job/jobID:N); the date shown is the application deadline, so no postedAt.

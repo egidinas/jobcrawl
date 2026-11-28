@@ -67,6 +67,17 @@ The commit log has the details of each change.
 - `bench/record.mjs`: the benchmark recording run (responses with ETag/Last-Modified, one conditional probe per board, parsed lists for
   replay); `core/tests/`.
 
+## 2026-11-28: ApplicantPro, WeRecruit, hrlab repaired
+
+- **`applicantpro`** (isolved Talent Acquisition, `<tenant>.applicantpro.com`): board = the tenant; the jobs page gives the domain id, and
+  `/core/jobs/<domainId>?getParams={}` answers every vacancy as JSON (place, department, posting date). Descriptions come from the posting
+  page JSON-LD through the detail fallback. Live: X-Bow Systems 55 jobs in 2 requests.
+- **`werecruit`** (`careers.werecruit.io/<lang>/<tenant>`, France): offer cards (title, place) on the page behind the tenant short-id link;
+  spontaneous applications dropped; no dates. Live: Unseenlabs 4 offers.
+- **`hrlab`**: rewritten for the current card layout. The old reader split the card text on " - " (cutting titles) and defaulted every
+  place to Garching. Now: title from the h3; place, date ("Online since") and text from the posting page (60 postings a cycle at most). The
+  JSON-LD is not read (invalid JSON, different title). Live: HOLM 3 postings in Frankfurt, Swagelok B.E.S.T. 3 in Garching.
+
 ## 2026-11-27: Taleo Business Edition, Jobylon, places for SuccessFactors classic
 
 - **`taleobe`** (Oracle Taleo Business Edition, `*.tbe.taleo.net`): slug = the careers search URL with `org` and `cws`; pages of 10 in the

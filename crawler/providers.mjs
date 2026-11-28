@@ -466,6 +466,33 @@ export function spaceCareersLocationLinks(html = '') {
   return [...new Set([...block.matchAll(/href="(\/jobs\/[^"]+)"/g)].map((m) => m[1]))];
 }
 
+const HRLAB_DETAIL_CAP = 60;
+/** Cards of an hrlab list page: [{ id, title, url, note }] (note = the free-text line under the title). */
+export function parseHrlabList(html, slug) {
+  const out = [], seen = new Set();
+  for (const m of String(html).matchAll(/<a\b[^>]*href="(\/(?:[a-z]{2}\/)?jobs\/([\w-]+)\/(\d+))"[^>]*>\s*<h3>([\s\S]*?)<\/h3>([\s\S]*?)<\/a>/gi)) {
+    if (m[2] !== slug || seen.has(m[3])) continue;
+    seen.add(m[3]);
+    const title = plain(m[4]).replace(/\s+/g, ' ').trim();
+    if (!title) continue;
+    out.push({ id: m[3], title, url: `https://app.hrlab.de/en/jobs/${slug}/${m[3]}`, location: '', postedAt: '', note: plain(m[5]).replace(/\s+/g, ' ').trim() });
+  }
+  return out;
+}
+/** Place, date and text of an hrlab posting page. */
+export function parseHrlabJob(html) {
+  const h = String(html);
+  const about = (label) => plain(h.match(new RegExp('<b>\\s*(?:' + label + ')\\s*</b>\\s*<span[^>]*>([\\s\\S]*?)</span>', 'i'))?.[1] ?? '').replace(/\s+/g, ' ').trim();
+  const d = h.match(/Online since\s+(\d{2})\/(\d{2})\/(\d{4})/i) ?? h.match(/Online seit\s+(\d{2})\.(\d{2})\.(\d{4})/i);
+  const art = h.match(/<article\b[^>]*>([\s\S]*?)<\/article>/i)?.[1] ?? '';
+  const body = art.replace(/<h1[\s\S]*?<\/h1>/i, '').replace(/Online (?:since|seit)\s+[\d./]+/i, '').replace(/<div class=.\[ inline-details[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/i, '').replace(/<a\b[^>]*\/apply[\s\S]*?<\/a>/gi, '');
+  return {
+    location: about('Location|Standort|Ort'),
+    postedAt: d ? `${d[3]}-${d[2]}-${d[1]}` : '',
+    description: plain(body).replace(/[ \t]+\n/g, '\n').trim(),
+  };
+}
+
 export const providers = {
   greenhouse: {
     detect: (u) => u.match(/(?:boards|job-boards)(?:\.eu)?\.greenhouse\.io\/(?:embed\/job_board\?for=)?([\w-]+)/)?.[1],
@@ -2756,45 +2783,32 @@ export const providers = {
     },
   },
 
+  // hrlab (HRlab GmbH, app.hrlab.de/<lang>/jobs/<tenant>). The list page carries one card per vacancy: <h3> title, <span> a free-text line
+  // (some tenants write "Full-time - City - Hybrid", others a sentence), link /<lang>/jobs/<tenant>/<id>. Place, date and text come from the
+  // posting page (about-list "Location", "Online since dd/mm/yyyy", the <article>); its JSON-LD is invalid JSON (raw line breaks) and names
+  // the position differently from the page, so it is not read. No place on the card: never a default place.
   hrlab: {
     detect: (u) => {
       const m = u.match(/app\.hrlab\.de\/(?:[a-z]{2}\/)?jobs\/([\w-]+)/);
       return m ? m[1] : null;
     },
-    async fetch(slug) {
-      const base = `https://app.hrlab.de/en/jobs/${slug}`;
-      const html = await get(base, { json: false });
-      const cardRegex = /<a[^>]*href="([^"]*\/jobs\/[^/]+\/(\d+))"[^>]*>([\s\S]*?)<\/a>/gi;
-      let m;
-      const jobs = [];
-      const seen = new Set();
-      while ((m = cardRegex.exec(html)) !== null) {
-        const id = m[2];
-        if (seen.has(id)) continue;
-        const text = plain(m[3]).replace(/\s+/g, ' ').trim();
-        if (!text || /Go to Vacancy|View/i.test(text)) continue;
-        seen.add(id);
-        const url = `https://app.hrlab.de${m[1]}`;
-        const parts = text.split(/\s*-\s*/);
-        const titleAndType = parts[0] || text;
-        const loc = parts[1] || 'Garching bei München, Germany';
-        jobs.push({
-          title: titleAndType.replace(/\s+(?:Full time|Part time|Vollzeit|Teilzeit)$/i, '').trim(),
-          url,
-          location: loc,
-          postedAt: '',
-        });
+    async fetch(slug, entry = {}) {
+      const budget = pageBudget(entry);
+      const html = await get(`https://app.hrlab.de/en/jobs/${slug}`, { json: false });
+      const jobs = parseHrlabList(html, slug);
+      let n = 0;
+      for (const j of jobs) {
+        if (budget.spent() || n >= HRLAB_DETAIL_CAP) { markIncomplete(jobs, jobs.length - n, 'hrlab'); break; }
+        if (n++) await sleep(300);
+        try {
+          Object.assign(j, parseHrlabJob(await get(j.url, { json: false, timeoutMs: budget.pageTimeout(15000) })));
+        } catch { /* the card alone is a usable row */ }
       }
       return jobs;
     },
     async fetchDescription(job) {
-      try {
-        const html = await get(job.url, { json: false });
-        const body = html.match(/<main[\s\S]*?<\/main>|<article[\s\S]*?<\/article>/i)?.[0] ?? html;
-        return plain(body);
-      } catch {
-        return '';
-      }
+      if (job.description) return job.description;
+      try { return parseHrlabJob(await get(job.url, { json: false })).description ?? ''; } catch { return ''; }
     },
   },
 
