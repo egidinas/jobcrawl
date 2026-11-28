@@ -99,9 +99,6 @@ setCacheDir(CACHE);
 configurePolicy({ ...policyFromProfile(profile, OUT) });
 installGuard();
 const als = new AsyncLocalStorage();
-const guarded0 = globalThis.fetch;
-const guarded = makePacedFetch(guarded0, { gapMs: GLOBAL_GAP, retries: CONNECT_RETRIES, backoffMs: [3000, 10000],
-  onError: (url, code, attempt) => { T.causes[code] = (T.causes[code] ?? 0) + 1; noteAttempt(true); if (attempt > 0) T.retries++; } });
 const T = { req: 0, wire: 0, bytes: 0, objects: 0, capErr: 0, netErr: 0, probes: 0, p304: 0, p200same: 0, p200diff: 0, pOther: 0, liveWaits: 0, liveOverlap: 0, liveErr: 0, retries: 0, degradedPauses: 0 };
 // Global pacing and connect retries (core/fetch/pace.mjs): at most one request START per --global-gap-ms across all boards (bursts of
 // simultaneous new connections are dropped on the NUC uplink), connect-level failures retried --connect-retries times (3 s, 10 s).
@@ -112,6 +109,9 @@ T.causes = {};
 const recent = [];
 const noteAttempt = (bad) => { recent.push(bad ? 1 : 0); if (recent.length > 40) recent.shift(); };
 const degraded = () => recent.length >= 20 && recent.reduce((a, b) => a + b, 0) >= recent.length / 2;
+const guarded0 = globalThis.fetch;
+const guarded = makePacedFetch(guarded0, { gapMs: GLOBAL_GAP, retries: CONNECT_RETRIES, backoffMs: [3000, 10000],
+  onError: (url, code, attempt) => { T.causes[code] = (T.causes[code] ?? 0) + 1; noteAttempt(true); if (attempt > 0) T.retries++; } });
 
 // Hosts the live cycle is fetching right now: the live raw-capture index (--live-index <dir>, e.g. ~/atlas/raw/index) is tailed every
 // 5 s; a host the live crawl requested within --live-gap-ms waits until that gap has passed (at most --live-max-wait-ms, then it goes
