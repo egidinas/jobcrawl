@@ -32,13 +32,17 @@ commands (phase 0):
                                              baseline epoch from the legacy history, without events (read-only on the legacy side)
   snapshot --data <dir> [--status open|departed|all]   full read as NDJSON (header with per-board watermarks, then postings)
   feed --data <dir> [--since <board=seq,...> | --since-json '{"board": seq}']   committed delta events as NDJSON
+  run [--profile <dir>] [--data <dir>] [--routing <file>] [--board <name>] [--replay <recording>] [--max-minutes <n>] [--every-min <n>]
+      [--daemon [--interval-min <n>]] [--metrics [host]:port] [--log-format json|text] [--log-file <file>] [--strict] [--stale-hours <n>] [--json]
+                                             headless run of every routed board on the new path; resumable, SIGTERM-safe, never prompts
+                                             (profile and data may come from JOBCRAWL_PROFILE and JOBCRAWL_DATA); see docs/HEADLESS.md
   doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json] [--strict]
                                              read-only checks: Node, node:sqlite, profile, user agent, data folder, routing;
                                              --strict exits 5 when a check warns
 
   --help, -h, help                           this text (no network, no writes)
-exit codes: 0 ok, 1 some boards failed, 2 usage or config error (or a live read the routing does not allow), 3 lease held,
-            5 doctor --strict found a warning
+exit codes: 0 ok, 1 some boards failed, 2 usage or config error (or a live read the routing does not allow), 3 lease or run lock held,
+            4 state store error, 5 --strict found a warning (doctor, run), 130/143 interrupted by SIGINT/SIGTERM with the state consistent
 environment: JOBCRAWL_ROUTE_KILL=1|true|yes|on sends every board to legacy (no live read by this tool); JOBCRAWL_ROUTING=<file>`;
 
 const out = (obj, text) => { if (JSON_OUT) process.stdout.write(JSON.stringify(obj) + '\n'); else console.log(text ?? JSON.stringify(obj, null, 1)); };
@@ -302,6 +306,97 @@ switch (cmd) {
     const { readEvents } = await import('../core/state/board-store.mjs');
     for (const e of readEvents(data, since)) process.stdout.write(JSON.stringify(e) + '\n');
     break;
+  }
+  case 'run': {
+    // Headless multi-board run on the new path (design §3.9, docs/HEADLESS.md). Never prompts; logs are JSON lines on stderr or a file;
+    // stdout carries only the --json result. A live read follows the same rules as `crawl` (routing, kill switch, egress guard).
+    const env = process.env;
+    const profileDir = opt('profile') ?? env.JOBCRAWL_PROFILE, dataArg = opt('data') ?? env.JOBCRAWL_DATA;
+    if (!profileDir) fail('--profile <dir> (or JOBCRAWL_PROFILE) is required');
+    if (!dataArg) fail('--data <dir> (or JOBCRAWL_DATA) is required');
+    const data = guardDataDir(dataArg);
+    const { createLogger, defaultFormat } = await import('../core/headless/log.mjs');
+    const { createMetrics, serveMetrics, parseListen } = await import('../core/headless/metrics.mjs');
+    const { runCycle, acquireLock } = await import('../core/headless/runner.mjs');
+    const { EXIT, exitForSignal } = await import('../core/headless/exit.mjs');
+    const num = (n, d) => { const v = opt(n, d); const x = Number(v); if (v != null && !(x >= 0)) fail(`--${n} expects a number >= 0 (got "${v}")`); return v == null ? null : x; };
+    const maxMin = num('max-minutes'), everyMin = num('every-min'), intervalMin = num('interval-min', 60), staleH = num('stale-hours', 48), delayMs = num('replay-delay-ms');
+    const logDir = env.JOBCRAWL_LOG_DIR;
+    const logFile = opt('log-file') ?? (logDir ? join(pathResolve(logDir), 'jobcrawl.jsonl') : null);
+    let log;
+    try { log = createLogger({ format: opt('log-format') ?? env.JOBCRAWL_LOG_FORMAT ?? (logFile ? 'json' : defaultFormat()), file: logFile ? pathResolve(logFile) : null }); } catch (e) { fail(e.message); }
+    let listen = null;
+    if (opt('metrics')) { try { listen = parseListen(opt('metrics')); } catch (e) { fail(e.message); } }
+    PROFILE_MOD = await import('../crawler/profile.mjs');
+    let profile, companies;
+    try { ({ profile, companies } = companiesOf(profileDir)); } catch (e) { fail(`profile: ${e.message}`); }
+    const { loadRouting, routeFor } = await import('../core/route/router.mjs');
+    const { resolve: resolveEntry } = await import('../crawler/providers.mjs');
+    let routing;
+    try { routing = loadRouting(opt('routing') ?? env.JOBCRAWL_ROUTING); } catch (e) { fail(e.message); }
+    const providerOf = (e) => resolveEntry(e)?.provider ?? null;
+    let boards = companies.filter((e) => routeFor(routing, { board: e.name, provider: providerOf(e) }).route !== 'legacy');
+    if (opt('board')) boards = boards.filter((e) => e.name === opt('board'));
+    let readFor = () => undefined;
+    if (opt('replay')) {
+      const { boardKey } = await import('../core/state/board-store.mjs');
+      const rec = pathResolve(opt('replay'));
+      readFor = (e) => loadRecordedRun(rec, e.name, boardKey) ?? { ok: false, items: [], error: { cls: 'CONFIG', detail: 'not in the recording' } };
+    } else if (boards.length) {
+      (await import('../crawler/useragent.mjs')).setUserAgent(profile.userAgent);
+      const pol = await import('../crawler/policy.mjs');
+      pol.configurePolicy({ ...pol.policyFromProfile(profile, data) });
+      pol.installGuard({ egress: true });
+      (await import('../crawler/providers.mjs')).setCacheDir(join(data, 'cache'));
+    }
+    const metrics = createMetrics();
+    const ac = new AbortController();
+    let signalled = 0;
+    for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
+      if (++signalled > 1) { log.warn('forced-exit', { signal: sig }); process.exit(exitForSignal(sig)); }   // second signal: no more waiting
+      log.warn('signal', { signal: sig, note: 'finishing: the board in flight is discarded, state stays consistent' });
+      metrics.set('stopping', true);
+      ac.abort(sig);
+    });
+    let server = null;
+    if (listen) {
+      try { server = await serveMetrics(metrics, listen); } catch (e) { fail(`--metrics ${opt('metrics')}: ${e.message}`); }
+      log.info('metrics-listening', { host: server.host, port: server.port });
+    }
+    const sleepAbortable = (ms) => new Promise((ok) => { const t = setTimeout(ok, ms); ac.signal.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); });
+    const common = { readFor, signal: ac.signal, maxMs: maxMin ? maxMin * 60e3 : null, strict: flag('strict'), staleMs: staleH * 3600e3, providerOf, log, metrics };
+    if (delayMs) {   // test seam (with --replay): a slow board, so a signal can arrive mid-run
+      const { runBoard } = await import('../core/run-board.mjs');
+      common.runBoardImpl = async (d, e, o) => { await sleepAbortable(delayMs); return o.signal?.aborted ? { board: e.name, aborted: true } : runBoard(d, e, o); };
+    }
+    log.info('start', { pid: process.pid, node: process.versions.node, boards: boards.length, data, daemon: flag('daemon'), mode: opt('replay') ? 'replay' : 'live' });
+    let code = EXIT.OK, summary = null;
+    try {
+      if (flag('daemon')) {
+        const lk = acquireLock(data);
+        if (!lk) { log.error('lock-held', { data }); code = EXIT.LOCKED; }
+        else {
+          try {
+            while (!ac.signal.aborted) {
+              const r = await runCycle(data, boards, { ...common, lock: false });
+              summary = r.summary; log.info('daemon-cycle', { code: r.code });
+              if (r.code === EXIT.STATE || r.code === EXIT.SIGINT || r.code === EXIT.SIGTERM) { code = r.code; break; }
+              code = r.code; lk.renew();
+              metrics.set('nextDueAt', Date.now() + intervalMin * 60e3);
+              await sleepAbortable(intervalMin * 60e3);
+            }
+            if (ac.signal.aborted && code !== EXIT.STATE) code = exitForSignal(ac.signal.reason);
+          } finally { lk.release(); }
+        }
+      } else {
+        const r = await runCycle(data, boards, { ...common, everyMs: everyMin ? everyMin * 60e3 : 0 });
+        code = r.code; summary = r.summary;
+      }
+    } catch (e) { log.error('fatal', { error: String(e?.stack ?? e) }); code = EXIT.STATE; }
+    await server?.close();
+    log.info('exit', { code });
+    if (JSON_OUT) process.stdout.write(JSON.stringify({ code, ...(summary ?? {}) }) + '\n');
+    process.exit(code);
   }
   case 'doctor': {
     const checks = [];

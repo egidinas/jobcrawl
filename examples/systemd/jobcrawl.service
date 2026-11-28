@@ -1,0 +1,30 @@
+# systemd user unit: the long-running daemon. Install: cp to ~/.config/systemd/user/, edit the three paths, then
+#   systemctl --user daemon-reload && systemctl --user enable --now jobcrawl.service
+# SIGTERM is graceful: the board in flight is discarded, the state stays consistent, the process exits 143 (listed as a clean stop below).
+[Unit]
+Description=jobcrawl headless daemon (new per-board path)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=JOBCRAWL_PROFILE=%h/jobcrawl/profile
+Environment=JOBCRAWL_DATA=%h/jobcrawl/data
+Environment=JOBCRAWL_ROUTING=%h/jobcrawl/routing.json
+Environment=JOBCRAWL_LOG_DIR=%h/jobcrawl/logs
+ExecStart=/usr/bin/env node %h/jobcrawl/cli/jobcrawl.mjs run --daemon --interval-min 60 --metrics 127.0.0.1:9464 --log-format json
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=2 3
+SuccessExitStatus=143 130
+KillSignal=SIGTERM
+TimeoutStopSec=60
+MemoryMax=512M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/jobcrawl
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

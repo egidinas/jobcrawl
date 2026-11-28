@@ -1,0 +1,13 @@
+# Runs jobcrawl-due.service every 10 minutes: each start continues an open cycle, or starts a new one once the last is 55 minutes old.
+#   systemctl --user enable --now jobcrawl-due.timer
+[Unit]
+Description=jobcrawl cycle timer
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+RandomizedDelaySec=30
+Unit=jobcrawl-due.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,18 @@
+# systemd user unit: one bounded cycle, for hosts without a daemon. Started by jobcrawl-due.timer; do not enable it directly.
+# A cut-off cycle (--max-minutes) stays open and the next start continues it; exit 1 (some boards failed) is a report, not a unit failure.
+[Unit]
+Description=jobcrawl one cycle (resumable)
+
+[Service]
+Type=oneshot
+Environment=JOBCRAWL_PROFILE=%h/jobcrawl/profile
+Environment=JOBCRAWL_DATA=%h/jobcrawl/data
+Environment=JOBCRAWL_ROUTING=%h/jobcrawl/routing.json
+Environment=JOBCRAWL_LOG_DIR=%h/jobcrawl/logs
+ExecStart=/usr/bin/env node %h/jobcrawl/cli/jobcrawl.mjs run --max-minutes 10 --every-min 55 --log-format json
+SuccessExitStatus=1 143 130
+KillSignal=SIGTERM
+TimeoutStartSec=15min
+TimeoutStopSec=60
+MemoryMax=512M
+NoNewPrivileges=true

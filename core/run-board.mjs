@@ -9,7 +9,7 @@ import { applyRun, DEFAULT_RULES } from './delta/board-delta.mjs';
 import { commitRun, lease, openBoard } from './state/board-store.mjs';
 
 /** Reads one board. Returns a run: { ok, items, complete, emptyOk, incomplete, error, ms, provider, slug }. Never throws. */
-export async function readBoard(entry, { providers = defaultProviders, resolve = defaultResolve, timeoutMs } = {}) {
+export async function readBoard(entry, { providers = defaultProviders, resolve = defaultResolve, timeoutMs, signal } = {}) {
   const t0 = Date.now();
   const r = resolve(entry);
   if (!r || !providers[r.provider]) return { ok: false, items: [], error: { cls: 'CONFIG', detail: 'no supported source for this entry' }, ms: 0 };
@@ -17,6 +17,8 @@ export async function readBoard(entry, { providers = defaultProviders, resolve =
   // readBoard never swaps the process-wide fetch: the entry point (CLI, MCP) installs the engine fetch (core/fetch/guard.mjs). The board's
   // time budget aborts the requests in flight through the ambient signal and ctx.signal.
   const ac = new AbortController();
+  const onOuter = () => ac.abort(signal.reason);   // an outer abort (SIGTERM of a headless run) aborts the requests in flight
+  if (signal) { if (signal.aborted) ac.abort(signal.reason); else signal.addEventListener('abort', onOuter, { once: true }); }
   let timer;
   try {
     const jobs = await Promise.race([
@@ -29,19 +31,20 @@ export async function readBoard(entry, { providers = defaultProviders, resolve =
   } catch (e) {
     const tri = classifyError(e);
     return { ok: false, items: [], error: { cls: tri.cls, detail: tri.detail ?? String(e?.message ?? e) }, ms: Date.now() - t0, provider: r.provider, slug: r.slug };
-  } finally { clearTimeout(timer); ac.abort(); }
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', onOuter); ac.abort(); }
 }
 
 /**
  * Runs one board on the new path into the store at root. `read` may be supplied (replay, tests); otherwise the board is fetched.
  * Returns { board, skipped?, run, events, seqFrom, seqTo, state }.
  */
-export async function runBoard(root, entry, { read, rules = DEFAULT_RULES, now = () => new Date(), leaseMs = 15 * 60e3, ...readOpts } = {}) {
+export async function runBoard(root, entry, { read, rules = DEFAULT_RULES, now = () => new Date(), leaseMs = 15 * 60e3, signal, ...readOpts } = {}) {
   const board = entry.name;
   const release = await lease(root, board, leaseMs);
   if (!release) return { board, skipped: 'lease held by another run' };
   try {
-    const run = read ?? (await readBoard(entry, readOpts));
+    const run = read ?? (await readBoard(entry, { ...readOpts, signal }));
+    if (signal?.aborted) return { board, aborted: true };   // interrupted mid-read: nothing is applied, the store stays as it was
     const prev = openBoard(root, board);
     const { state, events } = applyRun(prev, run, { board, now: now(), rules, maxJobs: Number(entry.max_jobs) || null });
     const { seqFrom, seqTo } = commitRun(root, board, state, events);
