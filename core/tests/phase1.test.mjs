@@ -97,7 +97,7 @@ test('crawl.mjs: with the shadow armed every legacy output file is identical, an
       assert.equal(r.status, 0, r.err);
       runs[name] = { dir: d, out: r.out, files: folderDump(d) };
     }
-    assert.match(runs.shadowed.out, /\[shadow\] boards shadowed 1, .* in \d+ ms ->/);
+    assert.match(runs.shadowed.out, /\[shadow\] boards shadowed 1, .* in \d+ ms, heap: /);
     const n = (run) => Object.fromEntries(Object.entries(run.files).map(([k, v]) => [k, norm(v, run.dir)]));
     assert.deepEqual(n(runs.plain2), n(runs.plain1), 'the normaliser makes two plain runs equal');
     assert.deepEqual(Object.keys(runs.shadowed.files).sort(), Object.keys(runs.plain1.files).sort(), 'same files: nothing added to the data folder');

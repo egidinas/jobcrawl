@@ -159,7 +159,7 @@ test('shadow hook: routes failed boards by res.provider; per-cycle budget skips 
   // a failed board whose entry has no provider: the result's provider routes it
   let s = await runShadow({ dataDir: data, companies: [{ name: 'F' }], results: [{ error: 'HTTP 500', provider: 'greenhouse', triage: { cls: 'HTTP_5XX' } }], env, log: (m) => logs.push(m) });
   assert.equal(s.shadowed, 1, 'routed by res.provider');
-  assert.match(logs.at(-1), / in \d+ ms ->/);
+  assert.match(logs.at(-1), / in \d+ ms, heap: capture/);
   // budget: a clock that jumps 10 s per call -> only the first board fits a 15 s budget
   let t = 0;
   const companies = ['A', 'B', 'C'].map((name) => ({ name, provider: 'greenhouse' }));

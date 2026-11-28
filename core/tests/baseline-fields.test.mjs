@@ -76,7 +76,7 @@ test('shadow hook uses the crawl history for the legacy rule; import + first cyc
   await importBaseline({ historyFile: hist, root: store, boards: ['Acme'] });
   const rf = join(dir, 'routing.json');
   writeFileSync(rf, JSON.stringify({ schema: 'routing/v1', providers: { greenhouse: 'shadow' } }));
-  const history = new Map(rows.map((r) => [r.url, { status: r.status }]));
+  const history = new Map(rows.map((r) => [r.url, { url: r.url, company: r.company, status: r.status }]));   // the crawl's row shape
   const s = await runShadow({ dataDir: dir, companies: [{ name: 'Acme', provider: 'greenhouse' }], results: [{ r: { provider: 'greenhouse' }, jobs: [live(1)] }],
     history, env: { JOBCRAWL_SHADOW: '1', JOBCRAWL_ROUTING: rf, JOBCRAWL_SHADOW_DATA: store }, log: () => {} });
   assert.equal(s.shadowed, 1);

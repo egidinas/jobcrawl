@@ -17,7 +17,8 @@
 import { existsSync } from 'node:fs';
 import { resolve as pathResolve } from 'node:path';
 import { loadRouting, routeFor } from './router.mjs';
-import { applyRun, LEGACY_RULES } from '../delta/board-delta.mjs';
+import v8 from 'node:v8';
+import { applyRun, LEGACY_RULES, normaliseItem } from '../delta/board-delta.mjs';
 import { commitRun, lease, openBoard } from '../state/board-store.mjs';
 import { checkPlacement, defaultDir } from '../paths.mjs';
 
@@ -36,34 +37,90 @@ export function shadowRoot(dataDir, env = process.env) {
   return checkPlacement(env.JOBCRAWL_SHADOW_DATA ? pathResolve(env.JOBCRAWL_SHADOW_DATA) : defaultDir('shadow', dataDir, env), dataDir, 'shadow store');
 }
 
+// ---- memory: capture a compact copy, never pin the crawl's big objects (incident 2026-11-28 00:41 and 01:05) ----
+// The crawl holds every board's answer (descriptions included) and the whole history (~450k rows) during scan(). Holding references to
+// them for the hook kept them alive past their last use, right when saveHistory() builds the ~170 MB history text, and the crawl ran
+// out of its ~2.1 GB heap (V8 sizes it from the made-cycle unit's MemoryHigh). So the crawl now calls captureShadowInput() once, and
+// the hook keeps only what it needs for the routed boards: their items reduced to url/title/location/postedAt/description hash, and the
+// legacy status of their own history rows. A headroom check skips the shadow (with a log line) when the heap is already short.
+const MB = 1048576;
+export function heapHeadroomMb() {
+  const { heap_size_limit } = v8.getHeapStatistics();
+  return Math.round((heap_size_limit - process.memoryUsage().heapUsed) / MB);
+}
+
 /**
- * Applies the cycle's answers of the routed boards to the shadow store. companies[i] <-> results[i] (crawl.mjs pool order).
- * Returns a summary { armed, shadowed, legacy, skipped, slow, over_budget, failed, ops, ms } (never throws).
+ * The hook's input, copied out of the crawl's objects: { boards: [{ entry, run }], statusByUrl, legacy, killed, has_history, heap }, or
+ * null (not armed, no routing file, low heap, error). companies[i] <-> results[i] (crawl.mjs pool order); history: the crawl's
+ * Map(url -> row) after this cycle's verdicts. Never throws; holds no reference to its inputs.
  */
-export async function runShadow({ dataDir, companies, results, history = null, env = process.env, now = () => new Date(), log = console.log, clock = Date.now }) {
+export function captureShadowInput({ companies, results, history = null, env = process.env, log = console.log }) {
+  try {
+    if (!armed(env)) return null;
+    if (!existsSync(env.JOBCRAWL_ROUTING)) {
+      if (!warnedMissing) { warnedMissing = true; log(`[shadow] routing file ${env.JOBCRAWL_ROUTING} not found: nothing shadowed (warned once)`); }
+      return null;
+    }
+    const minHeadroom = Number(env.JOBCRAWL_SHADOW_MIN_HEADROOM_MB) || 256;
+    const h0 = process.memoryUsage().heapUsed;
+    if (heapHeadroomMb() < minHeadroom) { log(`[shadow] skipped this cycle: heap headroom ${heapHeadroomMb()} MB < ${minHeadroom} MB before capture`); return null; }
+    const routing = loadRouting(env.JOBCRAWL_ROUTING);
+    const boards = [];
+    let legacyN = 0, killed = false;
+    for (let i = 0; i < companies.length; i++) {
+      const entry = companies[i], res = results[i];
+      const provider = res?.r?.provider ?? res?.provider ?? entry?.provider ?? null;
+      const { route, why } = routeFor(routing, { board: entry?.name, provider }, env);
+      if (route === 'legacy') { legacyN++; if (why === 'kill switch') killed = true; continue; }
+      const run = runOfLegacyResult(res);
+      const compact = run && run.ok
+        ? { ok: true, complete: run.complete, emptyOk: run.emptyOk,
+          items: run.items.map((j) => { const n = normaliseItem(j); return { url: n.url, title: n.title, location: n.location, postedAt: n.posted, dh: n.dh }; }) }
+        : run;
+      boards.push({ entry: { name: String(entry.name), provider, max_jobs: entry.max_jobs ?? null }, run: compact });
+    }
+    // legacy status of the routed boards' own history rows (company = the board, or "... (via <board>)"), and of their listed urls
+    const names = new Set(boards.map((b) => b.entry.name));
+    const statusByUrl = new Map();
+    if (history && typeof history.values === 'function' && names.size) {
+      for (const row of history.values()) {
+        const c = row?.company ?? '';
+        let hit = names.has(c);
+        if (!hit) { const m = /\(via ([^)]+)\)\s*$/.exec(c); hit = Boolean(m && names.has(m[1])); }
+        if (hit) statusByUrl.set(row.url, row.status);
+      }
+      for (const b of boards) for (const it of b.run?.items ?? []) if (!statusByUrl.has(it.url)) { const r = history.get(it.url); if (r) statusByUrl.set(it.url, r.status); }
+    }
+    const heap = { captured_mb: +((process.memoryUsage().heapUsed - h0) / MB).toFixed(1), headroom_mb: heapHeadroomMb() };
+    return { boards, statusByUrl, legacy: legacyN, killed, has_history: Boolean(history), heap };
+  } catch (e) { log(`[shadow] capture failed, nothing shadowed: ${e?.message ?? e}`); return null; }
+}
+
+/**
+ * Applies a captured input (captureShadowInput) to the shadow store. Callers and tests that still pass companies/results/history get
+ * the capture made here. Returns a summary { armed, shadowed, legacy, skipped, slow, over_budget, low_memory, failed, ops, ms, heap }
+ * (never throws).
+ */
+export async function runShadow({ dataDir, input = undefined, companies, results, history = null, env = process.env, now = () => new Date(), log = console.log, clock = Date.now }) {
   const t0 = clock();
-  const sum = { armed: armed(env), shadowed: 0, legacy: 0, skipped: 0, slow: 0, over_budget: 0, failed: 0, ops: {}, ms: 0 };
+  const sum = { armed: armed(env), shadowed: 0, legacy: 0, skipped: 0, slow: 0, over_budget: 0, low_memory: 0, failed: 0, ops: {}, ms: 0 };
   if (!sum.armed) return sum;
-  if (!existsSync(env.JOBCRAWL_ROUTING)) {
-    if (!warnedMissing) { warnedMissing = true; log(`[shadow] routing file ${env.JOBCRAWL_ROUTING} not found: nothing shadowed (warned once)`); }
-    sum.missing_routing = true;
-    return sum;
-  }
-  let routing, root;
-  try { routing = loadRouting(env.JOBCRAWL_ROUTING); } catch (e) { log(`[shadow] routing unreadable, nothing shadowed: ${e.message}`); sum.failed++; return sum; }
+  if (input === undefined) input = captureShadowInput({ companies, results, history, env, log });
+  if (!input) { if (!existsSync(env.JOBCRAWL_ROUTING)) sum.missing_routing = true; return sum; }
+  sum.legacy = input.legacy; sum.killed = input.killed;
+  let root;
   try { root = shadowRoot(dataDir, env); } catch (e) { log(`[shadow] ${e.message}; nothing shadowed`); sum.failed++; return sum; }
   const boardMs = Number(env.JOBCRAWL_SHADOW_BOARD_MS) || 2000, budgetMs = Number(env.JOBCRAWL_SHADOW_BUDGET_MS) || 60000;
-  // Departures follow the legacy crawl's own rule per row (its status after this cycle, read from the crawl's history): open rows close on
-  // the first complete miss, extra/dup rows in the 3-day sweep, filtered rows never by a miss. Without the history: first complete miss.
-  const rules = history && typeof history.get === 'function' ? { mode: 'legacy', statusOf: (url) => history.get(url)?.status, sweepDays: 3 } : LEGACY_RULES;
-  for (let i = 0; i < companies.length; i++) {
-    const entry = companies[i], res = results[i];
+  const minHeadroom = Number(env.JOBCRAWL_SHADOW_MIN_HEADROOM_MB) || 256;
+  // Departures follow the legacy crawl's own rule per row (its status after this cycle): open rows close on the first complete miss,
+  // extra/dup rows in the 3-day sweep, filtered rows never by a miss. Without the history: first complete miss.
+  const rules = input.has_history ? { mode: 'legacy', statusOf: (url) => input.statusByUrl.get(url), sweepDays: 3 } : LEGACY_RULES;
+  const h0 = process.memoryUsage().heapUsed;
+  let peak = h0;
+  for (const { entry, run } of input.boards) {
     try {
-      const provider = res?.r?.provider ?? res?.provider ?? entry.provider ?? null;
-      const { route, why } = routeFor(routing, { board: entry.name, provider }, env);
-      if (route === 'legacy') { sum.legacy++; if (why === 'kill switch') sum.killed = true; continue; }
       if (clock() - t0 > budgetMs) { sum.over_budget++; continue; }
-      const run = runOfLegacyResult(res);
+      if (heapHeadroomMb() < minHeadroom) { sum.low_memory++; continue; }
       if (!run) { sum.skipped++; continue; }
       const b0 = clock();
       const release = await lease(root, entry.name, 5 * 60e3, Date.now, { busyMs: boardMs });
@@ -74,10 +131,14 @@ export async function runShadow({ dataDir, companies, results, history = null, e
         for (const e of events) sum.ops[e.op] = (sum.ops[e.op] ?? 0) + 1;
         sum.shadowed++;
       } finally { release(); }
+      peak = Math.max(peak, process.memoryUsage().heapUsed);
       if (clock() - b0 > boardMs) { sum.slow++; if (sum.slow <= 3) log(`[shadow] ${entry.name}: slow (${clock() - b0} ms > ${boardMs} ms)`); }
     } catch (e) { sum.failed++; if (sum.failed <= 5) log(`[shadow] ${entry?.name}: ${e?.message ?? e}`); }
   }
   sum.ms = clock() - t0;
-  log(`[shadow] ${sum.killed && !sum.shadowed ? 'kill switch on: nothing shadowed' : `boards shadowed ${sum.shadowed}, legacy ${sum.legacy}, skipped ${sum.skipped}, slow ${sum.slow}, over budget ${sum.over_budget}, failed ${sum.failed}, events ${JSON.stringify(sum.ops)}`} in ${sum.ms} ms -> ${root}`);
+  sum.heap = { ...(input.heap ?? {}), hook_peak_delta_mb: +((peak - h0) / MB).toFixed(1) };
+  const what = sum.killed && !sum.shadowed ? 'kill switch on: nothing shadowed'
+    : `boards shadowed ${sum.shadowed}, legacy ${sum.legacy}, skipped ${sum.skipped}, slow ${sum.slow}, over budget ${sum.over_budget}, low memory ${sum.low_memory}, failed ${sum.failed}, events ${JSON.stringify(sum.ops)}`;
+  log(`[shadow] ${what} in ${sum.ms} ms, heap: capture +${sum.heap.captured_mb ?? '-'} MB, hook peak +${sum.heap.hook_peak_delta_mb} MB, headroom ${heapHeadroomMb()} MB -> ${root}`);
   return sum;
 }

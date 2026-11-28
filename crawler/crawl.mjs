@@ -79,7 +79,7 @@ setEuresRateFile(pathResolve(OUT_DIR, 'eures-rate.json'));
 if (PROFILE.euresLane) setEuresLane(pathResolve(OUT_DIR, 'eures-lane'));
 // every feed response byte for byte under JOBCRAWL_RAW_DIR (rawcapture.mjs), before the first request
 const RAW_ON = !flag('jd-cleanup-only') && installRawCapture();
-let SHADOW_INPUT = null;   // set by scan() only when JOBCRAWL_SHADOW is set (strangler-fig shadow, see the end of this file)
+let SHADOW_INPUT = null;   // compact shadow input (captureShadowInput), set by scan() only when JOBCRAWL_SHADOW is set; see the end of this file
 if (RAW_ON) console.log(`crawl: raw capture on, ${process.env.JOBCRAWL_RAW_DIR}`);
 // The crawl policy (policy.mjs) around every request: robots.txt advisory or strict (crawl.robots), Crawl-delay floor, 429/503
 // cooldowns, never a login page or an opted-out host. Installed after the raw capture, so a refused request is never captured.
@@ -538,7 +538,6 @@ async function scan() {
   });
   // Strangler fig (core/route/shadow-hook.mjs): only when JOBCRAWL_SHADOW is set, the cycle's answers are kept for the shadow hook, which
   // runs after every legacy output of the cycle is written (below, after scan()).
-  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) SHADOW_INPUT = { companies, results, history };   // history: read-only, for the legacy departure rule
   async function crawlOne(entry) {
     const r = resolve(entry);
     if (!r) throw new Error('no supported ATS (set provider+slug or fix careers_url)');
@@ -1040,6 +1039,12 @@ async function scan() {
     console.log('history: pruning off (crawl.history_prune_days 0)');
   }
   lc?.flush();
+  // Strangler-fig shadow (core/route/shadow-hook.mjs): only when JOBCRAWL_SHADOW is set, a compact copy of the routed boards' answers and of
+  // their rows' final legacy status is taken here (the crawl's own objects are not kept), and the hook runs after scan() (end of file).
+  if (process.env.JOBCRAWL_SHADOW && !flag('dry-run')) {
+    try { SHADOW_INPUT = (await import('../core/route/shadow-hook.mjs')).captureShadowInput({ companies, results, history }); }
+    catch (e) { console.error(`[shadow] capture skipped: ${e?.message ?? e}`); }
+  }
   saveHistory(history);
   // the released urls that are still open (a role that closed or turned 'extra' again, e.g. with the switch off, leaves the file)
   if (titleRel?.extra) {   // the extra shift counts what it released, so its max_total holds across cycles
@@ -1091,7 +1096,7 @@ if (flag('jd-cleanup-only')) {
   // The legacy outputs are written; now (and only when armed) the answers of the boards routed shadow go to the new per-board path in its
   // own folder (core/route/shadow-hook.mjs: off by default, budgets per board and per cycle, never throws).
   if (SHADOW_INPUT) {
-    try { await (await import('../core/route/shadow-hook.mjs')).runShadow({ dataDir: OUT_DIR, ...SHADOW_INPUT }); }
+    try { await (await import('../core/route/shadow-hook.mjs')).runShadow({ dataDir: OUT_DIR, input: SHADOW_INPUT }); }
     catch (e) { console.error(`[shadow] skipped this cycle: ${e?.message ?? e}`); }
   }
 }
