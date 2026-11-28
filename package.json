@@ -30,6 +30,7 @@
     "./core/conditional": "./core/fetch/conditional.mjs",
     "./core/handshake": "./core/compat/handshake.mjs",
     "./core/graceful": "./core/compat/graceful.mjs",
+    "./core/mcp": "./core/mcp/serve.mjs",
     "./schemas/*": "./schemas/*",
     "./crawler/*": "./crawler/*",
     "./package.json": "./package.json"

@@ -59,6 +59,10 @@ commands (phase 0):
                                              one checkpoint per batch, writes the resolved/v1 stream (sqlite store only)
   resolved --data <dir> [--after <seq>] [--limit <n>] | [--groups [--status open|dup|hidden|departed|unknown]] | [--derived]
                                              the resolved/v1 stream as NDJSON, the resolver's groups, or its derived protected set
+  mcp --data <dir> [--store json|sqlite] [--allow-crawl]
+                                             MCP server over stdio (JSON-RPC, newline-delimited), read-only: detect_board, get_delta,
+                                             search_postings, explain_board_health; --allow-crawl adds the network tools behind the egress
+                                             guard (detect_page; discover, crawl_board, propose_config answer unsupported); docs/MCP.md
   doctor [--profile <dir>] [--data <dir>] [--routing <file>] [--json] [--strict]
                                              read-only checks: Node, node:sqlite, profile, user agent, data folder, routing;
                                              --strict exits 5 when a check warns
@@ -186,6 +190,13 @@ switch (cmd) {
     const { detectPage } = await import('../crawler/profiler/detect-page.mjs');
     const res = await detectPage(url, { page: flag('page') });
     out(res, res.hits.length ? res.hits.map((h) => `${h.provider}:${h.slug} (${h.evidence.map((e) => e.type).join(',')})`).join('\n') : 'no source recognised');
+    break;
+  }
+  case 'mcp': {
+    if (!opt('data')) fail('--data <dir> is required');
+    if (opt('store') && !['json', 'sqlite'].includes(opt('store'))) fail(`--store expects json or sqlite (got "${opt('store')}")`);
+    const { runMcp } = await import('../core/mcp/serve.mjs');
+    try { await runMcp({ data: pathResolve(opt('data')), store: opt('store'), allowCrawl: flag('allow-crawl') }); } catch (e) { fail(e.message, 4); }
     break;
   }
   case 'route': {

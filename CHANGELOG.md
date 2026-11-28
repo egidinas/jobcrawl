@@ -3,6 +3,13 @@
 jobcrawl has no numbered releases; `main` is always the running version. This file groups the history by period, newest first.
 The commit log has the details of each change.
 
+## 2026-11-28: MCP server (row 2A.4, branch feat/mcp-2a4)
+
+- **`jobcrawl mcp --data <dir> [--store] [--allow-crawl]`** (`core/mcp/`, docs/MCP.md): a read-only MCP server over stdio, no dependency.
+  Revision 2026-07-28 plus the legacy `initialize` handshake. Tools: `detect_board` (offline), `get_delta`, `search_postings` (in-memory
+  FTS5), `explain_board_health`. Output is cleaned of invisible characters, marked `untrusted`, capped, and built from the field
+  allowlist. `--allow-crawl` adds `detect_page` behind the egress guard (private targets refused) and unsupported stubs.
+
 ## 2026-11-28: resolver job (row 1.4, branch feat/resolver-1-4; default off)
 
 - **Resolver** (`core/resolve/`): the cross-board logic of the legacy cycle (crosslist dups and the direct-over-aggregator swap, admission
