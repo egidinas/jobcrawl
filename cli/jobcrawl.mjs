@@ -247,7 +247,7 @@ switch (cmd) {
     const { lifecycleIndex, compareBoard } = await import('../core/route/parity.mjs');
     const { loadLedger, saveLedger, recordParity, ledgerSummary } = await import('../core/route/ledger.mjs');
     const { loadRouting } = await import('../core/route/router.mjs');
-    const { listBoards, openBoard } = await import('../core/state/board-store.mjs');
+    const { listBoards, boardKey } = await import('../core/state/board-store.mjs');
     let routing;
     try { routing = loadRouting(opt('routing') ?? process.env.JOBCRAWL_ROUTING); } catch (e) { fail(e.message); }
     const idx = lifecycleIndex(pathResolve(lc));
@@ -260,7 +260,9 @@ switch (cmd) {
     }
     const reports = [], skipped = { no_read: 0, no_fetch: 0, gap: 0, recorded: 0 };
     for (const board of listBoards(pathResolve(store))) {
-      const st = openBoard(pathResolve(store), board);
+      // read-only: state.json as committed (openBoard could repair a log a running shadow hook is just committing)
+      let st;
+      try { st = JSON.parse(readFileSync(join(pathResolve(store), 'boards', boardKey(board), 'state.json'), 'utf8')); } catch { skipped.no_read++; continue; }
       const readAt = Date.parse(st.last_ok ?? '');
       if (!readAt) { skipped.no_read++; continue; }
       const f = idx.fetches.get(board);
