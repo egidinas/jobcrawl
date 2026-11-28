@@ -59,3 +59,11 @@ test('a difference hours apart is skew, not a failure; the same difference withi
   const near = fixture({ recordedAt: '2026-11-28T03:10:00Z', legacyAtMs: Date.parse('2026-11-28T03:40:00Z'), recorded: [1, 2], legacyLatest: [1, 2, 4] });
   assert.equal(run(near).rep.boards[0].verdict, 'fail');
 });
+
+test('one legacy fetch: a title the legacy history froze at first sighting is counted, not a failure', () => {
+  const f = fixture({ recordedAt: '2026-11-28T03:10:00Z', legacyAtMs: Date.parse('2026-11-28T03:20:00Z'), recorded: [1, 2], legacyLatest: [1, 2] });
+  const hist = join(f.legacy, 'scan-history.tsv');
+  writeFileSync(hist, readFileSync(hist, 'utf8').replace('	T1	', '	Old title at first sighting	'));
+  const b = run(f).rep.boards[0];
+  assert.equal(b.verdict, 'pass'); assert.equal(b.title_diff, 1);
+});
