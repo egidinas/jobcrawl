@@ -249,7 +249,10 @@ switch (cmd) {
     const { loadRouting } = await import('../core/route/router.mjs');
     const { listBoards, boardKey } = await import('../core/state/board-store.mjs');
     let routing;
-    try { routing = loadRouting(opt('routing') ?? process.env.JOBCRAWL_ROUTING); } catch (e) { fail(e.message); }
+    // the routes the ledger records come from this file: without it every board would be rewritten to 'legacy' (and its since reset)
+    const routingFile = opt('routing') ?? process.env.JOBCRAWL_ROUTING;
+    if (!routingFile) fail('ledger-shadow needs --routing <file> (or JOBCRAWL_ROUTING): the ledger records the route of each board from it');
+    try { routing = loadRouting(routingFile); } catch (e) { fail(e.message); }
     const idx = lifecycleIndex(pathResolve(lc));
     const ledger = loadLedger(pathResolve(lf));
     // the provider of each board (for the provider routes in the ledger), from --companies when given

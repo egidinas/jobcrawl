@@ -46,3 +46,10 @@ test('ledger-shadow records one pass per legacy fetch; three in a row make the b
   assert.deepEqual(r.verdicts, { fail: 1 });
   assert.equal(r.ledger.eligible, 0, 'a mismatch resets eligibility');
 });
+
+test('ledger-shadow refuses to run without a routing file (it would rewrite every route to legacy)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jcx-ls2-'));
+  const out = cli(['ledger-shadow', '--shadow', join(dir, 's'), '--lifecycle', join(dir, 'l.json'), '--ledger', join(dir, 'ledger.json')]);
+  assert.notEqual(out.status, 0);
+  assert.match(out.stderr, /needs --routing/);
+});

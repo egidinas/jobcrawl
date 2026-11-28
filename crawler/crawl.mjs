@@ -878,12 +878,13 @@ async function scan() {
     // an empty answer is a complete one only with the provider's positive empty signal (a swallowed error looks the same)
     lc?.fetched(name, trow, live, { cls: trow.cls, complete: res.jobs.length > 0 || res.jobs.emptyOk === true, emptyOk: res.jobs.emptyOk === true });
     let held = 0;
-    authMod?.reached(AUTH, name);
+    if (authMod) { try { authMod.reached(AUTH, name); } catch {} }   // never throws (any error: the legacy rule for that board)
     for (const row of openRows) {
       if (!live.has(row.url)) {
         if (lc?.mode === 'on' && !lc.closable(row.url)) { held++; continue; }   // MADE_LIFECYCLE=on: gone only on K misses + the floor
         if (adm.mayClose(row.url, name)) continue;   // another board admitted it within 48 h and still lists it (admission.mjs)
-        const byNew = authMod ? authMod.decide(AUTH, name, row.url) : null;   // board routed `new`: the new path decides (null: legacy rule)
+        let byNew = null;   // board routed `new`: the new path decides (null: legacy rule; any error: legacy rule)
+        if (authMod) { try { byNew = authMod.decide(AUTH, name, row.url); } catch { byNew = null; } }
         if (byNew === false) continue;
         row.status = 'gone';
         problems.push(`GONE: ${row.company} - ${row.title} (${row.url})`);
