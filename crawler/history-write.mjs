@@ -6,15 +6,26 @@
 // but never holds more than one chunk of lines in memory. While the new text matches the existing file byte for byte, nothing is
 // written (an unchanged history keeps its mtime, as before, so downstream steps can skip); at the first difference the equal prefix is
 // copied from the existing file into <file>.tmp and the rest is written there; the tmp file then replaces the history (rename).
-// Returns { changed, bytes, rows }.
-import { closeSync, existsSync, fstatSync, openSync, readSync, renameSync, rmSync, writeSync } from 'node:fs';
+// Every write is completed (writeAll), the tmp file's size is checked against the bytes produced and fsynced before the rename; any
+// failure removes the tmp file and keeps the old history. Returns { changed, bytes, rows }.
+import * as nodeFs from 'node:fs';
+
+/** Writes all bytes: writeSync() makes one write(2) and may write fewer bytes (ext4 returns a short count before ENOSPC). */
+export function writeAll(io, fd, buf, off = 0, len = buf.length - off) {
+  while (len > 0) {
+    const w = io.writeSync(fd, buf, off, len);
+    if (!(w > 0)) throw new Error(`history: write returned ${w} with ${len} bytes left`);
+    off += w; len -= w;
+  }
+}
 
 const CHUNK_LINES = 4000;
 const COPY = 1 << 20;
 
 export const historyLine = (header, row) => header.map((h) => String(row[h] ?? '').replace(/[\t\n]/g, ' ')).join('\t');
 
-export function writeHistoryFile(file, header, rows, { chunkLines = CHUNK_LINES } = {}) {
+export function writeHistoryFile(file, header, rows, { chunkLines = CHUNK_LINES, io = nodeFs } = {}) {
+  const { closeSync, existsSync, fstatSync, fsyncSync, openSync, readSync, renameSync, rmSync } = io;
   const tmp = `${file}.tmp`;
   let old = existsSync(file) ? openSync(file, 'r') : null;
   const oldSize = old !== null ? fstatSync(old).size : 0;
@@ -28,7 +39,7 @@ export function writeHistoryFile(file, header, rows, { chunkLines = CHUNK_LINES 
     for (let pos = 0; pos < offset;) {
       const n = readSync(old, cmp, 0, Math.min(COPY, offset - pos), pos);
       if (n <= 0) throw new Error(`history: short read copying the prefix of ${file}`);
-      writeSync(out, cmp, 0, n);
+      writeAll(io, out, cmp, 0, n);
       pos += n;
     }
   };
@@ -46,7 +57,7 @@ export function writeHistoryFile(file, header, rows, { chunkLines = CHUNK_LINES 
       equal = false;
       startWriting();
     } else if (out === null) startWriting();
-    writeSync(out, buf);
+    writeAll(io, out, buf);
     offset += buf.length;
   };
   let n = 0;
@@ -63,6 +74,9 @@ export function writeHistoryFile(file, header, rows, { chunkLines = CHUNK_LINES 
       return { changed: false, bytes: offset, rows: n };
     }
     if (out === null) startWriting();         // the new text is a strict prefix of the old file (rows removed at the end)
+    const size = fstatSync(out).size;
+    if (size !== offset) throw new Error(`history: ${tmp} has ${size} bytes, expected ${offset}; the old history is kept`);
+    fsyncSync(out);
     closeSync(out); out = null;
     if (old !== null) { closeSync(old); old = null; }
     renameSync(tmp, file);
