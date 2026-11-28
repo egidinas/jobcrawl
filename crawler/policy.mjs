@@ -24,6 +24,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSy
 import { join } from 'node:path';
 import { UA } from './useragent.mjs';
 import { makeConditionalFetch } from './httpcache.mjs';
+import { makeGuardedFetch } from '../core/fetch/guard.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -107,7 +108,7 @@ const file = (name) => (st.dataDir ? join(st.dataDir, name) : null);
  * robots: 'advisory' | 'strict'; robotsHosts: { host: 'advisory'|'strict' }; optOutHosts: [host | { host, reason }];
  * optOutCleared: [host] (flags the owner reviewed); dataDir: where the audit, caches and flags live (none: memory only).
  */
-export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutHosts = [], optOutCleared = [], dataDir = null, httpCache = null } = {}) {
+export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutHosts = [], optOutCleared = [], dataDir = null, httpCache = null, egressGuard = false } = {}) {
   flushPolicy();
   st = fresh();
   if (robots !== 'advisory' && robots !== 'strict') throw new Error(`crawl.robots must be "advisory" or "strict", not ${JSON.stringify(robots)}`);
@@ -117,6 +118,7 @@ export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutH
   st.cleared = (optOutCleared ?? []).map(normHost);
   st.dataDir = dataDir;
   // conditional GET under the guard (crawl.http_cache; off by default): needs a data folder for its store
+  st.egressGuard = egressGuard === true;
   st.httpCache = httpCache && dataDir ? { dir: join(dataDir, 'http-cache'), maxBodyBytes: httpCache.maxBodyBytes } : null;
   if (dataDir) {
     st.authWalls = readJson(file('auth-walls.json'), {});
@@ -131,7 +133,7 @@ export function configurePolicy({ robots = 'advisory', robotsHosts = {}, optOutH
 /** configurePolicy options from a loaded profile (profile.mjs) and the data folder. */
 export const policyFromProfile = (profile, dataDir) => ({
   robots: profile?.robots ?? 'advisory', robotsHosts: profile?.robotsHosts ?? {}, optOutHosts: profile?.optOutHosts ?? [],
-  optOutCleared: profile?.optOutCleared ?? [], dataDir, httpCache: profile?.httpCache ?? null,
+  optOutCleared: profile?.optOutCleared ?? [], dataDir, httpCache: profile?.httpCache ?? null, egressGuard: profile?.egressGuard === true,
 });
 
 /** The robots mode for a host: the most specific crawl.robots_hosts entry, else crawl.robots. */
@@ -384,9 +386,14 @@ let installed = null;
 /** Wraps globalThis.fetch with the guard (once). Returns a function that removes it. */
 export function installGuard() {
   if (installed) return installed;
-  const base = globalThis.fetch;
+  // Egress guard (private/loopback/link-local targets refused on every redirect hop, board signal merged): OFF by default on the live
+  // path, so serving behaviour is unchanged; switch: profile crawl.egress_guard or JOBCRAWL_EGRESS_GUARD=1 (JOBCRAWL_EGRESS_GUARD=0 forces off).
+  const env = process.env.JOBCRAWL_EGRESS_GUARD;
+  const egress = env === '0' ? false : env === '1' || /^(true|yes)$/i.test(env ?? '') ? true : st.egressGuard === true;
+  const base = egress ? makeGuardedFetch(globalThis.fetch, { allowPrivate: /^(1|true|yes)$/i.test(process.env.JOBCRAWL_ALLOW_PRIVATE_TARGETS ?? '') }) : globalThis.fetch;
+  const orig = globalThis.fetch;
   globalThis.fetch = makeGuard(st.httpCache ? makeConditionalFetch(base, st.httpCache) : base);
-  installed = () => { globalThis.fetch = base; installed = null; };
+  installed = () => { globalThis.fetch = orig; installed = null; };
   return installed;
 }
 

@@ -63,6 +63,8 @@ export function loadProfile(dirArg) {
     throw new ProfileError('crawl.opt_out_hosts must be a list of host names or { host, reason } objects');
   }
   // Conditional GET (httpcache.mjs): off unless crawl.http_cache.enabled is true.
+  // Egress guard (core/fetch/guard.mjs) on the live crawl's fetch: off unless crawl.egress_guard is true (or JOBCRAWL_EGRESS_GUARD=1).
+  if (crawl.egress_guard !== undefined && typeof crawl.egress_guard !== 'boolean') throw new ProfileError('crawl.egress_guard must be true or false');
   const hc = obj(crawl.http_cache, 'crawl.http_cache');
   if (hc.enabled !== undefined && typeof hc.enabled !== 'boolean') throw new ProfileError('crawl.http_cache.enabled must be true or false');
   if (hc.max_body_kb !== undefined && (typeof hc.max_body_kb !== 'number' || !(hc.max_body_kb > 0))) throw new ProfileError('crawl.http_cache.max_body_kb must be a number > 0');
@@ -92,6 +94,7 @@ export function loadProfile(dirArg) {
     optOutCleared: strList(crawl.opt_out_cleared, 'crawl.opt_out_cleared'),
     euresLane: crawl.eures_lane === true,
     junkGate: crawl.junk_gate ?? 'report',
+    egressGuard: crawl.egress_guard === true,
     httpCache: hc.enabled === true ? { maxBodyBytes: Math.round((hc.max_body_kb ?? 5120) * 1024) } : null,   // EURES boards come from the slow lane's answers (crawler/eures-lane.mjs)
     dataDir: raw.data_dir ? resolve(dir, raw.data_dir) : null,
     raw,

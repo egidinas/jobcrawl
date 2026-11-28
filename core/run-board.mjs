@@ -4,20 +4,26 @@
 import { providers as defaultProviders, resolve as defaultResolve } from '../crawler/providers.mjs';
 import { entryTimeoutMs } from '../crawler/profile.mjs';
 import { classifyError } from '../crawler/resilience.mjs';
+import { runWithSignal } from './fetch/context.mjs';
+import { installEngineFetch } from './fetch/guard.mjs';
 import { applyRun, DEFAULT_RULES } from './delta/board-delta.mjs';
 import { commitRun, lease, openBoard } from './state/board-store.mjs';
 
 /** Reads one board. Returns a run: { ok, items, complete, emptyOk, incomplete, error, ms, provider, slug }. Never throws. */
-export async function readBoard(entry, { providers = defaultProviders, resolve = defaultResolve, timeoutMs } = {}) {
+export async function readBoard(entry, { providers = defaultProviders, resolve = defaultResolve, timeoutMs, noEngineFetch = false } = {}) {
   const t0 = Date.now();
   const r = resolve(entry);
   if (!r || !providers[r.provider]) return { ok: false, items: [], error: { cls: 'CONFIG', detail: 'no supported source for this entry' }, ms: 0 };
   const ms = timeoutMs ?? entryTimeoutMs(entry);
+  // New path: the engine fetch (egress guard + ambient board signal) is on by default; JOBCRAWL_ALLOW_PRIVATE_TARGETS=1 opts out of the
+  // address check for an operator crawling an intranet. The board's time budget aborts the requests in flight (ctx.signal).
+  if (!noEngineFetch) installEngineFetch();
+  const ac = new AbortController();
   let timer;
   try {
     const jobs = await Promise.race([
-      providers[r.provider].fetch(r.slug, entry),
-      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`Timed out after ${Math.round(ms / 1000)}s (${entry.name})`)), ms); }),
+      runWithSignal(ac.signal, () => providers[r.provider].fetch(r.slug, entry, { signal: ac.signal })),
+      new Promise((_, rej) => { timer = setTimeout(() => { const err = new Error(`Timed out after ${Math.round(ms / 1000)}s (${entry.name})`); rej(err); ac.abort(err); }, ms); }),
     ]);
     const list = Array.isArray(jobs) ? jobs : [];
     return { ok: true, items: list, complete: !list.incomplete, emptyOk: list.emptyOk === true, incomplete: list.incomplete ?? null,
@@ -25,7 +31,7 @@ export async function readBoard(entry, { providers = defaultProviders, resolve =
   } catch (e) {
     const tri = classifyError(e);
     return { ok: false, items: [], error: { cls: tri.cls, detail: tri.detail ?? String(e?.message ?? e) }, ms: Date.now() - t0, provider: r.provider, slug: r.slug };
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); ac.abort(); }
 }
 
 /**

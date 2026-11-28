@@ -3,8 +3,8 @@
 // every spelling of an address is caught: IPv4-mapped IPv6 in either form ([::ffff:127.0.0.1] and the normalised [::ffff:7f00:1]),
 // IPv4-compatible ::a.b.c.d, NAT64 64:ff9b::/96 and 6to4 2002::/16 (their embedded IPv4 is checked), site-local fec0::/10, ULA fc00::/7,
 // link-local fe80::/10, multicast, documentation and discard prefixes, Teredo 2001::/32 (refused: its IPv4 is obfuscated).
-// The check runs at resolve time and again per redirect hop; pinning the connection to the checked address (closing the DNS-rebinding
-// window between lookup and connect) is planned in the FetchBackend. `allow_private_targets: true` turns the guard off for an operator
+// The check runs at resolve time and again per redirect hop; the engine fetch (guard.mjs) wraps this check around every request and resolves a second time after the
+// response headers; pinning the connection to the checked address is still open. `allow_private_targets: true` turns the guard off for an operator
 // who wants to crawl an intranet.
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
@@ -104,12 +104,6 @@ export async function assertPublicUrl(url, { lookupImpl = lookup } = {}) {
 
 /** GET with every redirect hop checked by assertPublicUrl. */
 export async function safeFetch(url, init = {}, { maxHops = 5, fetchImpl = globalThis.fetch, lookupImpl } = {}) {
-  let cur = url;
-  for (let hop = 0; hop <= maxHops; hop++) {
-    await assertPublicUrl(cur, { lookupImpl });
-    const res = await fetchImpl(cur, { ...init, redirect: 'manual' });
-    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { cur = new URL(res.headers.get('location'), cur).href; continue; }
-    return res;
-  }
-  throw new SsrfError(`more than ${maxHops} redirects`);
+  const { makeGuardedFetch } = await import('./guard.mjs');   // the engine guard (also merges the board signal); lazy: guard imports this file
+  return makeGuardedFetch(fetchImpl, { maxHops, lookupImpl, recheck: false })(url, { ...init, redirect: init.redirect === 'manual' ? 'manual' : 'follow' });
 }
