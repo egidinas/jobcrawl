@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS cooldowns (host TEXT PRIMARY KEY, until INTEGER NOT N
 CREATE TABLE IF NOT EXISTS breakers (key TEXT PRIMARY KEY, open_until INTEGER NOT NULL, opened_at INTEGER NOT NULL, failures INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS breaker_events (key TEXT NOT NULL, t INTEGER NOT NULL, ok INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS breaker_events_key ON breaker_events (key, t);
+CREATE TABLE IF NOT EXISTS board_cadence (board TEXT PRIMARY KEY, next_due INTEGER NOT NULL, last_run INTEGER, last_ok INTEGER, failures INTEGER NOT NULL DEFAULT 0, last_cls TEXT, last_error TEXT, interval_ms INTEGER, updated_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS posting_text (id TEXT NOT NULL, content_hash TEXT NOT NULL, excerpt TEXT NOT NULL, description TEXT, PRIMARY KEY (id, content_hash)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS imports (board TEXT PRIMARY KEY, source TEXT, seq INTEGER NOT NULL, event_id INTEGER NOT NULL, postings INTEGER NOT NULL, at TEXT NOT NULL);
 `;
@@ -396,6 +397,20 @@ export class SqliteStore {
       const row = this.db.prepare('SELECT open_until, failures FROM breakers WHERE key = ?').get(key);
       if (!row) return { state: 'closed' };
       return row.open_until > now() ? { state: 'open', until: row.open_until, failures: row.failures } : { state: 'half-open', since: row.open_until, failures: row.failures };
+    });
+  }
+
+  // ---- per-board cadence (run --due, core/headless/due.mjs): next_due, last_ok, consecutive failures; one row per board ----
+  cadenceGet(board) { return this._wrap(() => this.db.prepare('SELECT * FROM board_cadence WHERE board = ?').get(board) ?? null); }
+  cadenceList() { return this._wrap(() => this.db.prepare('SELECT * FROM board_cadence ORDER BY board').all()); }
+  /** Upserts a board's cadence row; fields not given keep their value (a new row starts at failures 0). */
+  cadenceSet(board, f, now = this.clock) {
+    return this._tx(() => {
+      const cur = this.db.prepare('SELECT * FROM board_cadence WHERE board = ?').get(board) ?? { next_due: 0, last_run: null, last_ok: null, failures: 0, last_cls: null, last_error: null, interval_ms: null };
+      const m = { ...cur, ...f };
+      this.db.prepare('INSERT INTO board_cadence (board, next_due, last_run, last_ok, failures, last_cls, last_error, interval_ms, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) '
+        + 'ON CONFLICT (board) DO UPDATE SET next_due = excluded.next_due, last_run = excluded.last_run, last_ok = excluded.last_ok, failures = excluded.failures, last_cls = excluded.last_cls, last_error = excluded.last_error, interval_ms = excluded.interval_ms, updated_at = excluded.updated_at')
+        .run(board, Math.floor(m.next_due), m.last_run ?? null, m.last_ok ?? null, m.failures, m.last_cls ?? null, m.last_error ?? null, m.interval_ms ?? null, now());
     });
   }
 

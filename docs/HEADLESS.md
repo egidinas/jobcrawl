@@ -57,6 +57,20 @@ JSON lines, one object per line, flushed per line: `{"t":"2026-11-28T08:00:00.00
 - Events: `start`, `cycle-start`, `board`, `board-skipped`, `board-discarded`, `budget-hit`, `store-error`, `health-alert`, `signal`,
   `cycle-end`, `daemon-cycle`, `metrics-listening`, `lock-held`, `not-due`, `fatal`, `exit`.
 
+## `run --due`: short processes, one cadence per board (row 2A.1)
+
+`jobcrawl run --due --store sqlite [--max-boards N] [--max-minutes N] [--board-minutes N] [--concurrency 4] [--per-host 1] [--isolate worker] [--now <iso>]`
+runs only the boards that are due and exits, for cron or systemd timers. No `run.lock`: several `--due` processes on one data folder
+coexist; a board lease keeps two of them off one board, and the store's host slots, cooldowns and breaker give them ONE budget per host.
+
+- **Due:** `board_cadence` row per board (`next_due`, `last_ok`, `failures`, `last_cls`). A board without a row is due at once. Order: oldest `next_due`, then name. `--now` fixes the clock (deterministic selection).
+- **Interval:** `interval_hours` of the board entry, else `--default-interval-hours` (24); clamped to 15 min .. 48 h. After a failure: 15 min x 2^(n-1), capped at 48 h (also after a timeout), and never earlier than the host cooldown.
+- **Budget:** `--board-minutes` or the entry's `timeout_ms`. At the budget the board's requests are aborted through `ctx.signal`; a source that ignores the signal is cut at budget + 2 s and its result discarded. The board is marked (`TIMEOUT_TLS`, logged as `board-timeout`) and the run goes on. `--isolate worker` reads each board in a worker thread that is terminated at the budget (stops a catastrophic regex that blocks the event loop).
+- **Host slots:** `--per-host` slots per host in the store (a crashed holder blocks for at most its ttl). A busy host is waited for up to 60 s, then the board is deferred (not a failure).
+- **Cooldown:** a 429 (or 503) answer sets the host cooldown from `Retry-After` (else 30 s / 10 s, cap 1 h); boards on that host are deferred to its end.
+- **Breaker:** per host (5 failures in 10 min) and per provider (10): open for 15 min, then half-open (one probe, host limit 1), closed by a success. Only host-health classes count (timeout/TLS, WAF, 5xx, DNS).
+- Exit: 0 ok or nothing due, 1 some due board failed (deferrals are not failures), 4 store error, 130/143 interrupted (the board in flight gets no cadence row). A daemon stays reserved for the day every routed source honours `ctx.signal`.
+
 ## Health and metrics (opt-in)
 
 `--metrics [host]:port` starts a read-only HTTP endpoint. Without a host it binds **127.0.0.1**; a host such as `0.0.0.0` must be written out.

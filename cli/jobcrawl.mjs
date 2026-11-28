@@ -47,10 +47,13 @@ commands (phase 0):
   store-import --data <dir> [--from <json data dir>] [--replace] [--json]
                                              JSON board states -> <data>/store.sqlite, without events (read-only on the JSON side)
   run [--profile <dir>] [--data <dir>] [--routing <file>] [--board <name>] [--replay <recording>] [--max-minutes <n>] [--every-min <n>]
-      [--daemon [--interval-min <n>]] [--metrics [host]:port] [--log-format json|text] [--log-file <file>] [--strict] [--stale-hours <n>]
+      [--daemon [--interval-min <n>]] [--due [--max-boards <n>] [--board-minutes <n>] [--concurrency <n>] [--per-host <n>] [--now <iso>]
+      [--isolate none|worker] [--default-interval-hours <n>]] [--metrics [host]:port] [--log-format json|text] [--log-file <file>] [--strict] [--stale-hours <n>]
       [--store json|sqlite] [--resolve [--legacy-data <dir>]] [--json]
                                              headless run of every routed board on the new path; resumable, SIGTERM-safe, never prompts
                                              (profile and data may come from JOBCRAWL_PROFILE and JOBCRAWL_DATA); see docs/HEADLESS.md;
+                                             --due (sqlite store): only the boards whose own cadence (interval_hours, next_due, failure backoff)
+                                             says due, each with a hard time budget; shared host slots/cooldowns/breaker across processes
                                              --resolve (default off): then one resolver run over what the boards committed (sqlite)
   resolve --data <dir> [--store sqlite] [--profile <dir> | --companies <file>] [--legacy-data <dir>] [--rules legacy|lifecycle]
           [--batch <n>] [--max-events <n>] [--json]
@@ -537,6 +540,9 @@ switch (cmd) {
       log.info('metrics-listening', { host: server.host, port: server.port });
     }
     const sleepAbortable = (ms) => new Promise((ok) => { if (ac.signal.aborted) return ok(); const t = setTimeout(ok, ms); ac.signal.addEventListener('abort', () => { clearTimeout(t); ok(); }, { once: true }); });
+    const dueMode = flag('due');
+    if (dueMode && flag('daemon')) fail('--due and --daemon exclude each other (--due is the short-process mode)');
+    if (dueMode && store.kind !== 'sqlite') fail('--due needs --store sqlite (per-board cadence, shared host slots and breaker live in the store)');
     const common = { readFor, signal: ac.signal, maxMs: maxMin ? maxMin * 60e3 : null, strict: flag('strict'), staleMs: staleH * 3600e3, providerOf, log, metrics, store };
     if (delayMs) {   // test seam (with --replay): a slow board, so a signal can arrive mid-run
       const { runBoard } = await import('../core/run-board.mjs');
@@ -545,7 +551,24 @@ switch (cmd) {
     log.info('start', { pid: process.pid, node: process.versions.node, boards: boards.length, data, store: store.kind, daemon: flag('daemon'), mode: opt('replay') ? 'replay' : 'live' });
     let code = EXIT.OK, summary = null;
     try {
-      if (flag('daemon')) {
+      if (dueMode) {
+        const { runDue, makeWorkerReader, makeThrottleFetch } = await import('../core/headless/due.mjs');
+        const isolate = opt('isolate', 'none');
+        if (isolate !== 'none' && isolate !== 'worker') fail(`--isolate expects none or worker (got "${isolate}")`);
+        const nowOpt = opt('now');
+        if (nowOpt != null && !Number.isFinite(Date.parse(nowOpt))) fail(`--now expects an ISO time (got "${nowOpt}")`);
+        const fixed = nowOpt != null ? Date.parse(nowOpt) : null;
+        if (!opt('replay')) globalThis.fetch = makeThrottleFetch(globalThis.fetch, { store, onCooldown: (h, st, ms) => log.warn('cooldown', { host: h, status: st, seconds: Math.round(ms / 1000) }) });
+        const boardMin = num('board-minutes');
+        const r = await runDue(store, boards, { now: fixed != null ? () => fixed : Date.now, maxBoards: num('max-boards'), maxMs: common.maxMs, signal: ac.signal, log, metrics,
+          readFor, providerOf, concurrency: num('concurrency', 4) || 4, perHost: num('per-host', 1) || 1, defaultIntervalHours: num('default-interval-hours') || undefined,
+          ...(boardMin ? { boardMs: () => boardMin * 60e3 } : {}),
+          ...(isolate === 'worker' && !opt('replay') ? { isolatedRead: makeWorkerReader({ profileDir: pathResolve(profileDir), data }) } : {}) });
+        const { results, storeError, ...sum } = r;
+        summary = sum;
+        code = storeError ? EXIT.STATE : r.interrupted ? exitForSignal(ac.signal.reason) : r.failed ? EXIT.BOARDS_FAILED : EXIT.OK;
+        if (JSON_OUT) summary.results = results;
+      } else if (flag('daemon')) {
         const lk = acquireLock(data);
         if (!lk) { log.error('lock-held', { data }); code = EXIT.LOCKED; }
         else {
