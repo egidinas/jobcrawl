@@ -44,10 +44,11 @@ export async function prepareAuthority({ dataDir, companies, results, history, e
       // the new view of every posting after this answer: a missing open row closes when the new state does not hold it open (departed
       // now, or already departed or unknown in the baseline)
       const statusAfter = new Map(Object.entries(state.postings).map(([id, p]) => [id, p.status]));   // by posting id
+      const urlAfter = new Map(Object.entries(state.postings).map(([id, p]) => [id, p.url]));       // the url the state holds now
       const departed = new Set(events.filter((e) => e.op === 'departed').map((e) => e.id));
       const known = new Set(Object.keys(prev.postings));
       for (const it of run.items ?? []) known.add(postingId(it.url));
-      boards.set(entry.name, { state, events, departed, statusAfter, known, complete: isComplete(run, Number(entry.max_jobs) || null), release, reached: false, closed: 0, kept: 0, fallback: 0, fallback_reason: '' });
+      boards.set(entry.name, { state, events, departed, statusAfter, urlAfter, known, complete: isComplete(run, Number(entry.max_jobs) || null), release, reached: false, closed: 0, kept: 0, fallback: 0, fallback_reason: '' });
       summary.boards++;
     }
     if (!boards.size && !summary.no_baseline && !summary.busy) return null;
@@ -66,6 +67,9 @@ export function decide(auth, board, url) {
   if (!b.complete) { b.fallback++; b.fallback_reason ||= 'answer not complete for the new path (empty without empty-OK)'; return null; }
   const id = postingId(url);
   if (!b.known.has(id)) { b.fallback++; b.fallback_reason ||= 'row unknown to the new state'; return null; }
+  // the posting id ignores tracking/session parameters, the legacy history does not: a row whose url differs from the one the state
+  // holds (the answer now lists another variant of it) is decided by the legacy rule, so the history never keeps two open copies
+  if (b.urlAfter.get(id) !== url) { b.fallback++; b.fallback_reason ||= 'url variant (same posting id, other url)'; return null; }
   if (b.departed.has(id) || (b.statusAfter.has(id) && b.statusAfter.get(id) !== 'open')) { b.closed++; return true; }
   b.kept++;
   return false;
